@@ -8,3 +8,8 @@ You are free to use, modify, distribute, or even commercialize this code.
 Please cite this project (and/or my dissertation - Add this later) if you use it in your work.
 
 For more information, see the [LICENSE](LICENSE) file.
+
+![WIP Badge](https://img.shields.io/badge/status-WIP-yellow.svg)
+# v0.1-alpha
+
+This is an early, work-in-progress release. It's meant to get started and provide a basic framework, but it's not feature-complete, and the code is subject to change. The structure and comments are minimal, and functionality will be updated regularly. Use at your own risk.
