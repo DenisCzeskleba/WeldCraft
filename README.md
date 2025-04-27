@@ -5,8 +5,10 @@ Open-Source repository for all (currently work in progress) hydrogen/heat weld s
 ## License
 
 This project is licensed under the Creative Commons Attribution 4.0 International License (CC BY 4.0).  
-You are free to use, modify, distribute, or even commercialize this code. 
-Please cite this project (and/or my dissertation - Add this later) if you use it in your work.
+You are free to use, modify, distribute, or even commercialize it under that license.
+
+So feel free to use it which ever way you like, expand on it, change it, make it your own. 
+But if you found it helpful in any way, I'd love a citation, either of this project or my dissertation. (Add this later)
 
 For more information, see the [LICENSE](LICENSE) file.
 
