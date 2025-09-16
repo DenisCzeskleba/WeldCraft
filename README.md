@@ -14,6 +14,8 @@ For more information, see the [LICENSE](LICENSE) file.
 
 # v0.1 - alpha
 
+CURRENT STATE (> September 2025): Total script re-up from local back-up due to messing up with github. I'm trying to fix this soon   
+
 This is an early, work-in-progress release. It’s meant to get started and provide a basic framework, but it’s not feature-complete, and the code is subject to change. The structure and comments are minimal, and functionality will be updated regularly. Use at your own risk. 
 
 Until Q3 of 2025, this project will see constant updates, either here or on my local machine. Version 1.0 is expected by the end of 2025.
