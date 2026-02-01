@@ -11,6 +11,13 @@
 01_Resources/
 02_Results/
 
+# personal / scratch / notes (don't publish)
+00_Stuff_To_Do.py
+i0_Example_Workflow.py
+i1_ReadMe.txt
+i98_test-stuff-here.py
+i99_T dep dcoeff thoughts.py
+
 # Large binary artifacts
 **/*.mp4
 **/*.h5
