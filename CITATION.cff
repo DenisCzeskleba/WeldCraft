@@ -11,6 +11,7 @@ repository-code: "https://github.com/DenisCzeskleba/WeldCraft"
 license: "MIT"
 version: "0.3.0"
 date-released: "2026-02-01"
+url: "https://doi.org/10.5281/zenodo.18451839"
 identifiers:
   - type: doi
     value: 10.5281/zenodo.18451839
