@@ -659,5 +659,5 @@ plt.close(fig)
 # update(frame_to_render, loaded_u_arrays, loaded_h_arrays, heat_annotations, diff_annotations)
 #
 # # Save the frame as an image
-# plt.savefig(r"02_Results\frame_10.png", dpi=96)
+# plt.savefig(str(in_results("frame_10.png", mkdir=True)), dpi=96)
 # plt.close(fig)

@@ -4,16 +4,17 @@ import matplotlib.colors as mcolors
 from matplotlib.animation import FFMpegWriter
 from tqdm import tqdm
 import numpy as np
+from b4_functions import in_results
 
 # ---------------------------- 0. Configuration ----------------------------
 # Animation Mode
 animation_mode = "hydrogen comparison"  # Only "hydrogen comparison" is handled in this script
 
 # HDF5 File Name
-file_name = r"02_Results\00_diffusion_array.h5"
+file_name = str(in_results("00_diffusion_array.h5"))
 
 # Output Video File Name
-output_file = r"02_Results\result_visualize_gradient_animation.mp4"
+output_file = str(in_results("result_visualize_gradient_animation.mp4", mkdir=True))
 
 # Frames Per Second for the Output Video
 fps = 60

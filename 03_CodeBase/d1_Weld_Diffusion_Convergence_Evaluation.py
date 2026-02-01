@@ -74,6 +74,7 @@ import h5py
 import numpy as np
 from datetime import datetime
 import matplotlib.pyplot as plt
+from b4_functions import in_results
 
 
 @dataclass
@@ -91,7 +92,7 @@ DEFAULT_BASE_DIRECTORY = os.path.dirname(os.path.abspath(__file__))
 
 # All inputs and outputs for a comparison go into this subfolder next to your base dir.
 # We'll create a timestamped subfolder inside it for each run, e.g. "250908_0806".
-ANALYSIS_PARENT_FOLDER_NAME: str = r"02_Results\05_Convergence Analysis"  # folder will be created if missing
+ANALYSIS_PARENT_FOLDER_NAME: str = r"05_Convergence Analysis"  # folder will be created if missing
 
 # Output CSV filename (will live inside timestamped subfolder)
 OUTPUT_CSV_FILENAME = "comparison_summary.csv"
@@ -168,7 +169,7 @@ def resolve_active_analysis_folder() -> str:
     Example output path:
         <base>/Convergence Analysis/250908_0806
     """
-    parent_folder_abspath = os.path.join(DEFAULT_BASE_DIRECTORY, ANALYSIS_PARENT_FOLDER_NAME)
+    parent_folder_abspath = str(in_results(ANALYSIS_PARENT_FOLDER_NAME))
     os.makedirs(parent_folder_abspath, exist_ok=True)
 
     now = datetime.now()

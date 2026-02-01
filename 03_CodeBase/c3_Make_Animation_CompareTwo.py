@@ -6,10 +6,14 @@ from matplotlib.gridspec import GridSpec
 from tqdm import tqdm
 import numpy as np
 import time
+from b4_functions import in_results
 
 # Load two .h5 files for comparison
-file1_name = r"02_Results\03_Batch-Executions\XXX.h5"
-file2_name = r"02_Results\03_Batch-Executions\XXX.h5"
+file1_name = str(in_results("03_Batch-Executions", "XXX.h5"))
+file2_name = str(in_results("03_Batch-Executions", "XXX.h5"))
+
+# Output file
+out_mp4    = str(in_results("diffusion_comparison_animation.mp4", mkdir=True))
 
 # Optional end time for limiting the data used
 end_time = 0  # Set to 0 for using all data, or a specific time limit (e.g., 60000 seconds)
@@ -300,7 +304,7 @@ print("Converting to .mp4 now. This may take some time. Please wait...")
 writer = FFMpegWriter(fps=30, metadata=dict(artist='Denis Czeskleba'), bitrate=1800)
 
 start_time = time.time()
-with writer.saving(fig, r"02_Results\diffusion_comparison_animation.mp4", dpi=96):
+with writer.saving(fig, out_mp4, dpi=96):
     for frame in tqdm(range(len(loaded_u_arrays_1)), desc="Rendering Animation Frames"):
         update(frame)
         writer.grab_frame()

@@ -19,6 +19,8 @@ IMPORTANT:
 
 """
 
+from b4_functions import in_results
+
 model_version = "0.15 - alpha"  # For provenance. Don't change, unless you customize logic. Then its yours, yay!
 simulation_type = "butt joint"  # Options: "lap joint", "butt joint" and "iso3690"
 
@@ -136,8 +138,8 @@ animation_frame_stride = 5
 debug_bead_plots = False  # Set to False to disable
 
 # ------------------------------------------- Diagram and save options -------------------------------------------------
-file_name = r"02_Results\00_diffusion_array.h5"  # diffusion_array.h5"
-animation_name = r"02_Results\00_diffusion_animation.mp4"  # diffusion_animation.mp4
+file_name = str(in_results("00_diffusion_array.h5", mkdir=True))  # diffusion_array.h5"
+animation_name = str(in_results("00_diffusion_animation.mp4", mkdir=True))  # diffusion_animation.mp4
 s_per_frame_part1 = 3.0
 # ----------------------------------------------------------------------------------------------------------------------
 #                                               Space to print things:

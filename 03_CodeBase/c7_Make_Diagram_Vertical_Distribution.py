@@ -1,6 +1,7 @@
 import h5py
 import matplotlib.pyplot as plt
 import numpy as np
+from b4_functions import in_results
 
 # Choose which curves to draw (1..5). Example: [2] draws only #2; [1,3,5] draws those; [] draws none.
 PLOT_IDS = [1, 2, 3, 4, 5]
@@ -10,7 +11,7 @@ CURVES = [
     None,  # index 0 unused so we can use 1-based IDs
 
     {  # 1
-        "file_name": r"02_Results\03_Batch-Executions\XXX.h5",
+        "file_name": str(in_results("03_Batch-Executions", "XXX.h5")),
         "snapshot_time": 3853,
         "label": r"Mid Weld Process",  # r"$t_{8/5}$ = 10s, 20mm plate, $D_{min}$"
         "color": (0.0, 0.0, 0.0),  #(0.5176, 0.0, 0.5176) purple | (0.2588, 0.4196, 0.6117) blue | (0.0, 0.0, 0.0) black | (0.0, 0.2, 0.6) darker blue | (0.85, 0.0, 0.0) red
@@ -19,7 +20,7 @@ CURVES = [
     },
 
     {  # 2
-        "file_name": r"02_Results\03_Batch-Executions\XXX.h5",
+        "file_name": str(in_results("03_Batch-Executions", "XXX.h5")),
         "snapshot_time": 7211,
         "label": r"Last Weld Bead",
         "color": (0.85, 0.0, 0.0),
@@ -28,7 +29,7 @@ CURVES = [
     },
 
     {  # 3
-        "file_name": r"02_Results\03_Batch-Executions\XXX.h5",
+        "file_name": str(in_results("03_Batch-Executions", "XXX.h5")),
         "snapshot_time": 14933,
         "label": r"Room Temperature",
         "color": (0.0, 0.2, 0.6),
@@ -37,7 +38,7 @@ CURVES = [
     },
 
     {  # 4
-        "file_name": r"02_Results\03_Batch-Executions\XXX.h5",
+        "file_name": str(in_results("03_Batch-Executions", "XXX.h5")),
         "snapshot_time": 101333,
         "label": r"24h after Welding",
         "color": (0.2588, 0.4196, 0.6117),
@@ -46,7 +47,7 @@ CURVES = [
     },
 
     {  # 5
-        "file_name": r"02_Results\03_Batch-Executions\XXX.h5",
+        "file_name": str(in_results("03_Batch-Executions", "XXX.h5")),
         "snapshot_time": 619733,
         "label": r"168h after Welding",
         "color": (0.5176, 0.0, 0.5176),

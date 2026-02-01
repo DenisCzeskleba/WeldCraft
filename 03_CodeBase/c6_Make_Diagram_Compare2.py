@@ -1,15 +1,17 @@
 import matplotlib.pyplot as plt
 import h5py
 import numpy as np
+from b4_functions import in_results
 
 
 # File names for comparison (allowing up to 4 files) #-in up to 4
 file_names = [
-    r"02_Results\03_Batch-Executions\XXX.h5",  # Simulation 1
-    r"02_Results\03_Batch-Executions\XXX.h5",  # Simulation 2
-    # r"02_Results\03_Batch-Executions\XXX.h5",  # Simulation 3
-    # r"02_Results\03_Batch-Executions\XXX.h5",  # Simulation 4
+    str(in_results("03_Batch-Executions", "XXX.h5")),
+    str(in_results("03_Batch-Executions", "XXX.h5")),
+    # str(in_results("03_Batch-Executions", "XXX.h5")),
+    # str(in_results("03_Batch-Executions", "XXX.h5")),
 ]
+
 h_inside_values = {0: 0, 1: "Sievert Law 100", 2: 75, 3: 100}
 
 

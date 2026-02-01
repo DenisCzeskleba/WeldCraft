@@ -6,10 +6,11 @@ import subprocess
 import signal
 import atexit
 from typing import Tuple
+from b4_functions import in_results
 
 CONFIG_FILE = "b2_param_config.py"
 BACKUP_FILE = "b2_param_config_backup.py"
-BATCH_DIR = r"../02_Results/03_Batch-Executions"
+BATCH_DIR = str(in_results("03_Batch-Executions"))
 STOP_ON_ERROR = True   # stop the sweep on first failed run
 
 # ---- internal state ----

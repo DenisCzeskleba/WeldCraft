@@ -1,16 +1,97 @@
 # -------------------------------------- function calls used in main file ----------------------------------------------
+from __future__ import annotations
 import numpy as np
 from numba import jit
 import matplotlib.pyplot as plt
-import b2_param_config
+from pathlib import Path
 
 
 def get_value(param_name):
+    import b2_param_config  # local import avoids circular import at module load time
+
     # Check if the parameter exists in the config file
     if hasattr(b2_param_config, param_name):
         return getattr(b2_param_config, param_name)
     else:
         raise ValueError(f"Parameter '{param_name}' not found in param_config")
+
+
+def find_repo_root(start: Path | None = None) -> Path:
+    """
+    Find the repository root by walking upward until we find a marker.
+    Works in a git checkout and also in a zip download (no .git).
+    """
+    if start is None:
+        start = Path(__file__).resolve().parent  # directory containing this file
+
+    markers = {
+        "README.md",
+        ".git",
+        "01_Resources",
+        "02_Results",
+        "03_CodeBase",
+    }
+
+    p = start
+    for _ in range(25):  # safety: don't walk forever
+        if any((p / m).exists() for m in markers):
+            return p
+        if p.parent == p:
+            break
+        p = p.parent
+
+    raise RuntimeError(
+        f"Could not find repo root starting from {start}. "
+        "Adjust markers in find_repo_root()."
+    )
+
+
+def repo_root() -> Path:
+    return find_repo_root()
+
+
+def resources_dir() -> Path:
+    return repo_root() / "01_Resources"
+
+
+def results_dir() -> Path:
+    return repo_root() / "02_Results"
+
+
+def codebase_dir() -> Path:
+    return repo_root() / "03_CodeBase"
+
+
+def ensure_project_dirs() -> None:
+    """
+    Create directories that must exist for running the project.
+    (You can call this at program start.)
+    """
+    resources_dir().mkdir(parents=True, exist_ok=True)
+    results_dir().mkdir(parents=True, exist_ok=True)
+
+
+def in_results(*parts: str, mkdir: bool = False) -> Path:
+    """
+    Build an absolute path inside 02_Results.
+
+    Example:
+        out_h5 = in_results("03_Batch-Executions", "run_001", "sim.h5", mkdir=True)
+    """
+    p = results_dir().joinpath(*parts)
+    if mkdir:
+        p.parent.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+def in_resources(*parts: str, mkdir: bool = False) -> Path:
+    """
+    Build an absolute path inside 01_Resources.
+    """
+    p = resources_dir().joinpath(*parts)
+    if mkdir:
+        p.parent.mkdir(parents=True, exist_ok=True)
+    return p
 
 
 def safe_close_pbar(pbar):

@@ -19,7 +19,7 @@ import contextlib
 
 # Suppress config prints during import
 with contextlib.redirect_stdout(io.StringIO()):
-    from b4_functions import get_value
+    from b4_functions import get_value, in_results
 
 
 # -------------------------------------------------
@@ -210,7 +210,7 @@ def nearest_frame_index(times_s, target_time_s):
 # Main
 # -------------------------------------------------
 
-file_name = r'02_Results\00_diffusion_array.h5'
+file_name = str(in_results("00_diffusion_array.h5"))
 dx, dy = get_value("dx"), get_value("dy")  # Change if you ran another simulation inbetween
 
 loaded_u_arrays, loaded_h_arrays, times_s, phase_times = load_snapshots_like_animation(file_name)
@@ -450,7 +450,7 @@ for i, t_target in enumerate(target_times_seconds, start=1):
 
     fig.tight_layout()
 
-    out_name = rf"02_Results\04_Diagrams\diagram_{i:02d}_t{t_real:.0f}s.png"
+    out_name = str(in_results("04_Diagrams", f"diagram_{i:02d}_t{t_real:.0f}s.png", mkdir=True))
     fig.savefig(out_name, dpi=SAVE_DPI)
     plt.close(fig)
 
