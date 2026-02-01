@@ -8,8 +8,14 @@
 
 # Local-only folders
 00_Deprecated/
-01_Resources/
-02_Results/
+
+# Keep the folders, ignore their contents
+01_Resources/*
+02_Results/*
+
+# ...but keep the placeholder files
+!01_Resources/.gitkeep
+!02_Results/.gitkeep
 
 # personal / scratch / notes (don't publish)
 03_CodeBase/00_Stuff_To_Do.py
