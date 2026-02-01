@@ -1,5 +1,7 @@
 cff-version: 1.2.0
 message: "If you use this software, please consider a citation it as below."
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
 type: software
 title: "WeldCraft"
 authors:
@@ -9,3 +11,6 @@ repository-code: "https://github.com/DenisCzeskleba/WeldCraft"
 license: "MIT"
 version: "0.3.0"
 date-released: "2026-02-01"
+identifiers:
+  - type: doi
+    value: 10.5281/zenodo.18451839
