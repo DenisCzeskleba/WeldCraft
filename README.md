@@ -1,4 +1,4 @@
-# WeldCraft ![WIP Badge](https://img.shields.io/badge/status-WIP-yellow.svg) <a href="https://www.buymeacoffee.com/DenisCzeskleba"><img src="https://www.buymeacoffee.com/assets/img/custom_images/orange_img.png" height="20px"></a>
+# WeldCraft ![WIP Badge](https://img.shields.io/badge/status-WIP-yellow.svg) <a href="https://doi.org/10.5281/zenodo.18451839"><img src="https://zenodo.org/badge/DOI/10.5281/zenodo.18451839.svg" alt="DOI"></a> <a href="https://www.buymeacoffee.com/DenisCzeskleba"><img src="https://www.buymeacoffee.com/assets/img/custom_images/orange_img.png" height="20px"></a> 
 
 Open-Source repository for all (currently work in progress) hydrogen/heat weld simulation scripts and programs relating to the research project "Prevention of Cold Cracking in Thick Plated High-Strength Steel SAW-Welds" 
 
