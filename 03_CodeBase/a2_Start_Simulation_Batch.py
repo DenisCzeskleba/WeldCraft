@@ -9,7 +9,7 @@ from typing import Tuple
 
 CONFIG_FILE = "b2_param_config.py"
 BACKUP_FILE = "b2_param_config_backup.py"
-BATCH_DIR = r"02_Results\03_Batch-Executions"
+BATCH_DIR = r"../02_Results/03_Batch-Executions"
 STOP_ON_ERROR = True   # stop the sweep on first failed run
 
 # ---- internal state ----

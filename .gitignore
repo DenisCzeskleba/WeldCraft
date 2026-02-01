@@ -12,11 +12,11 @@
 02_Results/
 
 # personal / scratch / notes (don't publish)
-00_Stuff_To_Do.py
-i0_Example_Workflow.py
-i1_ReadMe.txt
-i98_test-stuff-here.py
-i99_T dep dcoeff thoughts.py
+03_CodeBase/00_Stuff_To_Do.py
+03_CodeBase/i0_Example_Workflow.py
+03_CodeBase/i1_ReadMe.txt
+03_CodeBase/i98_test-stuff-here.py
+03_CodeBase/i99_T dep dcoeff thoughts.py
 
 # Large binary artifacts
 **/*.mp4
