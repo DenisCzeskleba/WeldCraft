@@ -12,7 +12,7 @@ But if you found it helpful in any way, I'd love a citation, either of this proj
 
 For more information, see the [LICENSE](LICENSE) file.
 
-# v0.3.0 - alpha
+## v0.3.0 - alpha
 
 CURRENT STATE (Jan 2026): Total script re-up from local back-up due to messing up with github.
 
