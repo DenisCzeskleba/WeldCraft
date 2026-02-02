@@ -94,6 +94,85 @@ def in_resources(*parts: str, mkdir: bool = False) -> Path:
     return p
 
 
+def _serialize_param_value(value):
+    if isinstance(value, (np.integer, np.floating, np.bool_)):
+        return value.item()
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, (list, tuple, np.ndarray)):
+        return [_serialize_param_value(v) for v in list(value)]
+    if isinstance(value, dict):
+        return {str(k): _serialize_param_value(v) for k, v in value.items()}
+    if isinstance(value, (int, float, bool, str)) or value is None:
+        return value
+    return repr(value)
+
+
+def param_config_snapshot():
+    import b2_param_config  # local import avoids circular import at module load time
+
+    snapshot = {}
+    for name in dir(b2_param_config):
+        if name.startswith("_"):
+            continue
+        value = getattr(b2_param_config, name)
+        if callable(value):
+            continue
+        snapshot[name] = _serialize_param_value(value)
+    return snapshot
+
+
+def load_param_config_json(file_name):
+    import json
+    import h5py
+
+    with h5py.File(file_name, "r") as hf:
+        meta = hf.get("/meta")
+        if meta is None:
+            raise RuntimeError("Missing /meta group in HDF5 file")
+        param_json = meta.attrs.get("param_config_json")
+        if param_json is None:
+            raise RuntimeError("param_config_json not found in /meta attrs")
+        return json.loads(param_json)
+
+
+def write_h5_metadata(
+    file_name,
+    include_param_config: bool = True,
+):
+    import json
+    import h5py
+
+    with h5py.File(file_name, "a") as hf:
+        if include_param_config:
+            snapshot = param_config_snapshot()
+            snapshot.setdefault("convention", "rows: top->bottom, cols: left->right")
+
+            from b3_initialization import weld_sample
+            sim_type = snapshot.get("simulation_type")
+            if sim_type is not None:
+                _, dim_rows, dim_columns, le, ri, we, th, su_h, su_w, fr_le, fr_ri, fr_ab, fr_be = weld_sample(sim_type)
+                snapshot.update({
+                    "dim_rows": dim_rows,
+                    "dim_columns": dim_columns,
+                    "le": le,
+                    "ri": ri,
+                    "we": we,
+                    "th": th,
+                    "su_h": su_h,
+                    "su_w": su_w,
+                    "fr_le": fr_le,
+                    "fr_ri": fr_ri,
+                    "fr_ab": fr_ab,
+                    "fr_be": fr_be,
+                })
+
+            param_json = json.dumps(snapshot, sort_keys=True, indent=2)
+            meta_group = hf["/meta"] if "/meta" in hf else hf.create_group("/meta")
+            meta_group.attrs["param_config_json"] = param_json
+            meta_group.attrs["param_config_source"] = "b2_param_config.py"
+
+
 def safe_close_pbar(pbar):
     """Safely close a tqdm progress bar without throwing errors."""
     if pbar is not None and hasattr(pbar, "close"):

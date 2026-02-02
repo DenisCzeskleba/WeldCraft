@@ -21,7 +21,7 @@ IMPORTANT:
 
 from b4_functions import in_results
 
-model_version = "0.15 - alpha"  # For provenance. Don't change, unless you customize logic. Then its yours, yay!
+model_version = "0.3.1"  # For provenance. Don't change, unless you customize logic. Then its yours, yay!
 simulation_type = "butt joint"  # Options: "lap joint", "butt joint" and "iso3690"
 
 # ---------------------------------------- Dimensional step size, gradient --------------------------------------------
@@ -132,19 +132,24 @@ total_time_to_cooling = time_before_first_weld + time_welding
 total_time_to_rt = total_time_to_cooling + time_cooling_to_rt
 total_max_time = total_time_to_rt + time_diffusion_at_rt
 
-# ------------------------------------- Welding - Temps and Timey Whimey stuff -----------------------------------------
-animation_frame_stride = 5
+# ------------------------------------------- Diagram and save options -------------------------------------------------
+file_name = str(in_results("00_diffusion_array.h5", mkdir=True))  # diffusion_array.h5"
+animation_name = str(in_results("00_diffusion_animation.mp4", mkdir=True))  # diffusion_animation.mp4
+s_per_frame_part1 = 6.0  # Save every so many seconds (dt is usually < 0.001s)
+animation_frame_stride = 5  # Only render every n-th frame (used in animation/video scripts)
+
+use_sparse_saving_in_just_diffusion = True  # If True, save less often after welding (long RT diffusion)
+s_per_frame_just_diffusion_sparse = 300.0  # Seconds per save during just-diffusion phase when sparse saving is ON
+
+# ---------------------------------- Informational metadata (stored in .h5 (JSON)) -------------------------------------
+convention = "rows: top->bottom, cols: left->right"
+units_temperature = "degC"
+units_hydrogen = "%"
+units_diffusivity = "mm^2/s"
 
 # ------------------------------------------------ Debug Helpers -------------------------------------------------------
 debug_bead_plots = False  # Set to False to disable
 
-# ------------------------------------------- Diagram and save options -------------------------------------------------
-file_name = str(in_results("00_diffusion_array.h5", mkdir=True))  # diffusion_array.h5"
-animation_name = str(in_results("00_diffusion_animation.mp4", mkdir=True))  # diffusion_animation.mp4
-s_per_frame_part1 = 6.0
-
-use_sparse_saving_in_just_diffusion = True  # If True, save less often after welding (long RT diffusion)
-s_per_frame_just_diffusion_sparse = 300.0  # Seconds per save during just-diffusion phase when sparse saving is ON
 # ----------------------------------------------------------------------------------------------------------------------
 #                                               Space to print things:
 

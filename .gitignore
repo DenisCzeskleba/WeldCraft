@@ -24,6 +24,9 @@
 03_CodeBase/i98_test-stuff-here.py
 03_CodeBase/i99_T dep dcoeff thoughts.py
 
+# local agent instructions (don't publish)
+AGENTS.md
+
 # Large binary artifacts
 **/*.mp4
 **/*.h5

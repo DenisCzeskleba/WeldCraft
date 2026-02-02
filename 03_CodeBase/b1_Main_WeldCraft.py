@@ -134,37 +134,8 @@ if True:  # Change to False if you want to keep the file or mess with the filena
     if os.path.exists(file_name):  # Delete old files
         os.remove(file_name)
 
-# Create file, write coordinates once, and stamp file-level convention
-with h5py.File(file_name, 'a') as hf:
-    # Coordinate vectors (cell centers, in mm, origin at top-left: rows increase downward)
-    x_coords = (np.arange(nx) + 0.5) * dx  # mm, left→right (+0.5 to get cell center)
-    y_coords = (np.arange(ny) + 0.5) * dy  # mm, top→bottom (+0.5 to get cell center)
-
-    hf.create_dataset('/x', data=x_coords)
-    hf['/x'].attrs['units'] = 'mm'
-    hf['/x'].attrs['definition'] = 'cell centers, x = columns (left→right)'
-
-    hf.create_dataset('/y', data=y_coords)
-    hf['/y'].attrs['units'] = 'mm'
-    hf['/y'].attrs['definition'] = 'cell centers, y = rows (top→bottom)'
-
-    # File-level metadata for clarity
-    hf.attrs['convention'] = 'rows: top→bottom, cols: left→right'
-    hf.attrs['units_temperature'] = '°C'
-    hf.attrs['units_hydrogen'] = '%'
-    hf.attrs['units_diffusivity'] = 'mm^2/s'
-
-    # --- Weld phase timing information ---
-    hf.attrs['time_before_first_weld'] = time_before_first_weld
-    hf.attrs['time_welding'] = time_welding
-    hf.attrs['time_cooling_to_rt'] = time_cooling_to_rt
-    hf.attrs['time_diffusion_at_rt'] = time_diffusion_at_rt
-
-    # --- Cumulative times ---
-    hf.attrs['total_time_to_first_weld'] = total_time_to_first_weld
-    hf.attrs['total_time_to_cooling'] = total_time_to_cooling
-    hf.attrs['total_time_to_rt'] = total_time_to_rt
-    hf.attrs['total_max_time'] = total_max_time
+# Small little command but this saves all the info to the results file for future use!
+write_h5_metadata(file_name)
 
 # ---------- Optimization attempts ----------
 dudx2 = np.zeros((ny, nx))  # preallocate the derivative matrices

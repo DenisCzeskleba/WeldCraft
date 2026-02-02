@@ -19,7 +19,7 @@ import contextlib
 
 # Suppress config prints during import
 with contextlib.redirect_stdout(io.StringIO()):
-    from b4_functions import get_value, in_results
+    from b4_functions import in_results, load_param_config_json
 
 
 # -------------------------------------------------
@@ -178,10 +178,10 @@ def load_snapshots_like_animation(file_name):
     with h5py.File(file_name, "r") as hf:
         # Phase times (if present)
         phase_times = {
-            "total_time_to_first_weld": hf.attrs.get("total_time_to_first_weld", None),
-            "total_time_to_cooling": hf.attrs.get("total_time_to_cooling", None),
-            "total_time_to_rt": hf.attrs.get("total_time_to_rt", None),
-            "total_max_time": hf.attrs.get("total_max_time", None),
+            "total_time_to_first_weld": param_cfg.get("total_time_to_first_weld"),
+            "total_time_to_cooling": param_cfg.get("total_time_to_cooling"),
+            "total_time_to_rt": param_cfg.get("total_time_to_rt"),
+            "total_max_time": param_cfg.get("total_max_time"),
         }
 
         for key in sorted(hf.keys()):
@@ -210,8 +210,9 @@ def nearest_frame_index(times_s, target_time_s):
 # Main
 # -------------------------------------------------
 
-file_name = str(in_results("00_diffusion_array.h5"))
-dx, dy = get_value("dx"), get_value("dy")  # Change if you ran another simulation inbetween
+file_name = str(in_results("00_diffusion_array.h5"))  # <-- set the file you want
+param_cfg = load_param_config_json(file_name)
+dx, dy = param_cfg["dx"], param_cfg["dy"]
 
 loaded_u_arrays, loaded_h_arrays, times_s, phase_times = load_snapshots_like_animation(file_name)
 

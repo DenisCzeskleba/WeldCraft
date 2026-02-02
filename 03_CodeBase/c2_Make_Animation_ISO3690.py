@@ -16,7 +16,7 @@ import contextlib
 
 # Suppress config prints during import, so no double prints. They’ll still appear when scripts run directly.
 with contextlib.redirect_stdout(io.StringIO()):
-    from b4_functions import get_value
+    from b4_functions import in_results, load_param_config_json
 
 # -------------------------------------------------
 # USER OPTION: Track individual beads?
@@ -59,12 +59,13 @@ def draw_static_outline(ax, data, dx, dy, color='red', linewidth=1.0, alpha=0.9,
 
 
 # ---------------------------- 1. Load Data from HDF5 File ----------------------------
-file_name = get_value("file_name")  # 'diffusion_array.h5'
-animation_file_name = get_value("animation_name")
+file_name = str(in_results("00_diffusion_array.h5"))  # <-- set the file you want
+param_cfg = load_param_config_json(file_name)
+animation_file_name = param_cfg["animation_name"]
 loaded_u_arrays = []
 loaded_h_arrays = []
 loaded_t_values = []
-dx, dy = get_value("dx"), get_value("dy")
+dx, dy = param_cfg["dx"], param_cfg["dy"]
 
 with h5py.File(file_name, 'r') as hf:
     for key in sorted(hf.keys()):
@@ -76,10 +77,10 @@ with h5py.File(file_name, 'r') as hf:
             t_value = hf[key][()]
             loaded_t_values.append(t_value)
     # --- Load key weld phase times ---
-    total_time_to_first_weld = hf.attrs.get('total_time_to_first_weld', None)
-    total_time_to_cooling = hf.attrs.get('total_time_to_cooling', None)
-    total_time_to_rt = hf.attrs.get('total_time_to_rt', None)
-    total_max_time = hf.attrs.get('total_max_time', None)
+    total_time_to_first_weld = param_cfg.get('total_time_to_first_weld')
+    total_time_to_cooling = param_cfg.get('total_time_to_cooling')
+    total_time_to_rt = param_cfg.get('total_time_to_rt')
+    total_max_time = param_cfg.get('total_max_time')
 
 ny, nx = loaded_u_arrays[0].shape
 extent = [0, nx*dx, ny*dy, 0]  # x_min, x_max, y_max, y_min (origin="upper")
@@ -188,7 +189,7 @@ im2 = ax2.imshow(loaded_h_arrays[0], cmap=cmap2, norm=norm2,
 # --- Draw static outline around regions where h == 0 ---
 # draw_static_outline(ax2, loaded_h_arrays[0], dx, dy, color='darkgrey', linewidth=1.0, alpha=0.8)
 
-diff_coeff_h = get_value("diff_coeff_h")
+diff_coeff_h = param_cfg["diff_coeff_h"]
 exponent = int(math.floor(math.log10(diff_coeff_h)))
 mantissa = diff_coeff_h / 10**exponent
 ax2.set_title(r"Hydrogen Diffusion" + "\n" + fr"$D_{{H}} = {mantissa:.2f} \times 10^{{{exponent}}}  [\,\mathrm{{mm}}^2/\mathrm{{s}}$]")

@@ -1,7 +1,7 @@
 import matplotlib.pyplot as plt
 import h5py
 import numpy as np
-from b4_functions import in_results
+from b4_functions import in_results, load_param_config_json
 
 
 # File names for comparison (allowing up to 4 files) #-in up to 4
@@ -32,8 +32,8 @@ colors = [
 
 # Get the time for example to room temp
 def get_time_to_rt_from_file(file_name):
-    with h5py.File(file_name, 'r') as hf:
-        return hf.attrs.get('total_time_to_rt', None)
+    param_cfg = load_param_config_json(file_name)
+    return param_cfg.get('total_time_to_rt')
 
 
 rt_times = [get_time_to_rt_from_file(fn) for fn in file_names]
