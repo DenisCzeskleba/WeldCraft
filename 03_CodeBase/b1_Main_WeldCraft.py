@@ -120,9 +120,15 @@ new_area = np.zeros_like(D, dtype=bool)  # For adding beads. Dont reheat/hydroge
 # ---------- Save matrices ----------
 file_name = get_value("file_name")  # File name to save the matrices as
 save_every_x_s = get_value("s_per_frame_part1")
+
+use_sparse_saving_in_just_diffusion = get_value("use_sparse_saving_in_just_diffusion")
+save_every_x_s_just_diffusion_sparse = get_value("s_per_frame_just_diffusion_sparse")
+
 print("Saving a frame every " + str(save_every_x_s) + "s during main simulation loop")
+
 save_counter = 0  # used in the saving loop
 last_save_time = 0  # used to track when the last save occurred
+saved_rt_step = False  # a way to force saving the first time we step into "cooled to room temp"
 
 if True:  # Change to False if you want to keep the file or mess with the filename
     if os.path.exists(file_name):  # Delete old files
@@ -261,14 +267,9 @@ while current_time <= total_max_time:
         # Currently we force the whole part to be evenly tempered.
         k = 4.605170186 / time_cooling_to_rt  # 99% cooled by the end
 
-        if start_cooling_temp == -999:
+        if start_cooling_temp == -999:  # -999 is a placeholder but can't simulate below abs. 0 anyway so good enough
             hot_cells = u[u > t_cool]
             start_cooling_temp = np.mean(hot_cells) if hot_cells.size else np.mean(u)
-
-        # if simulation_type == "lap joint" or simulation_type == "butt joint":  # More realistic cooling for Butt/Lap
-        #     current_forced_part_temperature = t_room + (t_cool - t_room) * math.exp(-k * cooling_time_elapsed)
-        # elif simulation_type == "iso3690":
-        #     current_forced_part_temperature = t_room + (start_cooling_temp - t_room) * math.exp(-k * cooling_time_elapsed)
 
         current_forced_part_temperature = t_room + (start_cooling_temp - t_room) * math.exp(-k * cooling_time_elapsed)
 
@@ -337,25 +338,38 @@ while current_time <= total_max_time:
                 hf.create_dataset(t_save_name, data=current_time)
                 hf.create_dataset(d_save_name, data=D)
 
-    else:  # Just diffusion phase, save every pic!
+    else:  # Just diffusion phase, save every frame unless sparse saving is set to True in param_config
+        save_this_state = True  # Save every frame (including last one)
 
-        # Use this if you wanna simulate for years after welding to save more rarely
-        # if int(current_time) // 7200 > int(
-        #         last_save_time) // 7200:
-        #     last_save_time = current_time
+        if use_sparse_saving_in_just_diffusion:  # Set in b2_param_config
+            if not saved_rt_step:  # Make sure to save the first time we are here, not false is an odd check but logic is sound
+                save_this_state = True
+                saved_rt_step = True
+            elif current_time == total_max_time:
+                save_this_state = True
+            elif current_time >= last_save_time + save_every_x_s_just_diffusion_sparse:
+                save_this_state = True
+            else:
+                save_this_state = False
 
-        u_save_name = f'u_snapshot_{save_counter:05d}'  # Unique name for 'u'
-        h_save_name = f'h_snapshot_{save_counter:05d}'  # Unique name for 'h'
-        t_save_name = f't_snapshot_{save_counter:05d}'  # Unique name for 'time'
-        d_save_name = f'd_snapshot_{save_counter:05d}'  # Unique name for 'd' (heat diffusion coeff)
-        save_counter += 1
+            if save_this_state:
+                last_save_time = current_time
 
-        with h5py.File(file_name, 'a') as hf:
-            # Create a dataset with the unique name and store the data
-            hf.create_dataset(u_save_name, data=u)
-            hf.create_dataset(h_save_name, data=h)
-            hf.create_dataset(t_save_name, data=current_time)
-            hf.create_dataset(d_save_name, data=D)
+        if save_this_state:
+            # Debug, delete print below later
+            # print("Saved the following times: " + str(current_time) + " | RT reached at: " + str(total_time_to_rt))
+            u_save_name = f'u_snapshot_{save_counter:05d}'  # Unique name for 'u'
+            h_save_name = f'h_snapshot_{save_counter:05d}'  # Unique name for 'h'
+            t_save_name = f't_snapshot_{save_counter:05d}'  # Unique name for 'time'
+            d_save_name = f'd_snapshot_{save_counter:05d}'  # Unique name for 'd' (heat diffusion coeff)
+            save_counter += 1
+
+            with h5py.File(file_name, 'a') as hf:
+                # Create a dataset with the unique name and store the data
+                hf.create_dataset(u_save_name, data=u)
+                hf.create_dataset(h_save_name, data=h)
+                hf.create_dataset(t_save_name, data=current_time)
+                hf.create_dataset(d_save_name, data=D)
 
     # Update time, make sure to include the very end of the given time window
     if current_time + dt <= total_max_time:

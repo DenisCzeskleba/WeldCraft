@@ -22,9 +22,9 @@ def weld_sample(sim_type):
                            <--- fr_le ----><--- su_w ---><--- fr_ri ---->
         """
 
-        le = ri = 60
+        le = ri = 30
         we = 20
-        th = 20
+        th = 10
         su_h = 10
         su_w = 30
         fr_le = le - (su_w - we)/2

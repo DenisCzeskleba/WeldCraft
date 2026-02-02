@@ -52,7 +52,8 @@ diff_coeff_air = 0  # No diffusion in air. If != 0, check ... everything!!!
 highest_diff_coeff = max(diff_coeff_bm, diff_coeff_wm, diff_coeff_haz)
 
 # ------------------------------------------ Convection / Cooling / Robin BC ------------------------------------------
-t_conv_air = 0.1e-5  # [W/mm²/K], ≈ 5 W/m²K, top plate, still air. Guess / calibrate from temperature measurements
+# sometimes used: t_conv_air = 0.1e-5  or 10e-5
+t_conv_air = 10e-5  # [W/mm²/K], ≈ 5 W/m²K, top plate, still air. Guess / calibrate from temperature measurements
 t_conv_h2 = 5e-4   # [W/mm²/K], ≈ 500 W/m²K, underside, forced hydrogen. Guess or calibrate UNUSED - Change dt!!!!
 # Doesnt make sense to use "convection" but easy to tweak. consider using sink temperature T_cu(t) later!
 t_conv_cu = 3e-4   # [W/mm²/K], ≈ 300 W/m²K, Copper contact.
@@ -98,9 +99,9 @@ hydrogen_offset = -5  # The offset is used to make the graphs display the suroun
 
 # --------------------------- Welding - Temps and Timey Whimey Whibbly Whobbly stuff -----------------------------------
 weld_simulation_style = "ellipse"  # More realistic weld beads ("ellipse"). "rectangle" not supported currently
-no_of_weld_beads = 16  # no of "blocks" during welding: Butt joint: must be %2, fit bead_height! Lap Joint: max 4
-bead_height = 2.5  # Half of weld beads * height should probably be weld thickness (th) (2.8 for iso?
-bead_width = 12  # Using half of weld width (we) for blocks, for ellipses maybe 3/4-ish of weld width? 60%
+no_of_weld_beads = 4  # no of "blocks" during welding: Butt joint: must be %2, fit bead_height! Lap Joint: max 4
+bead_height = 5  # Half of weld beads * height should probably be weld thickness (th) (2.8 for iso?
+bead_width = 12  # Using half of weld width (we) for blocks, for ellipses maybe 3/4-ish of weld width? 60%?
 bead_scales = [(1.0, 1.0), (1.0, 1.0), (1.6, 1.6), (3.0, 3.0)]  # Used for lap joint and iso3690
 
 haz_creation_temperature = 1350  # Checks if some bm area got hotter than this, creates HAZ there
@@ -123,8 +124,8 @@ time_heat_hold = 3  # Force the new weld block to have this temp for so long [s]
 # check this logic again, for example: what hapens if time_for_weld_bead < time_heat_hold?
 
 time_welding = no_of_weld_beads * time_heat_hold + (no_of_weld_beads - 1) * time_for_weld_bead + time_after_last_weld
-time_cooling_to_rt = 2 * 60 * 60  # For now set to 1.5h. During, forced linear cooling as BC in sample metal
-time_diffusion_at_rt = 7 * 24 * 60 * 60  # 2d * 24h * 60min * 60s
+time_cooling_to_rt = 1 * 1 * 60  # For now set to 1.5h. During, forced linear cooling as BC in sample metal
+time_diffusion_at_rt = 1 * 1 * 60 * 60  # 2d * 24h * 60min * 60s
 
 total_time_to_first_weld = time_before_first_weld
 total_time_to_cooling = time_before_first_weld + time_welding
@@ -140,7 +141,10 @@ debug_bead_plots = False  # Set to False to disable
 # ------------------------------------------- Diagram and save options -------------------------------------------------
 file_name = str(in_results("00_diffusion_array.h5", mkdir=True))  # diffusion_array.h5"
 animation_name = str(in_results("00_diffusion_animation.mp4", mkdir=True))  # diffusion_animation.mp4
-s_per_frame_part1 = 3.0
+s_per_frame_part1 = 6.0
+
+use_sparse_saving_in_just_diffusion = True  # If True, save less often after welding (long RT diffusion)
+s_per_frame_just_diffusion_sparse = 300.0  # Seconds per save during just-diffusion phase when sparse saving is ON
 # ----------------------------------------------------------------------------------------------------------------------
 #                                               Space to print things:
 
