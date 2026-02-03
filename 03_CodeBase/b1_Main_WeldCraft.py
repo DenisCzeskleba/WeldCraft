@@ -37,14 +37,12 @@ nx, ny = int(dim_rows / dx), int(dim_columns / dy)  # for readabilty - x should 
 dx2, dy2 = get_value("dx2"), get_value("dy2")  # Precalculate dx2, dy2
 
 # --------------------------------------- initialization and starting conditions --------------------------------------
-u0, u, h0, h, D, D_H, t_cool, t_hot, t_room = initialize(simulation_type, nx, ny, dx, dy, le, we, th, su_h, su_w, fr_le, fr_ab)
+u0, u, h0, h, D, D_H, microstructure_id, t_cool, t_hot, t_room = initialize(simulation_type, nx, ny, dx, dy, le, we, th, su_h, su_w, fr_le, fr_ab)
 
 # -------------------------------------------------- Simulation Setup -------------------------------------------------
 
 # ---------- Welding parameters ----------
-bead_height = get_value("bead_height")  # Set the height for a weld bead
-bead_width = get_value("bead_width")  # Set the width of a weld bead // Unused??
-t_weld_metal = get_value("temp_weld_metal")  # Temperature of the new welding block
+t_weld_metal = get_value("t_hot")  # Temperature of the new weld bead
 h_weld_metal = get_value("hydro_weld_metal")  # Hydrogen content. Usually just in %
 D_bm = get_value("diff_coeff_bm")  # Diffusion coefficient of base metal (Temperature)
 D_weld_metal = get_value("diff_coeff_wm")  # Diffusion coefficient of weld metal (Temperature)
@@ -56,6 +54,14 @@ room_temp = get_value("t_room")  # Room temperature
 pipe_line_inner_hydrogen = get_value("pipe_line_inner_hydrogen")
 hydro_inside = get_value("h_on_the_inside")
 boundary_temperature = get_value("t_cool")
+diffusion_scheme = get_value("diffusion_scheme")  # "Solver" 0=simplified Fick, 2=Flux conservation, 3=Flux + solubility
+spec_tmin = get_value("precalc_min_temp")
+spec_tmax = get_value("precalc_max_temp")
+spec_step = get_value("precalc_grid_step")
+spec_material = get_value("microstructures")
+microstructure_thermal_diff = get_value("microstructure_thermal_diff")
+microstructure_hydrogen_diff = get_value("microstructure_hydrogen_diff")
+microstructure_solubility = get_value("microstructure_solubility")
 inv_dx2 = get_value("inv_dx2")
 inv_dy2 = get_value("inv_dy2")
 coef_robin_x_air = get_value("coef_robin_x_air")
@@ -67,7 +73,7 @@ coef_robin_y_cu = get_value("coef_robin_y_cu")
 
 # ---------- Time differential ----------
 # H-Diffusion is always much much lower than heat, so just use heat
-dt = get_value("dt")  # highest time step to still be stable: dx2 * dy2 / (2 * highest_diff_coeff * (dx2 + dy2))
+dt = get_value("dt")  # highest time step to still be stable: dx2 * dy2 / (2 * max_microstructure_thermal_diff * (dx2 + dy2))
 dt_big = get_value("dt_big")  # After cooling to RT: only simuluate H diffusion. Bigger time steps possible!
 
 print("Time step for this simulation: " + str(dt) + "s")  # For debug
@@ -104,8 +110,14 @@ total_max_time = get_value("total_max_time")
 current_time = 0.0  # Initialize simulation time
 
 # ---------- Numerics Mumbo Jumbo ----------
-# Figure out calculated area (D > 0) and the edges of that area (faces)
-mask, faces = compute_mask_and_faces(D)  # D is initialized with base metal temperature diffusion coefficient
+mask, faces = compute_mask_and_faces(microstructure_id) # Calculated area and the edges of that area (faces)
+
+S_field = None
+T_idx = None
+lookup_temp_grid = build_temperature_grid(spec_tmin, spec_tmax, spec_step)
+lookup_table_thermal_diff = build_lookup_table(microstructure_thermal_diff, spec_material, lookup_temp_grid, "D")
+lookup_table_hydrogen_diff = build_lookup_table(microstructure_hydrogen_diff, spec_material, lookup_temp_grid, "D_H")
+lookup_table_solubility = build_lookup_table(microstructure_solubility, spec_material, lookup_temp_grid, "S")
 
 # Initialize variables for bead addition
 cwi = 0  # current weld indicator
@@ -163,19 +175,13 @@ two_over_sqrt_pi = 2.0 / np.sqrt(np.pi)
 bar_format = '{desc} {percentage:3.0f}%|{bar}| {n:,}/{total:,} [{elapsed}<{remaining}, {rate_fmt}]'
 pbar = None
 
-# sys.exit()  # debug, obviously remove \(e^{\frac{-11072}{R\cdot T}}\)
-
 # Main Loop
 while current_time <= total_max_time:
-    # Determine the current phase based on simulation time
 
     # ---- PRE-WELDING PHASE ----
     if current_time < total_time_to_first_weld:
-        # Pre-welding phase - possibly add over heating and cooling before weld experiment
-        insert_stuff_here_later = 1
 
-        # Simulation book keeping and progress bar stuff
-        if current_phase != "pre-welding":
+        if current_phase != "pre-welding":  # Simulation book keeping and progress bar stuff
             safe_close_pbar(pbar)
             phase_total_time = total_time_to_first_weld - current_time
             total_iterations = int(np.ceil(phase_total_time / dt))
@@ -183,28 +189,23 @@ while current_time <= total_max_time:
             current_phase = "pre-welding"
 
     # ---- WELDING PHASE ----
-    elif current_time < total_time_to_cooling:
-        # Add weld beads, manipulate diffusion coefficients etc.
+    elif current_time < total_time_to_cooling:  # Add weld beads, manipulate diffusion coefficients etc.
+
         if change_times[cwi] <= current_time <= change_times[cwi] + keep_temp_duration:
 
             if cci == 0:
-
                 check_for_HAZ_creation = 1  # Auto-HAZ creation
                 HAZ_creation_time_start = current_time
 
             # Change stuff, like adding a weld bead and such (in b4_functions.py)
-            # Info: cci is used to determine if we should also manipulate the diffusion values
-            u0, h0, D, D_H, mask, faces, new_area = manipulate_simulation(simulation_type, u0, h0, D, D_H, cwi, cci, t_weld_metal,
-                                                                h_weld_metal, D_bm, D_weld_metal, D_haz, D_H_weld_metal,
-                                                                dx, dy, le, we, fr_ab, fr_be, su_h, fr_le, th, mask,
-                                                                faces, new_area)
+            u0, h0, microstructure_id, mask, faces, new_area = (
+                manipulate_simulation(simulation_type, u0, h0, cwi, cci, t_weld_metal, h_weld_metal, dx, dy, le, we,
+                                      fr_ab, fr_be, su_h, fr_le, th, microstructure_id, mask, faces, new_area))
 
-            # Debug to show temperature diffusion coefficients
-            if get_value("debug_bead_plots") and cci == 0:
+            if get_value("debug_bead_plots") and cci == 0:  # Debug to show temperature diffusion coefficients
                 debug_show_DH(D, dy, dy, title=f"Temperature diffusion coefficient", block=True)
 
-            # You manipulated the simulation! Indicate this!
-            cci += 1
+            cci += 1  # You manipulated the simulation! Indicate this!
 
             # If this is the last time this gets triggered this bead (if current time plus next dt would be bigger)
             if current_time + dt >= change_times[cwi] + keep_temp_duration:
@@ -218,12 +219,12 @@ while current_time <= total_max_time:
         if check_for_HAZ_creation == 1:
             if np.max(u) >= haz_creation_temperature:
                 possible_locations = u > haz_creation_temperature
-                haz_location = possible_locations & (D != D_weld_metal)
-                D[haz_location] = D_haz
+                haz_location = possible_locations & (microstructure_id == 1)  # Only BM can be converted
+                microstructure_id[haz_location] = 3  # 0 = none | 1 = bm | 2 = wm | 3 = haz
             if current_time - HAZ_creation_time_start > get_value("haz_creation_check_time_window"):
                 check_for_HAZ_creation = 0
 
-        # Simlation book keeping and progressbar stuff
+        # Simulation book keeping and progressbar stuff
         if current_phase != "welding":
             safe_close_pbar(pbar)
             phase_total_time = total_time_to_cooling - current_time
@@ -249,8 +250,7 @@ while current_time <= total_max_time:
             safe_close_pbar(pbar)
             phase_total_time = total_time_to_rt - current_time
             total_iterations = int(np.ceil(phase_total_time / dt))
-            pbar = tqdm(total=total_iterations, bar_format=bar_format,
-                        desc='Simulating cooling phase')
+            pbar = tqdm(total=total_iterations, bar_format=bar_format, desc='Simulating cooling phase')
             current_phase = "cooling"
 
     # ---- DIFFUSION AT ROOM TEMPERATURE PHASE ----
@@ -260,27 +260,41 @@ while current_time <= total_max_time:
             dt = dt_big  # Switch to larger time step for diffusion phase
             dt_changed = True
 
-            # Update diffusion coefficients for this phase
-            D_H_in_air = get_value("diff_coeff_h_air")
-            static_D_H = get_value("minimum_h_diff_in_sample")
-            D_H = np.where(D_H != D_H_in_air, static_D_H, D_H)
-
             # Set temperature to room temperature
             t_static_room = get_value("t_room")
             u = np.where(u >= t_static_room, t_static_room, u)
             u0 = np.where(u0 >= t_static_room, t_static_room, u0)
+
+            # Build static lookup fields once for RT diffusion phase
+            T_idx = compute_T_idx_v2(u0, spec_tmin, spec_step, lookup_temp_grid.size, buf=T_idx)
+            lookup_table_field(D, microstructure_id, T_idx, lookup_table_thermal_diff)
+            lookup_table_field(D_H, microstructure_id, T_idx, lookup_table_hydrogen_diff)
+            
+            if diffusion_scheme == 2:
+                if S_field is None or S_field.shape != D.shape:
+                    S_field = np.zeros_like(D, dtype=float)
+                lookup_table_field(S_field, microstructure_id, T_idx, lookup_table_solubility)
 
         # Simulation book keeping and progressbar stuff
         if current_phase != "just diffusion":
             safe_close_pbar(pbar)
             phase_total_time = total_max_time - current_time
             total_iterations = int(np.ceil(phase_total_time / dt)) + 1
-            pbar = tqdm(total=total_iterations, bar_format=bar_format,
-                        desc='Simulating diffusion at RT')
+            pbar = tqdm(total=total_iterations, bar_format=bar_format, desc='Simulating diffusion at RT')
             current_phase = "just diffusion"
 
+    # Build the index lookups/indexes for temperature dependend D, D_H and possibly S
+    if current_phase != "just diffusion":  # No need to do this again during diffusion at RT
+        T_idx = compute_T_idx_v2(u0, spec_tmin, spec_step, lookup_temp_grid.size, buf=T_idx)
+        lookup_table_field(D, microstructure_id, T_idx, lookup_table_thermal_diff)
+        lookup_table_field(D_H, microstructure_id, T_idx, lookup_table_hydrogen_diff)
+        if diffusion_scheme == 2:
+            if S_field is None or S_field.shape != D.shape:
+                S_field = np.zeros_like(D, dtype=float)
+            lookup_table_field(S_field, microstructure_id, T_idx, lookup_table_solubility)
+
     # Actual calculation here
-    u0, u, h0, h, dudx2, dudy2, dhdx2, dhdy2, = do_timestep(simulation_type, current_phase, u0, u, D, h0, h, D_H, mask,
+    u0, u, h0, h, dudx2, dudy2, dhdx2, dhdy2 = do_timestep(simulation_type, current_phase, u0, u, D, h0, h, D_H, mask,
                                                             faces, dt, dx2, dy2, ign_ab, fr_le, th, su_h, we, dx, dudx2,
                                                             dudy2, dhdx2, dhdy2, room_temp, precomputed_powers, sol_fn,
                                                             row_inside_const, two_over_sqrt_pi,
@@ -288,7 +302,7 @@ while current_time <= total_max_time:
                                                             hydro_inside, boundary_temperature, inv_dx2, inv_dy2,
                                                             coef_robin_x_air, coef_robin_y_air, coef_robin_x_h2,
                                                             coef_robin_y_h2, coef_robin_x_cu, coef_robin_y_cu, t_room,
-                                                            joint_edge)
+                                                            joint_edge, diffusion_scheme, S_field)
 
     # Saving the simulation data
     if current_phase != "just diffusion":  # normal state, save every so often (~2s)
