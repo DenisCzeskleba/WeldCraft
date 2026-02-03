@@ -149,17 +149,12 @@ def initialize(simulation_type, nx, ny, dx, dy, le, we, th, su_h, su_w, fr_le, f
     # Get initial hydrogen concentration
     init_hydrogen_conc = get_value("h_cont_initial")
 
-    # Get initial heat diffusion coefficients
-    diff_coeff_bm = get_value("diff_coeff_bm")  # For base metal
-
-    # Get initial hydrogen diffusion coefficients
-    diff_coeff = get_value("diff_coeff_h")  # Not in [mm² / s]! Needs * (T ** 2.2285) - applied during simulation
-
     # Initialize matrix at cool temperature
     u0 = t_cool * np.ones((ny, nx))  # x should be horizontal! But in python the first entry is no. of rows!
     h0 = init_hydrogen_conc * np.ones((ny, nx))  # for now we just assume no atomic H in the weld sample when we start
-    D = diff_coeff_bm * np.ones((ny, nx))  # initiate with D = D_bm everywhere, set differences later
-    D_H = diff_coeff * np.ones((ny, nx))  # same but for hydrogen
+    D = np.zeros((ny, nx))  # initiate D so it exists, actual values are set before each time step
+    D_H = np.zeros((ny, nx))  # same but for hydrogen
+    microstructure_id = np.ones_like(D, dtype=np.int8)  # Initialze microstructure identifier matrix | 1 = base metal
 
     # Carve out the gaps in sample geometry, set to room temperature, set diffusion coefficients
     if simulation_type == "butt joint":
@@ -169,33 +164,30 @@ def initialize(simulation_type, nx, ny, dx, dy, le, we, th, su_h, su_w, fr_le, f
 
                 # Above and below the whole thing for nicer pictures and boundary conditions
                 # -5 for now for plotting purposes, change later maybe
-                if y < (fr_ab / dx) or y > (fr_ab + th + su_h) / dx:
+                if y < (fr_ab / dy) or y > (fr_ab + th + su_h) / dy:
                     # remember! we want x horizontal! BUT it needs to be second in [,] notation
                     u0[y, x] = t_room + get_value("temperature_offset")
                     h0[y, x] = get_value("hydrogen_offset")  # -5 for nicer display
-                    D[y, x] = get_value("diff_coeff_air")  # We want x horizontal! But is second in [,] notation
-                    D_H[y, x] = get_value("diff_coeff_h_air")  # We want x horizontal! But is second in [,] notation
+                    microstructure_id[y, x] = 0  # 0 = none | 1 = bm | 2 = wm | 3 = haz
 
                 # below weld samples | left and right of weld pool support
-                if (x < fr_le / dx or x > ((fr_le+su_w) / dx)) and y > (th + fr_ab) / dx:
+                if (x < fr_le / dx or x > ((fr_le+su_w) / dx)) and y > (th + fr_ab) / dy:
                     # remember! we want x horizontal! BUT it needs to be second in [,] notation
                     u0[y, x] = t_room + get_value("temperature_offset")
                     h0[y, x] = get_value("hydrogen_offset")  # -5 for nicer display
-                    D[y, x] = get_value("diff_coeff_air")  # We want x horizontal! But is second in [,] notation
-                    D_H[y, x] = get_value("diff_coeff_h_air")  # We want x horizontal! But is second in [,] notation
+                    microstructure_id[y, x] = 0  # 0 = none | 1 = bm | 2 = wm | 3 = haz
 
                 # where the actual weld beads go later, for now its "empty" at room temperature
                 if le/dx < x < ((le+we)/dx) and y < (th+fr_ab)/dy:
                     # remember! we want x horizontal! BUT it needs to be second in [,] notation
                     u0[y, x] = t_room + get_value("temperature_offset")
                     h0[y, x] = get_value("hydrogen_offset")  # -5 for nicer display
-                    D[y, x] = get_value("diff_coeff_air")  # We want x horizontal! But is second in [,] notation
-                    D_H[y, x] = get_value("diff_coeff_h_air")  # We want x horizontal! But is second in [,] notation
+                    microstructure_id[y, x] = 0  # 0 = none | 1 = bm | 2 = wm | 3 = haz
 
         u = u0.copy()
         h = h0.copy()
 
-        return u0, u, h0, h, D, D_H, t_cool, t_hot, t_room
+        return u0, u, h0, h, D, D_H, microstructure_id, t_cool, t_hot, t_room
 
     elif simulation_type == "lap joint":
 
@@ -204,35 +196,30 @@ def initialize(simulation_type, nx, ny, dx, dy, le, we, th, su_h, su_w, fr_le, f
 
                 # Above and below the whole thing for nicer pictures and boundary conditions
                 # -5 for now for plotting purposes, change later
-                if y < (fr_ab / dx) or y > (fr_ab + th + su_h) / dx:
+                if y < (fr_ab / dy) or y > (fr_ab + th + su_h) / dy:
                     # remember! we want x horizontal! BUT it needs to be second in [,] notation
                     u0[y, x] = t_room + get_value("temperature_offset")
                     h0[y, x] = get_value("hydrogen_offset")  # -5 for nicer display
-                    D[y, x] = get_value("diff_coeff_air")  # We want x horizontal! But is second in [,] notation
-                    D_H[y, x] = get_value("diff_coeff_h_air")  # We want x horizontal! But is second in [,] notation
+                    microstructure_id[y, x] = 0  # 0 = none | 1 = bm | 2 = wm | 3 = haz
 
-                # Right side above
-                # (depreciated for left below: x < le / dx and y > (th + fr_ab) / dx)
-                if x > le / dx and y < (fr_ab + th) / dx:
+                # Right side above | (depreciated but left below was: x < le / dx and y > (th + fr_ab) / dx))
+                if x > le / dx and y < (fr_ab + th) / dy:
                     # remember! we want x horizontal! BUT it needs to be second in [,] notation
                     u0[y, x] = t_room + get_value("temperature_offset")
                     h0[y, x] = get_value("hydrogen_offset")  # -5 for nicer display
-                    D[y, x] = get_value("diff_coeff_air")  # We want x horizontal! But is second in [,] notation
-                    D_H[y, x] = get_value("diff_coeff_h_air")  # We want x horizontal! But is second in [,] notation
+                    microstructure_id[y, x] = 0  # 0 = none | 1 = bm | 2 = wm | 3 = haz
 
                 # Gap between the plates (For now, 1 dy thick only)
                 if x <= fr_le / dx and ((fr_ab + th - we) / dy <= y < (fr_ab + th) / dy):
                     # remember! we want x horizontal! BUT it needs to be second in [,] notation
                     u0[y, x] = t_room + get_value("temperature_offset")
                     h0[y, x] = get_value("hydrogen_offset")  # -5 for nicer display
-                    D[y, x] = get_value("diff_coeff_air")  # We want x horizontal! But is second in [,] notation
-                    D_H[y, x] = get_value("diff_coeff_h_air")  # We want x horizontal! But is second in [,] notation
+                    microstructure_id[y, x] = 0  # 0 = none | 1 = bm | 2 = wm | 3 = haz
 
                 # For simplicity apply base metal coefficients here to the overlap
                 if (fr_le / dx < x <= le / dx) and ((fr_ab + th - we) / dy <= y < (fr_ab + th) / dy):
                     # remember! we want x horizontal! BUT it needs to be second in [,] notation
-                    D[y, x] = get_value("diff_coeff_bm")  # We want x horizontal! But is second in [,] notation
-                    D_H[y, x] = get_value("diff_coeff_h")  # We want x horizontal! But is second in [,] notation
+                    pass  # Placeholder for future special handling
 
                 # Initialize the lower plate w. hydrogen. Linear equillibrium with hydro_inside inside and 0 outside.
                 if (fr_ab + th) / dy < y < (fr_ab + th + su_h) / dy:
@@ -243,7 +230,7 @@ def initialize(simulation_type, nx, ny, dx, dy, le, we, th, su_h, su_w, fr_le, f
         u = u0.copy()
         h = h0.copy()
 
-        return u0, u, h0, h, D, D_H, t_cool, t_hot, t_room
+        return u0, u, h0, h, D, D_H, microstructure_id, t_cool, t_hot, t_room
 
     elif simulation_type == "iso3690":
 
@@ -252,22 +239,24 @@ def initialize(simulation_type, nx, ny, dx, dy, le, we, th, su_h, su_w, fr_le, f
 
                 # Above and below the whole thing for nicer pictures and boundary conditions
                 # -5 for now for plotting purposes, change later maybe
-                if y < (fr_ab / dx) or y > (fr_ab + th) / dx:
+                if y < (fr_ab / dy) or y > (fr_ab + th) / dy:
                     # remember! we want x horizontal! BUT it needs to be second in [,] notation
                     u0[y, x] = t_room + get_value("temperature_offset")
                     h0[y, x] = get_value("hydrogen_offset")  # -5 for nicer display
-                    D[y, x] = get_value("diff_coeff_air")  # We want x horizontal! But is second in [,] notation
-                    D_H[y, x] = get_value("diff_coeff_h_air")  # We want x horizontal! But is second in [,] notation
+                    microstructure_id[y, x] = 0  # 0 = none | 1 = bm | 2 = wm | 3 = haz
 
                 # Left and right edges for nicer videos
                 if x < fr_le / dx or x >= ((fr_le + le) / dx):
                     # remember! we want x horizontal! BUT it needs to be second in [,] notation
                     u0[y, x] = t_room + get_value("temperature_offset")
                     h0[y, x] = get_value("hydrogen_offset")  # -5 for nicer display
-                    D[y, x] = get_value("diff_coeff_air")  # We want x horizontal! But is second in [,] notation
-                    D_H[y, x] = get_value("diff_coeff_h_air")  # We want x horizontal! But is second in [,] notation
+                    microstructure_id[y, x] = 0  # 0 = none | 1 = bm | 2 = wm | 3 = haz
 
         u = u0.copy()
         h = h0.copy()
 
-        return u0, u, h0, h, D, D_H, t_cool, t_hot, t_room
+        return u0, u, h0, h, D, D_H, microstructure_id, t_cool, t_hot, t_room
+
+    else:
+        print(f"[ERROR] Unknown simulation_type '{simulation_type}'. Use 'butt joint', 'lap joint', or 'iso3690'.")
+        raise SystemExit(1)
