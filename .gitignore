@@ -17,15 +17,16 @@
 !01_Resources/.gitkeep
 !02_Results/.gitkeep
 
-# personal / scratch / notes (don't publish)
+# personal / scratch / notes
 03_CodeBase/00_Stuff_To_Do.py
 03_CodeBase/i0_Example_Workflow.py
 03_CodeBase/i1_ReadMe.txt
 03_CodeBase/i98_test-stuff-here.py
 03_CodeBase/i99_T dep dcoeff thoughts.py
 
-# local agent instructions (don't publish)
+# local agent instructions/interactions
 AGENTS.md
+REFRACTOR_NOTES.md
 
 # Large binary artifacts
 **/*.mp4
