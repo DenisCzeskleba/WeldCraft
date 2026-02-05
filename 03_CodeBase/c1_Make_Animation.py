@@ -1,4 +1,5 @@
 import h5py
+import os
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 from matplotlib.ticker import MultipleLocator
@@ -12,9 +13,19 @@ import numpy as np
 # Suppress config prints during import, so no double prints. They’ll still appear when scripts run directly.
 with contextlib.redirect_stdout(io.StringIO()):
     from b4_functions import in_results, load_param_config_json
+    import b2_param_config
 
 # ---------------------------- 1. Load Data from HDF5 File ----------------------------
-file_name = str(in_results("00_diffusion_array.h5"))  # <-- set the file you want
+USE_MANUAL_FILE = True
+# MANUAL_FILE = str(in_results("00_diffusion_array.h5"))
+MANUAL_FILE = r"F:\01_BAM-Main-Simulation\02_Results\03_Batch-Executions\diffusion_array_diffusion_scheme-2.h5"
+
+if USE_MANUAL_FILE:
+    file_name = MANUAL_FILE
+else:
+    file_name = str(b2_param_config.file_name)
+    if not os.path.exists(file_name):
+        file_name = MANUAL_FILE
 param_cfg = load_param_config_json(file_name)
 animation_file_name = param_cfg["animation_name"]
 loaded_u_arrays = []

@@ -5,6 +5,7 @@ import shutil
 import subprocess
 import signal
 import atexit
+import itertools
 from typing import Tuple
 from b4_functions import in_results
 
@@ -130,6 +131,14 @@ def modify_config(changes: dict):
         f.writelines(new_lines)
 
 
+def build_runs_from_sweep(sweep: dict, mode: str = "zip"):
+    """Build run dicts from a sweep map. mode='zip' or 'product'."""
+    keys = list(sweep.keys())
+    values = [sweep[k] for k in keys]
+    rows = itertools.product(*values) if mode == "product" else zip(*values)
+    return [dict(zip(keys, row)) for row in rows]
+
+
 def run_script(script_name: str) -> int:
     try:
         subprocess.run([sys.executable, script_name], check=True)
@@ -148,21 +157,18 @@ if __name__ == "__main__":
         # "weld_simulation_style": "ellipse",   # example of string change
     }
 
-    # PARAM SWEEP:
-    no_of_weld_beads_values = [16, 10]
-    bead_height_values = [2.5, 4]
-    time_between_values = [480, 660]
-    time_after_last_weld_values = [480, 660]
+    # Write your changes here. Remember to set zip or product below.
+    sweep = {
+        "diffusion_scheme": [0, 2],
+        # "no_of_weld_beads": [16, 10],
+        # "bead_height": [2.5, 4],
+        # "time_for_weld_bead": [480, 660],
+        # "time_after_last_weld": [480, 660],
+    }
+    SWEEP_MODE = "zip"  # "zip" pairs by index; "product" uses all combinations
 
     # Build runs you can extend later
-    runs = []
-    for n, h, tb, talw in zip(no_of_weld_beads_values, bead_height_values, time_between_values, time_after_last_weld_values):
-        runs.append({
-            "no_of_weld_beads": n,
-            "bead_height": h,
-            "time_for_weld_bead": tb,
-            "time_after_last_weld": talw,
-        })
+    runs = build_runs_from_sweep(sweep, mode=SWEEP_MODE)
 
     RUN_ANIMATION = True   # False = skip c1_Make_Animation.py
 
