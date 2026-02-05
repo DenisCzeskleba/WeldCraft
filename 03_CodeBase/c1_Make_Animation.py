@@ -16,7 +16,7 @@ with contextlib.redirect_stdout(io.StringIO()):
     import b2_param_config
 
 # ---------------------------- 1. Load Data from HDF5 File ----------------------------
-USE_MANUAL_FILE = True
+USE_MANUAL_FILE = False
 # MANUAL_FILE = str(in_results("00_diffusion_array.h5"))
 MANUAL_FILE = r"F:\01_BAM-Main-Simulation\02_Results\03_Batch-Executions\diffusion_array_diffusion_scheme-2.h5"
 

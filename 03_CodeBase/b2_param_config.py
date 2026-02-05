@@ -24,38 +24,38 @@ from b4_functions import in_results, get_spec_value_at_temp, find_min_max_value
 """ ------------------------------------------------ User Settings  ------------------------------------------------ """
 """ ---------------------- Main Simulation Settings ----------------------------- """
 model_version = "0.4.0"  # For provenance. Don't change, unless you customize logic. Then its yours, Yay!
-simulation_type = "butt joint"  # Options: "lap joint", "butt joint" and "iso3690"
-diffusion_scheme = 2  # 0 = centered D * Laplacian) | 1 = flux-conservative | 2 = flux + mu-driven (solubility incl.)
+simulation_type = "iso3690"  # Options: "lap joint", "butt joint" and "iso3690"
+diffusion_scheme = 0  # 0 = centered D * Laplacian) | 1 = flux-conservative | 2 = flux + mu-driven (solubility incl.)
 
 """ ---------------------- Spacial Discretization (Step Size) ------------------- """
-dx = 0.5  # step size in x direction - if not equal to dy, tripple check solver logic!
-dy = 0.5  # step size in y direction - if not equal to dx, tripple check solver logic!
+dx = 0.2  # step size in x direction - if not equal to dy, tripple check solver logic!
+dy = 0.2  # step size in y direction - if not equal to dx, tripple check solver logic!
 
 """ ---------------------- Weld Bead Settings ----------------------------------- """
 add_bead_mode = "regular_intervals"  # Options: "regular_intervals" and "interpass_temperature_controlled"
 
-no_of_weld_beads = 26  # no of "blocks" during welding: Butt joint: must be %2, fit bead_height! Lap Joint: max 4
-bead_height = 2.5  # Half of weld beads * height should probably be weld thickness (th) (2.8 for iso?
-bead_width = 12  # Using half of weld width (we) for blocks, for ellipses maybe 3/4-ish of weld width? 60%?
+no_of_weld_beads = 3  # no of "blocks" during welding: Butt joint: must be %2, fit bead_height! Lap Joint: max 4
+bead_height = 2.4  # Half of weld beads * height should probably be weld thickness (th) (2.8 for iso?
+bead_width = 8  # Using half of weld width (we) for blocks, for ellipses maybe 3/4-ish of weld width? 60%?
 bead_scales = [(1.0, 1.0), (1.0, 1.0), (1.6, 1.6), (3.0, 3.0)]  # Used for lap joint and iso3690
 
 """ ---------------------- Temporal Discretization and Settings ------------------ """
 time_before_first_weld = 5  # Run simulation before starting with first bead. Not necessary, makes for nicer videos [s]
-time_for_weld_bead = 480  # Time between welds. Weld block gets added at 0. Temp. held for time_heat_hold. [s]
-time_after_last_weld = 480  # Time after last weld. BC in sample edge is held at t_cool this long. [s]
+time_for_weld_bead = 60  # Time between welds. Weld block gets added at 0. Temp. held for time_heat_hold. [s]
+time_after_last_weld = 30  # Time after last weld. BC in sample edge is held at t_cool this long. [s]
 time_heat_hold = 3  # Force the new weld block to have this temp for so long [s]
 
-time_cooling_to_rt = 1 * 60 * 60  # For now set to 1.5h. During, forced linear cooling as BC in sample metal
-time_diffusion_at_rt = 7 * 24 * 60 * 60  # 2d * 24h * 60min * 60s
+time_cooling_to_rt = 1 * 1 * 10  # For now set to 1.5h. During, forced linear cooling as BC in sample metal
+time_diffusion_at_rt = 1 * 1 * 1 * 60  # 2d * 24h * 60min * 60s
 
 safety_factor = 1  # 1 = stable (lower maybe better temporal convergence) | Default and recommended = 1
 use_big_dt_override = True  # Diffusion at RT slow -> large automatic dt possible. Manual override to use smaller dt?
 big_dt_override = 300  # If override = True, calculate every so many seconds, even if you could go faster.
 
 """ ---------------------- Relevant (Starting) Conditions - Thermal ------------- """
-t_cool = 160  # Interpass temperature basically. Used for BCs, initialization and as starting temperature
+t_cool = 20  # Interpass temperature basically. Used for BCs, initialization and as starting temperature
 t_hot = 1600  # Weld bead temperature. Adjust as needed
-t_room = 20  # Surrounding temperature. Use 0.001 instead of 0 for ISO3690!
+t_room = 0.001  # Surrounding temperature. Use 0.001 instead of 0 for ISO3690!
 
 haz_creation_temperature = 1350  # Checks if some bm area got hotter than this, creates HAZ there
 haz_creation_check_time_window = 10  # no need to check for ever after welding, but maybe for 10s?
@@ -77,8 +77,8 @@ t_conv_h2 = 5e-4   # - UNUSED - [W/mm²/K], ≈ 500 W/m²K, underside, forced hy
 file_name = str(in_results("00_diffusion_array.h5", mkdir=True))  # diffusion_array.h5"
 animation_name = str(in_results("00_diffusion_animation.mp4", mkdir=True))  # diffusion_animation.mp4
 
-s_per_frame_part1 = 2  # Save every so many seconds (dt is usually < 0.001s)
-animation_frame_stride = 10  # Only render every n-th frame (used in animation/video scripts)
+s_per_frame_part1 = 0.2  # Save every so many seconds (dt is usually < 0.001s)
+animation_frame_stride = 1  # Only render every n-th frame (used in animation/video scripts)
 
 use_sparse_saving_in_just_diffusion = True  # If True, save less often after welding (long RT diffusion)
 s_per_frame_just_diffusion_sparse = 300.0  # Seconds per save during just-diffusion phase when sparse saving is ON
@@ -155,13 +155,13 @@ material: none
 ] -inf, +inf ]: S = 0
 
 material: base_metal
-] -inf, +inf ]: S = 0.5
+] -inf, +inf ]: S = 1
 
 material: weld_metal
 ] -inf, +inf ]: S = 1
 
 material: HAZ
-] -inf, +inf ]: S = 0.5
+] -inf, +inf ]: S = 1
 """.strip()
 
 """ ------------------------------------------ Advanced and Resultant Setting  ------------------------------------- """

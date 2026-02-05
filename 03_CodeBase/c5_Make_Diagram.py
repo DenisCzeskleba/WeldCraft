@@ -31,7 +31,7 @@ with contextlib.redirect_stdout(io.StringIO()):
 USE_PHASE_TIMES = False
 
 # If USE_PHASE_TIMES is False (or attrs missing), use this manual list (seconds)
-manual_target_times_seconds = [5.1, 1430, 1700, 2950]
+manual_target_times_seconds = [5.0, 1430, 1700, 2950]
 
 # Tick grid style in mm (keep consistent across scripts)
 MAJOR_MM = 10
@@ -49,7 +49,7 @@ H_STEPPED_COLORS = True
 H_STEP_EDGES_PCT = list(range(0, 41, 2))    # 0,10,20,...,100 (edit to taste)
 
 # --- Fake zoom (crop in x) ---
-CROP_X_ENABLE = True
+CROP_X_ENABLE = False
 CROP_LEFT_MM = 30.0   # "hide" first 20 mm
 CROP_RIGHT_MM = 30.0   # "hide" last 30 mm
 

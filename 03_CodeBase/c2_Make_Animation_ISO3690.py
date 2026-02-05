@@ -189,10 +189,11 @@ im2 = ax2.imshow(loaded_h_arrays[0], cmap=cmap2, norm=norm2,
 # --- Draw static outline around regions where h == 0 ---
 # draw_static_outline(ax2, loaded_h_arrays[0], dx, dy, color='darkgrey', linewidth=1.0, alpha=0.8)
 
-diff_coeff_h = param_cfg["diff_coeff_h"]
-exponent = int(math.floor(math.log10(diff_coeff_h)))
-mantissa = diff_coeff_h / 10**exponent
-ax2.set_title(r"Hydrogen Diffusion" + "\n" + fr"$D_{{H}} = {mantissa:.2f} \times 10^{{{exponent}}}  [\,\mathrm{{mm}}^2/\mathrm{{s}}$]")
+# diff_coeff_h = param_cfg["diff_coeff_h"]
+# exponent = int(math.floor(math.log10(diff_coeff_h)))
+# mantissa = diff_coeff_h / 10**exponent
+# ax2.set_title(r"Hydrogen Diffusion" + "\n" + fr"$D_{{H}} = {mantissa:.2f} \times 10^{{{exponent}}}  [\,\mathrm{{mm}}^2/\mathrm{{s}}$]")
+ax2.set_title(r"Hydrogen Diffusion")
 ax2.set_xlabel('x [mm]')
 ax2.set_ylabel('y [mm]')
 cbar_ax2 = fig.add_axes([0.9, 0.15, 0.03, 0.7])

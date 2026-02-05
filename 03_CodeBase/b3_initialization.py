@@ -231,7 +231,7 @@ def initialize(simulation_type, nx, ny, dx, dy, le, we, th, su_h, su_w, fr_le, f
         u = u0.copy()
         h = h0.copy()
 
-        return u0, u, h0, h, D, D_H, microstructure_id, t_cool, t_hot, t_room
+        return u0, u, h0, h, D, D_H, S, microstructure_id, t_cool, t_hot, t_room
 
     elif simulation_type == "iso3690":
 
@@ -256,7 +256,7 @@ def initialize(simulation_type, nx, ny, dx, dy, le, we, th, su_h, su_w, fr_le, f
         u = u0.copy()
         h = h0.copy()
 
-        return u0, u, h0, h, D, D_H, microstructure_id, t_cool, t_hot, t_room
+        return u0, u, h0, h, D, D_H, S, microstructure_id, t_cool, t_hot, t_room
 
     else:
         print(f"[ERROR] Unknown simulation_type '{simulation_type}'. Use 'butt joint', 'lap joint', or 'iso3690'.")

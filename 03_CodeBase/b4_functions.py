@@ -588,7 +588,7 @@ def manipulate_simulation(sim_type, u0, h0, cwi, cci, t_weld_metal, h_weld_metal
         # On first activation in this pass, update material maps
         if cci == 0:
             # Select only NEWLY added weld material - weld goes into previous "air" only
-            new_area = inside_ellipse & microstructure_id == 0  # Only "air" should be able to be filled.
+            new_area = inside_ellipse & (microstructure_id == 0)  # Only "air" should be able to be filled.
 
             microstructure_id[new_area] = 2  # weld metal
             mask, faces = compute_mask_and_faces(microstructure_id)
