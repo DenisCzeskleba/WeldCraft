@@ -28,10 +28,10 @@ with contextlib.redirect_stdout(io.StringIO()):
 
 # If True, pick target times from HDF5 attrs:
 #   total_time_to_first_weld, total_time_to_cooling, total_time_to_rt, total_max_time
-USE_PHASE_TIMES = True
+USE_PHASE_TIMES = False
 
 # If USE_PHASE_TIMES is False (or attrs missing), use this manual list (seconds)
-manual_target_times_seconds = [970, 1430, 1700, 2950]
+manual_target_times_seconds = [5.1, 1430, 1700, 2950]
 
 # Tick grid style in mm (keep consistent across scripts)
 MAJOR_MM = 10
@@ -39,6 +39,7 @@ MINOR_MM = 2
 
 # Save DPI for paper-ready images
 SAVE_DPI = 300
+SHOW_FIRST_PLOT = True
 
 # --- Discrete (stepped) color options ---
 TEMP_STEPPED_COLORS = True
@@ -451,8 +452,12 @@ for i, t_target in enumerate(target_times_seconds, start=1):
 
     fig.tight_layout()
 
-    out_name = str(in_results("04_Diagrams", f"diagram_{i:02d}_t{t_real:.0f}s.png", mkdir=True))
-    fig.savefig(out_name, dpi=SAVE_DPI)
-    plt.close(fig)
+    if SHOW_FIRST_PLOT:
+        plt.show()
+        break
+    else:
+        out_name = str(in_results("04_Diagrams", f"diagram_{i:02d}_t{t_real:.0f}s.png", mkdir=True))
+        fig.savefig(out_name, dpi=SAVE_DPI)
+        plt.close(fig)
 
 print("Done. Rendered diagrams for times (s):", [float(t) for t in target_times_seconds])

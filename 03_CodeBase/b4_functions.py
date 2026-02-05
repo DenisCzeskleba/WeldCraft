@@ -5,6 +5,8 @@ from numba import jit
 import matplotlib.pyplot as plt
 from pathlib import Path
 
+_SPEC_V2_R_GAS = 8.315
+
 
 def get_value(param_name):
     import b2_param_config  # local import avoids circular import at module load time
@@ -203,6 +205,211 @@ def format_simulation_time(seconds):
         return ' '.join(result)
 
 
+def build_temperature_grid(tmin_c, tmax_c, step_c):
+    return np.arange(tmin_c, tmax_c + step_c, step_c, dtype=float)
+
+
+def temp_to_table_idx(temp_c, tmin_c, step_c, table_len):
+    idx = int(round((temp_c - tmin_c) / step_c))
+    return max(0, min(idx, table_len - 1))
+
+
+def parse_spec_v2(spec, var_name):
+    import re
+
+    blocks = {}
+    current = None
+    for raw in spec.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        m = re.match(r"material:\s*(\w+)", line, re.I)
+        if m:
+            current = m.group(1)
+            blocks[current] = []
+            continue
+        pat = rf"\]\s*([^,]+)\s*,\s*([^\]]+)\s*\]\s*:\s*{var_name}\s*=\s*(.+)"
+        m = re.match(pat, line)
+        if m and current:
+            a_str, b_str, expr = m.groups()
+
+            def num(s):
+                s = s.strip().lower()
+                if s in ("-inf", "-infty"):
+                    return -np.inf
+                if s in ("+inf", "inf", "infty"):
+                    return np.inf
+                return float(s)
+
+            blocks[current].append((num(a_str), num(b_str), expr.strip()))
+    return blocks
+
+
+def get_spec_value_at_temp(spec, materials, temp_c, var_name, *, agg="max", skip_none=True):
+    parsed = parse_spec_v2(spec, var_name)
+    T_C = float(temp_c)
+    T_K = T_C + 273.15
+    safe_env = {"np": np, "exp": np.exp, "log": np.log, "pow": np.power, "R": _SPEC_V2_R_GAS}
+
+    values = []
+    for name in materials:
+        if skip_none and name.lower() == "none":
+            continue
+        val = None
+        for (a, b, expr) in parsed.get(name, []):
+            if T_C > a and T_C <= b:
+                local_env = {"T": T_C, "T_C": T_C, "T_K": T_K}
+                val = eval(expr, safe_env, local_env)
+                break
+        if val is None:
+            val = 0.0
+        values.append(float(val))
+
+    if not values:
+        return 0.0
+    if agg == "max":
+        return max(values)
+    if agg == "min":
+        return min(values)
+    raise ValueError(f"Unknown agg: {agg}")
+
+
+def build_lookup_table(spec, materials, T_grid_C, var_name):
+    parsed = parse_spec_v2(spec, var_name)
+    T_C = T_grid_C
+    T_K = T_C + 273.15
+    table = np.zeros((len(materials), T_C.size), dtype=float)
+    safe_env = {"np": np, "exp": np.exp, "log": np.log, "pow": np.power, "R": _SPEC_V2_R_GAS}
+
+    for mid, name in enumerate(materials):
+        out = np.zeros_like(T_C)
+        for (a, b, expr) in parsed.get(name, []):
+            mask = (T_C > a) & (T_C <= b)
+            if not np.any(mask):
+                continue
+            local_env = {"T": T_C[mask], "T_C": T_C[mask], "T_K": T_K[mask]}
+            out[mask] = eval(expr, safe_env, local_env)
+        table[mid, :] = out
+    return table
+
+
+def assert_nonneg_tables(table_D, table_DH, table_S):
+    if not np.isfinite(table_D).all():
+        raise ValueError("lookup_table_thermal_diff has NaN/Inf values")
+    if not np.isfinite(table_DH).all():
+        raise ValueError("lookup_table_hydrogen_diff has NaN/Inf values")
+    if not np.isfinite(table_S).all():
+        raise ValueError("lookup_table_solubility has NaN/Inf values")
+    if np.any(table_D < 0.0):
+        raise ValueError("lookup_table_thermal_diff has negative values")
+    if np.any(table_DH < 0.0):
+        raise ValueError("lookup_table_hydrogen_diff has negative values")
+    if np.any(table_S < 0.0):
+        raise ValueError("lookup_table_solubility has negative values")
+
+
+def find_min_max_value(spec, materials, var_name, *, t_min=None, t_max=None, step_c=1.0,
+                       agg="max", skip_none=True):
+    """
+    Return max/min value of a spec over a temperature range.
+    If t_min/t_max are None, infer finite bounds from the spec.
+    """
+    if t_min is None or t_max is None:
+        parsed = parse_spec_v2(spec, var_name)
+        bounds = []
+        for name in materials:
+            if skip_none and name.lower() == "none":
+                continue
+            for (a, b, _) in parsed.get(name, []):
+                if np.isfinite(a):
+                    bounds.append(a)
+                if np.isfinite(b):
+                    bounds.append(b)
+        if not bounds:
+            raise ValueError("find_min_max_value needs t_min/t_max (no finite bounds in spec).")
+        t_min = min(bounds) if t_min is None else t_min
+        t_max = max(bounds) if t_max is None else t_max
+
+    if t_max < t_min:
+        raise ValueError("t_max must be >= t_min")
+
+    grid = build_temperature_grid(t_min, t_max, step_c)
+    table = build_lookup_table(spec, materials, grid, var_name)
+    if agg == "max":
+        return float(np.max(table))
+    if agg == "min":
+        return float(np.min(table))
+    raise ValueError(f"Unknown agg: {agg}")
+
+
+def compute_T_idx_v2(u0, tmin_c, step_c, table_len, buf=None):
+    if buf is None or buf.shape != u0.shape or buf.dtype != np.int32:
+        buf = np.empty(u0.shape, dtype=np.int32)
+    idx = np.rint((u0 - tmin_c) / step_c).astype(np.int32, copy=False)
+    np.clip(idx, 0, table_len - 1, out=buf)
+    return buf
+
+
+@jit(nopython=True, cache=True)
+def lookup_table_field(out, microstructure_id, T_idx, table):
+    ny, nx = out.shape
+    for j in range(ny):
+        for i in range(nx):
+            out[j, i] = table[microstructure_id[j, i], T_idx[j, i]]
+    return out
+
+
+@jit(nopython=True, fastmath=True, cache=True)
+def update_thermal_and_hydrogen_diffusivity_from_u0(D, D_H, microstructure_id, u0, tmin_c, step_c,
+                                                    table_len, table_D, table_DH):
+    """
+    Fused lookup: compute T_idx from u0 and fill D and D_H in one pass.
+    Updates are in-place; returns (D, D_H) for readability at call sites.
+    """
+    ny, nx = u0.shape
+    for j in range(ny):
+        for i in range(nx):
+
+            idx = int(np.rint((u0[j, i] - tmin_c) / step_c))  # Find nearest precalculated value/index
+
+            if idx < 0:  # Clamp cuz we got an error otherwise
+                idx = 0
+            elif idx >= table_len:  # Same on the right
+                idx = table_len - 1
+
+            mid = microstructure_id[j, i]  # Get that value
+            D[j, i] = table_D[mid, idx]  # Assign new thermal diffusion coefficient in D
+            D_H[j, i] = table_DH[mid, idx]  # Assign new hydrogen diffusion coefficient in D_H
+
+    return D, D_H
+
+
+@jit(nopython=True, fastmath=True, cache=True)
+def update_diffusivity_and_solubility_fields_from_u0(D, D_H, S_field, microstructure_id, u0, tmin_c, step_c,
+                                                     table_len, table_D, table_DH, table_S):
+    """
+    Fused lookup: compute T_idx from u0 and fill D, D_H, and S in one pass.
+    Updates are in-place; returns (D, D_H, S) for readability at call sites.
+    """
+    ny, nx = u0.shape
+    for j in range(ny):
+        for i in range(nx):
+
+            idx = int(np.rint((u0[j, i] - tmin_c) / step_c))  # Find nearest precalculated value/index
+
+            if idx < 0:  # Clamp cuz we got an error otherwise
+                idx = 0
+            elif idx >= table_len:  # Same on the right
+                idx = table_len - 1
+
+            mid = microstructure_id[j, i]  # Get that value
+            D[j, i] = table_D[mid, idx]  # Assign new thermal diffusion coefficient in D
+            D_H[j, i] = table_DH[mid, idx]  # Assign new hydrogen diffusion coefficient in D_H
+            S_field[j, i] = table_S[mid, idx]  # Assign solubilityx field (in principle temperature dependency possible)
+
+    return D, D_H, S_field
+
+
 def generate_change_steps():
 
     time_before_first_weld = get_value("time_before_first_weld")  # in seconds
@@ -219,8 +426,8 @@ def generate_change_steps():
 
 
 # Manipulate the simulation area - add welds, change diffusion, heat input etc.
-def manipulate_simulation(sim_type, u0, h0, D, D_H, cwi, cci, t_weld_metal, h_weld_metal, D_bm, D_weld_metal, D_haz,
-                          D_H_weld_metal, dx, dy, le, we, fr_ab, fr_be, su_h, fr_le, th, mask, faces, new_area):
+def manipulate_simulation(sim_type, u0, h0, cwi, cci, t_weld_metal, h_weld_metal, dx, dy, le, we, fr_ab, fr_be, su_h,
+                          fr_le, th, microstructure_id, mask, faces, new_area):
 
     if sim_type == "butt joint":
 
@@ -248,7 +455,7 @@ def manipulate_simulation(sim_type, u0, h0, D, D_H, cwi, cci, t_weld_metal, h_we
 
         # Only compute the "newly created material cells" once per bead activation (cci==0),
         # then reuse that same new_area for the remainder of the heat-hold window.
-        if cci == 0 and not isinstance(D, (int, float)):
+        if cci == 0:
 
             # --- Geometric bead shape mask (half ellipse) ---
             inside_ellipse = (distance <= 1.0)
@@ -258,10 +465,8 @@ def manipulate_simulation(sim_type, u0, h0, D, D_H, cwi, cci, t_weld_metal, h_we
             else:  # Odd - right bead
                 inside_ellipse &= (col_grid <= center_y)  # include the center line
 
-            fillable = (D != D_bm) & (D != D_haz) & (D != D_weld_metal)
-
-            # base new area from geometry
-            new_area = inside_ellipse & fillable
+            fillable = microstructure_id == 0  # Only "air" should be able to be filled.
+            new_area = inside_ellipse & fillable  # base new area from geometry
 
             # ---- "gravity fill": for each column, fill everything below the lowest selected pixel ----
             cols_with_weld = np.any(new_area, axis=0)
@@ -283,9 +488,8 @@ def manipulate_simulation(sim_type, u0, h0, D, D_H, cwi, cci, t_weld_metal, h_we
                 new_area |= (fill_mask & fillable)
 
             # Update material maps only once (geometry changes)
-            D[new_area] = D_weld_metal
-            D_H[new_area] = D_H_weld_metal
-            mask, faces = compute_mask_and_faces(D)
+            microstructure_id[new_area] = 2  # 0 = none | 1 = bm | 2 = wm | 3 = haz
+            mask, faces = compute_mask_and_faces(microstructure_id)
 
         # Apply heat & hydrogen only to the (cached) new_area
         u0[new_area] = t_weld_metal
@@ -324,18 +528,17 @@ def manipulate_simulation(sim_type, u0, h0, D, D_H, cwi, cci, t_weld_metal, h_we
         # Quarter-ellipse region: right & above the lap corner
         inside_ellipse = (distance <= 1.0) & (col_grid >= x0) & (row_grid <= y0)
 
-        # Select only NEWLY added weld material - weld goes into previous "air" only
-        new_area = inside_ellipse & (D != D_bm) & (D != D_haz)
+        # Select NEWLY added weld material - weld goes into previous "air" only # 0 = none | 1 = bm | 2 = wm | 3 = haz
+        new_area = inside_ellipse & (microstructure_id != 1) & (microstructure_id != 3)
 
         # Update heat & hydrogen for new weld bead area
         u0[new_area] = t_weld_metal
         h0[new_area] = h_weld_metal
 
         # On first activation in this pass, update material maps
-        if cci == 0 and not isinstance(D, (int, float)):
-            D[new_area] = D_weld_metal
-            D_H[new_area] = D_H_weld_metal
-            mask, faces = compute_mask_and_faces(D)
+        if cci == 0:
+            microstructure_id[new_area] = 2  # weld metal
+            mask, faces = compute_mask_and_faces(microstructure_id)
 
     elif sim_type == "iso3690":
 
@@ -383,35 +586,33 @@ def manipulate_simulation(sim_type, u0, h0, D, D_H, cwi, cci, t_weld_metal, h_we
         inside_ellipse = (distance <= 1.0) & (row_grid <= y0)
 
         # On first activation in this pass, update material maps
-        if cci == 0 and not isinstance(D, (int, float)):
+        if cci == 0:
             # Select only NEWLY added weld material - weld goes into previous "air" only
-            new_area = inside_ellipse & (D != D_bm) & (D != D_haz) & (D != D_weld_metal)
+            new_area = inside_ellipse & microstructure_id == 0  # Only "air" should be able to be filled.
 
-            D[new_area] = D_weld_metal
-            D_H[new_area] = D_H_weld_metal
-            mask, faces = compute_mask_and_faces(D)
+            microstructure_id[new_area] = 2  # weld metal
+            mask, faces = compute_mask_and_faces(microstructure_id)
 
         # Update heat & hydrogen for new weld bead area
         u0[new_area] = t_weld_metal
         h0[new_area] = h_weld_metal
 
+    return u0, h0, microstructure_id, mask, faces, new_area
 
-    return u0, h0, D, D_H, mask, faces, new_area
 
-
-def compute_mask_and_faces(D: np.ndarray):
+def compute_mask_and_faces(microstructure_id: np.ndarray):
     """
-    From the current temperature diffusion map D, build:
-      - mask:      material cells (D>0)
+    From the current microstructure id map, build:
+      - mask:      material cells (microstructure_id>0)
       - faces:     (left_face, right_face, up_face, down_face, boundary_cells)
                    where each face mask selects material cells whose outward neighbor is air.
     Recompute this ONLY when geometry/material map changes (e.g., after adding a weld bead).
     """
 
-    if not isinstance(D, np.ndarray):  # For debug: Fail early and loundly!
-        raise TypeError("D must be a numpy array")
+    if not isinstance(microstructure_id, np.ndarray):  # For debug: Fail early and loudly!
+        raise TypeError("microstructure_id must be a numpy array")
 
-    mask = D > 0
+    mask = microstructure_id > 0
 
     # build shifted masks without wrap
     in_left = np.zeros_like(mask, dtype=bool); in_left[:, 1:] = mask[:, :-1]
@@ -521,8 +722,7 @@ def apply_dirichlet_faces_hydro_jit(field, field0, D_h, precomputed_powers, u0_i
 
                 lap = (right_n - 2.0 * u0 + left_n) * inv_dx2 + (up_n - 2.0 * u0 + down_n) * inv_dy2
 
-                D_eff = D_h[j, i] * precomputed_powers[u0_idx[j, i]]
-                field[j, i] = u0 + D_eff * dt * lap
+                field[j, i] = u0 + D_h[j, i] * dt * lap
 
 
 def compute_u0_idx(u0: np.ndarray, table_len: int, buf: np.ndarray | None = None) -> np.ndarray:
@@ -534,6 +734,14 @@ def compute_u0_idx(u0: np.ndarray, table_len: int, buf: np.ndarray | None = None
         buf = np.empty(u0.shape, dtype=np.int32)
     np.clip(u0.astype(np.int32, copy=False), 0, table_len - 1, out=buf)
     return buf
+
+
+@jit(nopython=True, fastmath=True, cache=True)
+def harmonic_mean(a, b):
+    s = a + b
+    if s <= 0.0:
+        return 0.0
+    return 2.0 * a * b / s
 
 
 @jit(nopython=True, fastmath=True, cache=True)
@@ -600,8 +808,153 @@ def update_u_with_jit(u, u0, D, dt, dudx2, dudy2):
     return u
 
 
+@jit(nopython=True, fastmath=True, cache=True)
+def update_h_flux(h, h0, D_H, dt, inv_dx2, inv_dy2, mask):
+    ny, nx = h0.shape
+
+    for j in range(1, ny - 1):
+        for i in range(1, nx - 1):
+            if mask is not None and not mask[j, i]:
+                continue
+
+            Dij = D_H[j, i]
+            if Dij <= 0.0:
+                continue
+
+            hij = h0[j, i]
+
+            De = harmonic_mean(Dij, D_H[j, i + 1])
+            Dw = harmonic_mean(Dij, D_H[j, i - 1])
+            Dn = harmonic_mean(Dij, D_H[j - 1, i])
+            Ds = harmonic_mean(Dij, D_H[j + 1, i])
+
+            term_x = (De * (h0[j, i + 1] - hij) - Dw * (hij - h0[j, i - 1])) * inv_dx2
+            term_y = (Ds * (h0[j + 1, i] - hij) - Dn * (hij - h0[j - 1, i])) * inv_dy2
+
+            h[j, i] = hij + dt * (term_x + term_y)
+
+    return h
+
+@jit(nopython=True, fastmath=True, cache=True)
+def update_h_flux_mu(h, h0, D_H, S_field, dt, inv_dx2, inv_dy2, mask):
+    ny, nx = h0.shape
+
+    for j in range(1, ny - 1):
+        for i in range(1, nx - 1):
+            if mask is not None and not mask[j, i]:
+                continue
+
+            Si = S_field[j, i]
+            if Si <= 0.0:
+                h[j, i] = h0[j, i]
+                continue
+
+            Dij = D_H[j, i]
+            if Dij <= 0.0:
+                continue
+
+            hij = h0[j, i]
+            muij = hij / Si
+
+            Se = S_field[j, i + 1]
+            mue = (h0[j, i + 1] / Se) if Se > 0.0 else muij
+            De = harmonic_mean(Dij, D_H[j, i + 1])
+
+            Sw = S_field[j, i - 1]
+            muw = (h0[j, i - 1] / Sw) if Sw > 0.0 else muij
+            Dw = harmonic_mean(Dij, D_H[j, i - 1])
+
+            Sn = S_field[j - 1, i]
+            mun = (h0[j - 1, i] / Sn) if Sn > 0.0 else muij
+            Dn = harmonic_mean(Dij, D_H[j - 1, i])
+
+            Ss = S_field[j + 1, i]
+            mus = (h0[j + 1, i] / Ss) if Ss > 0.0 else muij
+            Ds = harmonic_mean(Dij, D_H[j + 1, i])
+
+            term_x = (De * (mue - muij) - Dw * (muij - muw)) * inv_dx2
+            term_y = (Ds * (mus - muij) - Dn * (muij - mun)) * inv_dy2
+
+            h[j, i] = hij + dt * (term_x + term_y)
+
+    return h
+
+
+@jit(nopython=True, fastmath=True, cache=True)
+def update_h_flux_const(h, h0, D_H, dt, inv_dx2, inv_dy2, mask):
+    ny, nx = h0.shape
+
+    for j in range(1, ny - 1):
+        for i in range(1, nx - 1):
+            if mask is not None and not mask[j, i]:
+                continue
+
+            Dij = D_H[j, i]
+            if Dij <= 0.0:
+                continue
+
+            hij = h0[j, i]
+
+            De = harmonic_mean(Dij, D_H[j, i + 1])
+            Dw = harmonic_mean(Dij, D_H[j, i - 1])
+            Dn = harmonic_mean(Dij, D_H[j - 1, i])
+            Ds = harmonic_mean(Dij, D_H[j + 1, i])
+
+            term_x = (De * (h0[j, i + 1] - hij) - Dw * (hij - h0[j, i - 1])) * inv_dx2
+            term_y = (Ds * (h0[j + 1, i] - hij) - Dn * (hij - h0[j - 1, i])) * inv_dy2
+
+            h[j, i] = hij + dt * (term_x + term_y)
+
+    return h
+
+
+@jit(nopython=True, fastmath=True, cache=True)
+def update_h_flux_mu_const(h, h0, D_H, S_field, dt, inv_dx2, inv_dy2, mask):
+    ny, nx = h0.shape
+
+    for j in range(1, ny - 1):
+        for i in range(1, nx - 1):
+            if mask is not None and not mask[j, i]:
+                continue
+
+            Si = S_field[j, i]
+            if Si <= 0.0:
+                h[j, i] = h0[j, i]
+                continue
+
+            Dij = D_H[j, i]
+            if Dij <= 0.0:
+                continue
+
+            hij = h0[j, i]
+            muij = hij / Si
+
+            Se = S_field[j, i + 1]
+            mue = (h0[j, i + 1] / Se) if Se > 0.0 else muij
+            De = harmonic_mean(Dij, D_H[j, i + 1])
+
+            Sw = S_field[j, i - 1]
+            muw = (h0[j, i - 1] / Sw) if Sw > 0.0 else muij
+            Dw = harmonic_mean(Dij, D_H[j, i - 1])
+
+            Sn = S_field[j - 1, i]
+            mun = (h0[j - 1, i] / Sn) if Sn > 0.0 else muij
+            Dn = harmonic_mean(Dij, D_H[j - 1, i])
+
+            Ss = S_field[j + 1, i]
+            mus = (h0[j + 1, i] / Ss) if Ss > 0.0 else muij
+            Ds = harmonic_mean(Dij, D_H[j + 1, i])
+
+            term_x = (De * (mue - muij) - Dw * (muij - muw)) * inv_dx2
+            term_y = (Ds * (mus - muij) - Dn * (muij - mun)) * inv_dy2
+
+            h[j, i] = hij + dt * (term_x + term_y)
+
+    return h
+
+
 @jit(nopython=True)
-def update_h_with_jit(h, h0, dhdx2, dhdy2, D_H, dt, u0, u0_idx, precomputed_powers):
+def update_h_with_jit(h, h0, dhdx2, dhdy2, D_H, dt):
     """
     Update the hydrogen concentration field (h) based on diffusion over a time step, influenced by the heat field u0.
 
@@ -632,7 +985,7 @@ def update_h_with_jit(h, h0, dhdx2, dhdy2, D_H, dt, u0, u0_idx, precomputed_powe
     for j in range(ny):
         for i in range(nx):
             if D_H[j, i] >= 0:
-                h[j, i] = h0[j, i] + (D_H[j, i] * dt * precomputed_powers[u0_idx[j, i]]) * (dhdx2[j, i] + dhdy2[j, i])
+                h[j, i] = h0[j, i] + (D_H[j, i] * dt) * (dhdx2[j, i] + dhdy2[j, i])
     return h
 
 
@@ -640,15 +993,14 @@ def do_timestep(sim_type, current_phase, u0, u, D, h0, h, D_H, mask, faces, dt, 
                 dy2, ign_ab, fr_le, th, su_h, we, dx, dudx2, dudy2, dhdx2, dhdy2, room_temp, precomputed_powers, sol_fn,
                 row_inside_const, two_over_sqrt_pi, current_forced_part_temperature, pipe_line_inner_hydrogen,
                 hydro_inside, boundary_temperature, inv_dx2, inv_dy2, coef_robin_x_air, coef_robin_y_air,
-                coef_robin_x_h2, coef_robin_y_h2, coef_robin_x_cu, coef_robin_y_cu, t_room, joint_edge):
+                coef_robin_x_h2, coef_robin_y_h2, coef_robin_x_cu, coef_robin_y_cu, t_room, joint_edge,
+                diffusion_scheme, S_field):
 
     # ------------------------------------------ Debug / Safe Guards  -------------------------------------------------
     assert u0 is not u, "u0 and u must be different arrays"  # Guards against accidental aliasing from the caller
     assert h0 is not h, "h0 and h must be different arrays"
-    assert not np.shares_memory(u0, u), "u0 and u share memory (view overlap)"  # Catch overlapping views too
-    assert not np.shares_memory(h0, h), "h0 and h share memory (view overlap)"
 
-    u0_idx = compute_u0_idx(u0, precomputed_powers.shape[0])
+    u0_idx = 1  # compute_u0_idx(u0, precomputed_powers.shape[0])
 
     #  -------------------- Propagate with forward-difference in time, central-difference in space --------------------
     if current_phase != "just diffusion":  # normal calculation including heat, 99% of the time this happens.
@@ -662,12 +1014,22 @@ def do_timestep(sim_type, current_phase, u0, u, D, h0, h, D_H, mask, faces, dt, 
             u = update_u_with_jit(u, u0, D, dt, dudx2, dudy2)
 
         # ------------------- Hydrogen -------------------
-        dhdx2, dhdy2 = compute_field_derivatives(h0, dx2, dy2, dhdx2, dhdy2)
-        h = update_h_with_jit(h, h0, dhdx2, dhdy2, D_H, dt, u0, u0_idx, precomputed_powers)
+        if diffusion_scheme == 0:  # Traditional simplified Fick diffusion
+            dhdx2, dhdy2 = compute_field_derivatives(h0, dx2, dy2, dhdx2, dhdy2)
+            h = update_h_with_jit(h, h0, dhdx2, dhdy2, D_H, dt)
+        elif diffusion_scheme == 1:  # Added flux conservation
+            h = update_h_flux(h, h0, D_H, dt, inv_dx2, inv_dy2, mask)
+        else:  # Chemical potential driven diffusion
+            h = update_h_flux_mu(h, h0, D_H, S_field, dt, inv_dx2, inv_dy2, mask)
 
     else:  # Constant temperature! Hydrogen diffusion with dt_big and a changed D_H (happens in main loop)
-        dhdx2, dhdy2 = compute_field_derivatives(h0, dx2, dy2, dhdx2, dhdy2)
-        h = update_u_with_jit(h, h0, D_H, dt, dhdx2, dhdy2)  # Use the heat jit function for temperature independent D_H
+        if diffusion_scheme == 0:  # Traditional simplified Fick diffusion
+            dhdx2, dhdy2 = compute_field_derivatives(h0, dx2, dy2, dhdx2, dhdy2)
+            h = update_u_with_jit(h, h0, D_H, dt, dhdx2, dhdy2)  # Use the heat jit function for temperature independent D_H
+        elif diffusion_scheme == 1:  # Added flux conservation
+            h = update_h_flux_const(h, h0, D_H, dt, inv_dx2, inv_dy2, mask)
+        else:
+            h = update_h_flux_mu_const(h, h0, D_H, S_field, dt, inv_dx2, inv_dy2, mask)
 
     # ------------------------------------------- Boundary conditions -------------------------------------------------
 

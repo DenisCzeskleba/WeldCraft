@@ -69,9 +69,9 @@ cmap2 = plt.get_cmap('viridis').copy()
 cmap2.set_under('0.85')
 im2 = ax2.imshow(loaded_h_arrays[0], cmap=cmap2, norm=norm2,
                  extent=extent, origin="upper", aspect="equal")
-diff_coeff_h = param_cfg["diff_coeff_h"]
-exponent = int(math.floor(math.log10(diff_coeff_h)))
-mantissa = diff_coeff_h / 10**exponent
+# diff_coeff_h = param_cfg["diff_coeff_h"]
+# exponent = int(math.floor(math.log10(diff_coeff_h)))
+# mantissa = diff_coeff_h / 10**exponent
 # ax2.set_title(r"Hydrogen Diffusion" + "\n" + fr"$D_{{H}} = {mantissa:.2f} \times 10^{{{exponent}}}  [\,\mathrm{{mm}}^2/\mathrm{{s}}$]")
 ax2.set_title(r"Hydrogen Diffusion")
 ax2.set_xlabel('x [mm]')

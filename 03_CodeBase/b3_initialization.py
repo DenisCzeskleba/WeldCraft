@@ -22,9 +22,9 @@ def weld_sample(sim_type):
                            <--- fr_le ----><--- su_w ---><--- fr_ri ---->
         """
 
-        le = ri = 30
+        le = ri = 60
         we = 20
-        th = 10
+        th = 30
         su_h = 10
         su_w = 30
         fr_le = le - (su_w - we)/2
@@ -154,6 +154,7 @@ def initialize(simulation_type, nx, ny, dx, dy, le, we, th, su_h, su_w, fr_le, f
     h0 = init_hydrogen_conc * np.ones((ny, nx))  # for now we just assume no atomic H in the weld sample when we start
     D = np.zeros((ny, nx))  # initiate D so it exists, actual values are set before each time step
     D_H = np.zeros((ny, nx))  # same but for hydrogen
+    S = np.zeros((ny, nx))  # same but for solubility field
     microstructure_id = np.ones_like(D, dtype=np.int8)  # Initialze microstructure identifier matrix | 1 = base metal
 
     # Carve out the gaps in sample geometry, set to room temperature, set diffusion coefficients
@@ -187,7 +188,7 @@ def initialize(simulation_type, nx, ny, dx, dy, le, we, th, su_h, su_w, fr_le, f
         u = u0.copy()
         h = h0.copy()
 
-        return u0, u, h0, h, D, D_H, microstructure_id, t_cool, t_hot, t_room
+        return u0, u, h0, h, D, D_H, S, microstructure_id, t_cool, t_hot, t_room
 
     elif simulation_type == "lap joint":
 
