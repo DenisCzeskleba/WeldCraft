@@ -43,7 +43,8 @@ u0, u, h0, h, D, D_H, S, microstructure_id, t_cool, t_hot, t_room = initialize(s
 
 # ---------- Welding parameters ----------
 t_weld_metal = get_value("t_hot")  # Temperature of the new weld bead
-h_weld_metal = get_value("hydro_weld_metal")  # Hydrogen content. Usually just in %
+thermal_diffusion_calibration = get_value("thermal_diffusion_calibration")
+h_weld_metal = get_value("hydro_weld_metal")  # Keep standard input; hydrogen solver is skipped in calibration mode
 keep_temp_duration = get_value("time_heat_hold")  # Force the new weld block to have this temp for so long
 haz_creation_temperature = get_value("haz_creation_temperature")  # Temperature for HAZ creation
 room_temp = get_value("t_room")  # Room temperature
@@ -250,6 +251,10 @@ while current_time <= total_max_time:
 
     # ---- DIFFUSION AT ROOM TEMPERATURE PHASE ----
     else:
+        if thermal_diffusion_calibration:  # During calibration we can skip diffusion at RT, duhhh
+            current_time = total_max_time
+            break  # Thermal calibration mode: skip hydrogen-only RT diffusion phase
+
         # Change to much bigger dt and to static temps and simplify diffusion (not temp depend. anymore)
         if not dt_changed:
             dt = dt_big  # Switch to larger time step for diffusion phase
@@ -281,7 +286,11 @@ while current_time <= total_max_time:
     # Build the index lookups/indexes for temperature dependend D, D_H and possibly S
     if current_phase != "just diffusion":  # No need to do this again during diffusion at RT
 
-        if diffusion_scheme == 2:  # Include updating S in addition do D and D_H
+        if thermal_diffusion_calibration:  # Used for thermal calibration, so we dont need D_H or S
+            D = update_thermal_diffusivity_from_u0(
+                D, microstructure_id, u0, precalc_min_temp, precalc_grid_step, lookup_temp_grid.size,
+                lookup_table_thermal_diff)
+        elif diffusion_scheme == 2:  # Include updating S in addition do D and D_H
             D, D_H, S = update_diffusivity_and_solubility_fields_from_u0(
                 D, D_H, S, microstructure_id, u0, precalc_min_temp, precalc_grid_step, lookup_temp_grid.size,
                 lookup_table_thermal_diff, lookup_table_hydrogen_diff, lookup_table_solubility)
@@ -299,7 +308,8 @@ while current_time <= total_max_time:
                                                            hydro_inside, boundary_temperature, inv_dx2, inv_dy2,
                                                            coef_robin_x_air, coef_robin_y_air, coef_robin_x_h2,
                                                            coef_robin_y_h2, coef_robin_x_cu, coef_robin_y_cu, t_room,
-                                                           joint_edge, diffusion_scheme, S)
+                                                           joint_edge, diffusion_scheme, S,
+                                                           thermal_diffusion_calibration)
 
     # Saving the simulation data
     if current_phase != "just diffusion":  # normal state, save every so often (~2s)

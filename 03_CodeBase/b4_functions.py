@@ -293,18 +293,18 @@ def build_lookup_table(spec, materials, T_grid_C, var_name):
     return table
 
 
-def assert_nonneg_tables(table_D, table_DH, table_S):
+def assert_nonneg_tables(table_D, table_DH=None, table_S=None):
     if not np.isfinite(table_D).all():
         raise ValueError("lookup_table_thermal_diff has NaN/Inf values")
-    if not np.isfinite(table_DH).all():
+    if table_DH is not None and not np.isfinite(table_DH).all():
         raise ValueError("lookup_table_hydrogen_diff has NaN/Inf values")
-    if not np.isfinite(table_S).all():
+    if table_S is not None and not np.isfinite(table_S).all():
         raise ValueError("lookup_table_solubility has NaN/Inf values")
     if np.any(table_D < 0.0):
         raise ValueError("lookup_table_thermal_diff has negative values")
-    if np.any(table_DH < 0.0):
+    if table_DH is not None and np.any(table_DH < 0.0):
         raise ValueError("lookup_table_hydrogen_diff has negative values")
-    if np.any(table_S < 0.0):
+    if table_S is not None and np.any(table_S < 0.0):
         raise ValueError("lookup_table_solubility has negative values")
 
 
@@ -382,6 +382,29 @@ def update_thermal_and_hydrogen_diffusivity_from_u0(D, D_H, microstructure_id, u
             D_H[j, i] = table_DH[mid, idx]  # Assign new hydrogen diffusion coefficient in D_H
 
     return D, D_H
+
+
+@jit(nopython=True, fastmath=True, cache=True)
+def update_thermal_diffusivity_from_u0(D, microstructure_id, u0, tmin_c, step_c, table_len, table_D):
+    """
+    Compute only thermal diffusivity D from temperature and material id.
+    Used in thermal calibration mode to skip all hydrogen-side table work.
+    """
+    ny, nx = u0.shape
+    for j in range(ny):
+        for i in range(nx):
+
+            idx = int(np.rint((u0[j, i] - tmin_c) / step_c))
+
+            if idx < 0:
+                idx = 0
+            elif idx >= table_len:
+                idx = table_len - 1
+
+            mid = microstructure_id[j, i]
+            D[j, i] = table_D[mid, idx]
+
+    return D
 
 
 @jit(nopython=True, fastmath=True, cache=True)
@@ -995,13 +1018,15 @@ def do_timestep(sim_type, current_phase, u0, u, D, h0, h, D_H, mask, faces, dt, 
                 row_inside_const, two_over_sqrt_pi, current_forced_part_temperature, pipe_line_inner_hydrogen,
                 hydro_inside, boundary_temperature, inv_dx2, inv_dy2, coef_robin_x_air, coef_robin_y_air,
                 coef_robin_x_h2, coef_robin_y_h2, coef_robin_x_cu, coef_robin_y_cu, t_room, joint_edge,
-                diffusion_scheme, S_field):
+                diffusion_scheme, S_field, thermal_diffusion_calibration=False):
 
     # ------------------------------------------ Debug / Safe Guards  -------------------------------------------------
     assert u0 is not u, "u0 and u must be different arrays"  # Guards against accidental aliasing from the caller
     assert h0 is not h, "h0 and h must be different arrays"
 
-    u0_idx = 1  # compute_u0_idx(u0, precomputed_powers.shape[0])
+    u0_idx = 1  # compute_u0_idx(u0, precomputed_powers.shape[0])  ' Depreciated? clean this up!
+
+    hydrogen_enabled = not thermal_diffusion_calibration
 
     #  -------------------- Propagate with forward-difference in time, central-difference in space --------------------
     if current_phase != "just diffusion":  # normal calculation including heat, 99% of the time this happens.
@@ -1015,22 +1040,24 @@ def do_timestep(sim_type, current_phase, u0, u, D, h0, h, D_H, mask, faces, dt, 
             u = update_u_with_jit(u, u0, D, dt, dudx2, dudy2)
 
         # ------------------- Hydrogen -------------------
-        if diffusion_scheme == 0:  # Traditional simplified Fick diffusion
-            dhdx2, dhdy2 = compute_field_derivatives(h0, dx2, dy2, dhdx2, dhdy2)
-            h = update_h_with_jit(h, h0, dhdx2, dhdy2, D_H, dt)
-        elif diffusion_scheme == 1:  # Added flux conservation
-            h = update_h_flux(h, h0, D_H, dt, inv_dx2, inv_dy2, mask)
-        else:  # Chemical potential driven diffusion
-            h = update_h_flux_mu(h, h0, D_H, S_field, dt, inv_dx2, inv_dy2, mask)
+        if hydrogen_enabled:
+            if diffusion_scheme == 0:  # Traditional simplified Fick diffusion
+                dhdx2, dhdy2 = compute_field_derivatives(h0, dx2, dy2, dhdx2, dhdy2)
+                h = update_h_with_jit(h, h0, dhdx2, dhdy2, D_H, dt)
+            elif diffusion_scheme == 1:  # Added flux conservation
+                h = update_h_flux(h, h0, D_H, dt, inv_dx2, inv_dy2, mask)
+            else:  # Chemical potential driven diffusion
+                h = update_h_flux_mu(h, h0, D_H, S_field, dt, inv_dx2, inv_dy2, mask)
 
     else:  # Constant temperature! Hydrogen diffusion with dt_big and a changed D_H (happens in main loop)
-        if diffusion_scheme == 0:  # Traditional simplified Fick diffusion
-            dhdx2, dhdy2 = compute_field_derivatives(h0, dx2, dy2, dhdx2, dhdy2)
-            h = update_u_with_jit(h, h0, D_H, dt, dhdx2, dhdy2)  # Use the heat jit function for temperature independent D_H
-        elif diffusion_scheme == 1:  # Added flux conservation
-            h = update_h_flux_const(h, h0, D_H, dt, inv_dx2, inv_dy2, mask)
-        else:
-            h = update_h_flux_mu_const(h, h0, D_H, S_field, dt, inv_dx2, inv_dy2, mask)
+        if hydrogen_enabled:
+            if diffusion_scheme == 0:  # Traditional simplified Fick diffusion
+                dhdx2, dhdy2 = compute_field_derivatives(h0, dx2, dy2, dhdx2, dhdy2)
+                h = update_u_with_jit(h, h0, D_H, dt, dhdx2, dhdy2)  # Use the heat jit function for temperature independent D_H
+            elif diffusion_scheme == 1:  # Added flux conservation
+                h = update_h_flux_const(h, h0, D_H, dt, inv_dx2, inv_dy2, mask)
+            else:
+                h = update_h_flux_mu_const(h, h0, D_H, S_field, dt, inv_dx2, inv_dy2, mask)
 
     # ------------------------------------------- Boundary conditions -------------------------------------------------
 
@@ -1038,13 +1065,16 @@ def do_timestep(sim_type, current_phase, u0, u, D, h0, h, D_H, mask, faces, dt, 
                                    ign_ab, th, su_h, we, dx, mask, faces, sol_fn, row_inside_const, two_over_sqrt_pi,
                                    precomputed_powers, pipe_line_inner_hydrogen, hydro_inside, boundary_temperature,
                                    inv_dx2, inv_dy2, coef_robin_x_air, coef_robin_y_air, coef_robin_x_h2,
-                                   coef_robin_y_h2, coef_robin_x_cu, coef_robin_y_cu, t_room, joint_edge, u0_idx)
+                                   coef_robin_y_h2, coef_robin_x_cu, coef_robin_y_cu, t_room, joint_edge, u0_idx,
+                                   thermal_diffusion_calibration)
 
     if current_phase != "just diffusion":
         u0, u = u, u0  # swap references (no copy)
-        h0, h = h, h0
+        if hydrogen_enabled:
+            h0, h = h, h0
     else:  # Temperature field doesnt evolve in "just diffusion"
-        h0, h = h, h0
+        if hydrogen_enabled:
+            h0, h = h, h0
 
     return u0, u, h0, h, dudx2, dudy2, dhdx2, dhdy2
 
@@ -1252,9 +1282,10 @@ def custom_boundary(sim_type, current_phase, current_forced_part_temperature, dt
                     su_h, we, dx, mask, faces, sol_fn, row_inside_const, two_over_sqrt_pi, precomputed_powers,
                     pipe_line_inner_hydrogen, hydro_inside, boundary_temperature, inv_dx2, inv_dy2, coef_robin_x_air,
                     coef_robin_y_air, coef_robin_x_h2, coef_robin_y_h2, coef_robin_x_cu, coef_robin_y_cu, t_room,
-                    joint_edge, u0_idx):
+                    joint_edge, u0_idx, thermal_diffusion_calibration=False):
 
     left_face, right_face, up_face, down_face, boundary_cells = faces
+    hydrogen_enabled = not thermal_diffusion_calibration
 
     # Options for material edges:
     # apply_butt_edges(u, u0, joint_edge, left=("reflective", None), right=("reflective", None))
@@ -1267,9 +1298,9 @@ def custom_boundary(sim_type, current_phase, current_forced_part_temperature, dt
         Pre-welding phase is here for possible future expansion. Right now its only used to make pretty animations.
         Heat:       We reflect on ALL internal boundaries effectivly leaving the initial conditions intact.
                     The outer most parts dont get identified as faces, so set first/last row/column manually!
-                
+
         Hydrogen:   Since the new lap joint may be initialized with some initial hydrogen concentration,
-                    we also reflect the hydrogen inside. Consider shortening this phase or changing the 
+                    we also reflect the hydrogen inside. Consider shortening this phase or changing the
                     boundary condition if redistribution within the bulk is unwanted.
                     The outer most parts dont get identified as faces, so set first/last row/column manually!
         """
@@ -1277,14 +1308,16 @@ def custom_boundary(sim_type, current_phase, current_forced_part_temperature, dt
         # ------------- Boundary of Steel / Air -------------
         # Technically right now we calculate hydro twice on the inside (reflect, then robin)
         reflect_neumann_faces(u, u0, faces)  # TEMPERATURE
-        reflect_neumann_faces(h, h0, faces)  # HYDROGEN
+        if hydrogen_enabled:
+            reflect_neumann_faces(h, h0, faces)  # HYDROGEN
 
         if sim_type == "butt joint":
             # ------ TEMPERATURE: Neumann Boundary (reflective) on left and right edge of the sample
             apply_butt_edges(u, u0, joint_edge, left=("reflective", None), right=("reflective", None))
 
             # ------ HYDROGEN: Neumann Boundary (reflective) on left and right edge of the sample
-            apply_butt_edges(h, h0, joint_edge, left=("reflective", None), right=("reflective", None))
+            if hydrogen_enabled:
+                apply_butt_edges(h, h0, joint_edge, left=("reflective", None), right=("reflective", None))
 
         elif sim_type == "lap joint":
 
@@ -1293,16 +1326,16 @@ def custom_boundary(sim_type, current_phase, current_forced_part_temperature, dt
                             right=("reflective", None))
 
             # ------ HYDROGEN: Neumann Boundary (reflective) on left and right edge of the sample
-            apply_lap_edges(h, h0, joint_edge, left_above=("reflective", None), left_below=("reflective", None),
-                            right=("reflective", None))
+            if hydrogen_enabled:
+                apply_lap_edges(h, h0, joint_edge, left_above=("reflective", None), left_below=("reflective", None),
+                                right=("reflective", None))
 
-            # ---- HYDROGEN INSIDE THE PIPELINE ----
-            if pipe_line_inner_hydrogen == "constant":
-                h[row_inside_const, :] = hydro_inside  # constant hydrogen concentration on the inside?
-
-            elif pipe_line_inner_hydrogen == "variable":
-                pipeline_complicated_boundary(row_inside_const, dx, u0, D_h, sol_fn, h, two_over_sqrt_pi, dt,
-                                              precomputed_powers)
+                # ---- HYDROGEN INSIDE THE PIPELINE ----
+                if pipe_line_inner_hydrogen == "constant":
+                    h[row_inside_const, :] = hydro_inside  # constant hydrogen concentration on the inside?
+                elif pipe_line_inner_hydrogen == "variable":
+                    pipeline_complicated_boundary(row_inside_const, dx, u0, D_h, sol_fn, h, two_over_sqrt_pi, dt,
+                                                  precomputed_powers)
 
         elif sim_type == "iso3690":
 
@@ -1310,7 +1343,8 @@ def custom_boundary(sim_type, current_phase, current_forced_part_temperature, dt
             apply_butt_edges(u, u0, joint_edge, left=("reflective", None), right=("reflective", None))
 
             # ------ HYDROGEN: Neumann Boundary (reflective) on left and right edge of the sample
-            apply_butt_edges(h, h0, joint_edge, left=("reflective", None), right=("reflective", None))
+            if hydrogen_enabled:
+                apply_butt_edges(h, h0, joint_edge, left=("reflective", None), right=("reflective", None))
 
     elif current_phase == "welding":
 
@@ -1326,8 +1360,10 @@ def custom_boundary(sim_type, current_phase, current_forced_part_temperature, dt
                              right=("constant", boundary_temperature))
 
             # ------ HYDROGEN: Current: Dirichlet Boundary ("constant) | Other: Neumann Boundary ("reflective")
-            apply_butt_edges(h, h0, joint_edge, left=("constant", 0), right=("constant", 0))
-            apply_dirichlet_faces(h, h0, D_h, precomputed_powers, u0_idx, faces, dt, inv_dx2, inv_dy2, outer_value=0.0)  # Face Dirichlet (Set to 0)
+            if hydrogen_enabled:
+                apply_butt_edges(h, h0, joint_edge, left=("constant", 0), right=("constant", 0))
+                apply_dirichlet_faces(h, h0, D_h, precomputed_powers, u0_idx, faces, dt, inv_dx2, inv_dy2,
+                                      outer_value=0.0)  # Face Dirichlet (Set to 0)
 
         elif sim_type == "lap joint":
 
@@ -1336,20 +1372,21 @@ def custom_boundary(sim_type, current_phase, current_forced_part_temperature, dt
                             left_below=("constant", boundary_temperature), right=("constant", boundary_temperature))
 
             # ------ HYDROGEN: Current: Dirichlet Boundary ("constant) | Other: Neumann Boundary ("reflective")
-            apply_lap_edges(h, h0, joint_edge, left_above=("constant", 0),
-                            left_below=("constant", 0), right=("constant", 0))
+            if hydrogen_enabled:
+                apply_lap_edges(h, h0, joint_edge, left_above=("constant", 0),
+                                left_below=("constant", 0), right=("constant", 0))
 
-            # ---- Stuff for inside the pipe line ----
-            if pipe_line_inner_hydrogen == "constant":
-                h[row_inside_const, :] = hydro_inside  # constant hydrogen concentration on the inside?
+                # ---- Stuff for inside the pipe line ----
+                if pipe_line_inner_hydrogen == "constant":
+                    h[row_inside_const, :] = hydro_inside  # constant hydrogen concentration on the inside?
+                elif pipe_line_inner_hydrogen == "variable":
+                    pipeline_complicated_boundary(row_inside_const, dx, u0, D_h, sol_fn, h, two_over_sqrt_pi, dt,
+                                                  precomputed_powers)
 
-            elif pipe_line_inner_hydrogen == "variable":
-                pipeline_complicated_boundary(row_inside_const, dx, u0, D_h, sol_fn, h, two_over_sqrt_pi, dt,
-                                              precomputed_powers)
-
-            # Zero H at all steel–air faces EXCEPT the inside row
-            faces_not_inside = mask_faces_except_row(faces, row_inside_const, h.shape)
-            apply_dirichlet_faces(h, h0, D_h, precomputed_powers, u0_idx, faces_not_inside, dt, inv_dx2, inv_dy2, outer_value=0.0)  # Face Dirichlet (Set to 0)
+                # Zero H at all steel-air faces EXCEPT the inside row
+                faces_not_inside = mask_faces_except_row(faces, row_inside_const, h.shape)
+                apply_dirichlet_faces(h, h0, D_h, precomputed_powers, u0_idx, faces_not_inside, dt, inv_dx2, inv_dy2,
+                                      outer_value=0.0)  # Face Dirichlet (Set to 0)
 
         elif sim_type == "iso3690":
             # We cooled all around once as tho it was free floating in air.
@@ -1357,7 +1394,9 @@ def custom_boundary(sim_type, current_phase, current_forced_part_temperature, dt
             apply_robin_cooling_iso3690_jit_faces(u, u0, D, left_face, right_face, up_face, down_face, dt, inv_dx2,
                                                   inv_dy2, coef_robin_x_cu, coef_robin_y_cu, ign_ab, t_room)
 
-            apply_dirichlet_faces(h, h0, D_h, precomputed_powers, u0_idx, faces, dt, inv_dx2, inv_dy2, outer_value=0.0)  # Face Dirichlet (Set to 0)
+            if hydrogen_enabled:
+                apply_dirichlet_faces(h, h0, D_h, precomputed_powers, u0_idx, faces, dt, inv_dx2, inv_dy2,
+                                      outer_value=0.0)  # Face Dirichlet (Set to 0)
 
     elif current_phase == "cooling":
 
@@ -1368,34 +1407,39 @@ def custom_boundary(sim_type, current_phase, current_forced_part_temperature, dt
             # ------ TEMPERATURE: Nothing needed here
 
             # ------ HYDROGEN: Current: Dirichlet Boundary ("constant) | Other: Neumann Boundary ("reflective")
-            apply_butt_edges(h, h0, joint_edge, left=("constant", 0), right=("constant", 0))
-            apply_dirichlet_faces(h, h0, D_h, precomputed_powers, u0_idx, faces, dt, inv_dx2, inv_dy2, outer_value=0.0)  # Face Dirichlet (Set to 0)
+            if hydrogen_enabled:
+                apply_butt_edges(h, h0, joint_edge, left=("constant", 0), right=("constant", 0))
+                apply_dirichlet_faces(h, h0, D_h, precomputed_powers, u0_idx, faces, dt, inv_dx2, inv_dy2,
+                                      outer_value=0.0)  # Face Dirichlet (Set to 0)
 
         elif sim_type == "lap joint":
             # ------ TEMPERATURE: Nothing needed here
 
             # ------ HYDROGEN: Current: Dirichlet Boundary ("constant) | Other: Neumann Boundary ("reflective")
-            apply_lap_edges(h, h0, joint_edge, left_above=("constant", 0),
-                            left_below=("constant", 0), right=("constant", 0))
+            if hydrogen_enabled:
+                apply_lap_edges(h, h0, joint_edge, left_above=("constant", 0),
+                                left_below=("constant", 0), right=("constant", 0))
 
-            # ---- Stuff for inside the pipe line ----
-            if pipe_line_inner_hydrogen == "constant":
-                h[row_inside_const, :] = hydro_inside  # constant hydrogen concentration on the inside?
+                # ---- Stuff for inside the pipe line ----
+                if pipe_line_inner_hydrogen == "constant":
+                    h[row_inside_const, :] = hydro_inside  # constant hydrogen concentration on the inside?
+                elif pipe_line_inner_hydrogen == "variable":
+                    pipeline_complicated_boundary(row_inside_const, dx, u0, D_h, sol_fn, h, two_over_sqrt_pi, dt,
+                                                  precomputed_powers)
 
-            elif pipe_line_inner_hydrogen == "variable":
-                pipeline_complicated_boundary(row_inside_const, dx, u0, D_h, sol_fn, h, two_over_sqrt_pi, dt,
-                                              precomputed_powers)
-
-            # Zero H at all steel–air faces EXCEPT the inside row
-            faces_not_inside = mask_faces_except_row(faces, row_inside_const, h.shape)
-            apply_dirichlet_faces(h, h0, D_h, precomputed_powers, u0_idx, faces_not_inside, dt, inv_dx2, inv_dy2, outer_value=0.0)  # Face Dirichlet (Set to 0)
+                # Zero H at all steel-air faces EXCEPT the inside row
+                faces_not_inside = mask_faces_except_row(faces, row_inside_const, h.shape)
+                apply_dirichlet_faces(h, h0, D_h, precomputed_powers, u0_idx, faces_not_inside, dt, inv_dx2, inv_dy2,
+                                      outer_value=0.0)  # Face Dirichlet (Set to 0)
 
         elif sim_type == "iso3690":
             # ------ TEMPERATURE: Nothing needed here
 
             # ------ HYDROGEN: Current: Dirichlet Boundary ("constant) | Other: Neumann Boundary ("reflective")
-            apply_butt_edges(h, h0, joint_edge, left=("constant", 0), right=("constant", 0))
-            apply_dirichlet_faces(h, h0, D_h, precomputed_powers, u0_idx, faces, dt, inv_dx2, inv_dy2, outer_value=0.0)  # Face Dirichlet (Set to 0)
+            if hydrogen_enabled:
+                apply_butt_edges(h, h0, joint_edge, left=("constant", 0), right=("constant", 0))
+                apply_dirichlet_faces(h, h0, D_h, precomputed_powers, u0_idx, faces, dt, inv_dx2, inv_dy2,
+                                      outer_value=0.0)  # Face Dirichlet (Set to 0)
 
     elif current_phase == "just diffusion":  # no heat anymore, hydrogen stays the same
 
@@ -1406,31 +1450,30 @@ def custom_boundary(sim_type, current_phase, current_forced_part_temperature, dt
             # ------ TEMPERATURE: Nothing needed here
 
             # ------ HYDROGEN: Current: Dirichlet Boundary ("constant) | Other: Neumann Boundary ("reflective")
-            apply_butt_edges(h, h0, joint_edge, left=("constant", 0), right=("constant", 0))
-            apply_dirichlet_faces_const(h, h0, D_h, faces, dt, inv_dx2, inv_dy2, outer_value=0.0)  # Constant Version!!
+            if hydrogen_enabled:
+                apply_butt_edges(h, h0, joint_edge, left=("constant", 0), right=("constant", 0))
+                apply_dirichlet_faces_const(h, h0, D_h, faces, dt, inv_dx2, inv_dy2, outer_value=0.0)  # Constant Version!!
 
         elif sim_type == "lap joint":
             # ------ TEMPERATURE: Nothing needed here
 
             # ------ HYDROGEN: Current: Dirichlet Boundary ("constant) | Other: Neumann Boundary ("reflective")
-            apply_lap_edges(h, h0, joint_edge, left_above=("constant", 0),
-                            left_below=("constant", 0), right=("constant", 0))
+            if hydrogen_enabled:
+                apply_lap_edges(h, h0, joint_edge, left_above=("constant", 0),
+                                left_below=("constant", 0), right=("constant", 0))
 
-            # ---- Stuff for inside the pipe line ----
-            if pipe_line_inner_hydrogen == "constant":
-                h[row_inside_const, :] = hydro_inside  # constant hydrogen concentration on the inside?
+                # ---- Stuff for inside the pipe line ----
+                if pipe_line_inner_hydrogen == "constant":
+                    h[row_inside_const, :] = hydro_inside  # constant hydrogen concentration on the inside?
+                elif pipe_line_inner_hydrogen == "variable":
+                    pipeline_complicated_boundary(row_inside_const, dx, u0, D_h, sol_fn, h, two_over_sqrt_pi, dt,
+                                                  precomputed_powers)
 
-            elif pipe_line_inner_hydrogen == "variable":
-                pipeline_complicated_boundary(row_inside_const, dx, u0, D_h, sol_fn, h, two_over_sqrt_pi, dt,
-                                              precomputed_powers)
-
-            # Zero H at all steel–air faces EXCEPT the inside row
-            faces_not_inside = mask_faces_except_row(faces, row_inside_const, h.shape)
-            apply_dirichlet_faces_const(h, h0, D_h, faces_not_inside, dt, inv_dx2, inv_dy2, outer_value=0.0)
+                # Zero H at all steel-air faces EXCEPT the inside row
+                faces_not_inside = mask_faces_except_row(faces, row_inside_const, h.shape)
+                apply_dirichlet_faces_const(h, h0, D_h, faces_not_inside, dt, inv_dx2, inv_dy2, outer_value=0.0)
 
     return u0, u, h0, h
-
-
 # lazy singleton so we don't have to pass it around
 _H_SOL_FN = None
 
@@ -1605,3 +1648,4 @@ def debug_show_DH(D, dx, dy,
 
     plt.tight_layout()
     plt.show(block=block)
+

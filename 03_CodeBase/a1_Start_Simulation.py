@@ -21,8 +21,13 @@ def run_script(script_name):
 
 if __name__ == "__main__":
 
-    simulation = "weld"  # weld | microstructure | simple_heat_diffusion
-    simulation_type = get_value("simulation_type")  # lap joint | butt joint | iso3690 - in b2_param_config.py
+    with contextlib.redirect_stdout(io.StringIO()):
+        simulation_type = get_value("simulation_type")  # lap joint | butt joint | iso3690 - in b2_param_config.py
+        thermal_calibration = get_value("thermal_diffusion_calibration")  # lap joint | butt joint | iso3690 - in b2_param_config.py
+        if thermal_calibration:  # Look up if you do normal simulation or a calibration run
+            simulation = "thermal_diffusion_calibration"  # weld | "thermal_diffusion_calibration"
+        else:
+            simulation = "weld"  # weld | "thermal_diffusion_calibration"
 
     if simulation == "weld":
         # Run the main simulation script
@@ -34,9 +39,9 @@ if __name__ == "__main__":
         else:
             run_script('c1_Make_Animation.py')
 
-    if simulation == "microstructure":  # Needs work, not sure it works after all the logic reworks
+    if simulation == "thermal_diffusion_calibration":  # Needs work!
         # Run the main simulation script
-        run_script('micro_structure_diffusion.py')
+        run_script('b1_Main_WeldCraft.py')
 
         # Run the script that makes you a nice animation of it
-        run_script('c10_Micro_Make_Animation.py')
+        run_script('c8_make_this_script_to_compare_temp_stuffs.py')

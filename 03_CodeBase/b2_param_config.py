@@ -26,6 +26,7 @@ from b4_functions import in_results, get_spec_value_at_temp, find_min_max_value
 model_version = "0.4.0"  # For provenance. Don't change, unless you customize logic. Then its yours, Yay!
 simulation_type = "butt joint"  # Options: "lap joint", "butt joint" and "iso3690"
 diffusion_scheme = 0  # 0 = centered D * Laplacian) | 1 = flux-conservative | 2 = flux + mu-driven (solubility incl.)
+thermal_diffusion_calibration = True  # True = thermal-only calibration mode (hydrogen disabled)
 
 """ ---------------------- Spacial Discretization (Step Size) ------------------- """
 dx = 0.5  # step size in x direction - if not equal to dy, tripple check solver logic!
@@ -96,24 +97,21 @@ material: none
 material: base_metal
 ] -inf, 20 ]:   D = (54 - 0.0333*20) / (7850 * (425 + 0.773*20 - 1.69e-3*20**2 + 2.22e-6*20**3)) * 1e6
 ] 20, 600 ]:    D = (54 - 0.0333*T_C) / (7850 * (425 + 0.773*T_C - 1.69e-3*T_C**2 + 2.22e-6*T_C**3)) * 1e6
-] 600, 800 ]:   D = 5.7029134143 + (((T_C - 600)/200)**2 * (3 - 2*((T_C - 600)/200))) * (-1.3734270193)
-] 800, 900 ]:   D = 27.3 / (7850 * (545 + 17820/(T_C - 731))) * 1e6
+] 600, 900 ]:   D = 5.7029134143 + (((T_C - 600)/300)**2 * (3 - 2*((T_C - 600)/300))) * (-0.3529134143)
 ] 900, 1200 ]:  D = 27.3 / (7850 * 650) * 1e6
 ] 1200, +inf ]: D = 27.3 / (7850 * 650) * 1e6
 
 material: weld_metal
 ] -inf, 20 ]:   D = 1.005 * (54 - 0.0333*20) / (7850 * (425 + 0.773*20 - 1.69e-3*20**2 + 2.22e-6*20**3)) * 1e6
 ] 20, 600 ]:    D = 1.005 * (54 - 0.0333*T_C) / (7850 * (425 + 0.773*T_C - 1.69e-3*T_C**2 + 2.22e-6*T_C**3)) * 1e6
-] 600, 800 ]:   D = 5.7029134143 + (((T_C - 600)/200)**2 * (3 - 2*((T_C - 600)/200))) * (-1.3734270193)
-] 800, 900 ]:   D = 1.005 * 27.3 / (7850 * (545 + 17820/(T_C - 731))) * 1e6
+] 600, 900 ]:   D = 1.005 * 5.7029134143 + (((T_C - 600)/300)**2 * (3 - 2*((T_C - 600)/300))) * (-0.3529134143)
 ] 900, 1200 ]:  D = 1.005 * 27.3 / (7850 * 650) * 1e6
 ] 1200, +inf ]: D = 1.005 * 27.3 / (7850 * 650) * 1e6
 
 material: HAZ
 ] -inf, 20 ]:   D = 0.995 * (54 - 0.0333*20) / (7850 * (425 + 0.773*20 - 1.69e-3*20**2 + 2.22e-6*20**3)) * 1e6
 ] 20, 600 ]:    D = 0.995 * (54 - 0.0333*T_C) / (7850 * (425 + 0.773*T_C - 1.69e-3*T_C**2 + 2.22e-6*T_C**3)) * 1e6
-] 600, 800 ]:   D = 5.7029134143 + (((T_C - 600)/200)**2 * (3 - 2*((T_C - 600)/200))) * (-1.3734270193)
-] 800, 900 ]:   D = 0.995 * 27.3 / (7850 * (545 + 17820/(T_C - 731))) * 1e6
+] 600, 900 ]:   D = 0.995 * 5.7029134143 + (((T_C - 600)/300)**2 * (3 - 2*((T_C - 600)/300))) * (-0.3529134143)
 ] 900, 1200 ]:  D = 0.995 * 27.3 / (7850 * 650) * 1e6
 ] 1200, +inf ]: D = 0.995 * 27.3 / (7850 * 650) * 1e6
 """.strip()
@@ -248,6 +246,7 @@ debug_bead_plots = False  # Set to False to disable
 EXAMPLE    material: base_metal
 ] 600, 735 ]:   D = (54 - 0.0333*T_C) / (7850 * (666 + 13002/(738 - T_C))) * 1e6
 ] 735, 800 ]:   D = (54 - 0.0333*T_C) / (7850 * (545 + 17820/(T_C - 731))) * 1e6
+] 800, 900 ]:   D = 27.3 / (7850 * (545 + 17820/(T_C - 731))) * 1e6
 
 # Here we have the characteristic thermodynamically modelled dip due to phase transformation
 # For simplicity and ease of temperature field calibration, we interpolate between 600 and 800.
