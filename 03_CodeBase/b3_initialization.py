@@ -24,7 +24,7 @@ def weld_sample(sim_type):
 
         le = ri = 60
         we = 20
-        th = 30
+        th = 20
         su_h = 10
         su_w = 30
         fr_le = le - (su_w - we)/2

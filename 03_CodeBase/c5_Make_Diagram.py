@@ -39,7 +39,7 @@ MINOR_MM = 2
 
 # Save DPI for paper-ready images
 SAVE_DPI = 300
-SHOW_FIRST_PLOT = True
+SHOW_FIRST_PLOT = False
 
 # --- Discrete (stepped) color options ---
 TEMP_STEPPED_COLORS = True

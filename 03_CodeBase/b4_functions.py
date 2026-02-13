@@ -459,11 +459,12 @@ def manipulate_simulation(sim_type, u0, h0, cwi, cci, t_weld_metal, h_weld_metal
 
             # --- Geometric bead shape mask (half ellipse) ---
             inside_ellipse = (distance <= 1.0)
+            inside_ellipse &= (row_grid <= (fr_ab + th) / dy)  # Only include stuff above weld pool backing
 
-            if cwi % 2 == 0:  # Even - left bead
-                inside_ellipse &= (col_grid >= center_y)  # include the center line
-            else:  # Odd - right bead
-                inside_ellipse &= (col_grid <= center_y)  # include the center line
+            # if cwi % 2 == 0:  # Even - left bead
+            #     inside_ellipse &= (col_grid >= center_y)  # include the center line
+            # else:  # Odd - right bead
+            #     inside_ellipse &= (col_grid <= center_y)  # include the center line
 
             fillable = microstructure_id == 0  # Only "air" should be able to be filled.
             new_area = inside_ellipse & fillable  # base new area from geometry
