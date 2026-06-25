@@ -10,7 +10,6 @@ from PyQt5.QtCore import QTimer, Qt
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.normpath(os.path.join(BASE_DIR, ".."))
-VENV_PYTHON = os.path.normpath(r"F:\99_Virtual-Environments\02_WeldCraft\Scripts\python.exe")
 
 
 class HoverButton(QPushButton):
@@ -84,12 +83,12 @@ class Launcher(QMainWindow):
 
         # Default text for the QTextEdit
         self.default_text = (
-            "Lorem ipsum dolor sit amet, consetetur sadipscing elitr, sed diam nonumy eirmod tempor invidunt ut labore "
-            "et dolore magna aliquyam erat, sed diam voluptua. At vero eos et accusam et justo duo dolores et ea rebum. "
-            "Stet clita kasd gubergren, no sea takimata sanctus est Lorem ipsum dolor sit amet. Lorem ipsum dolor sit "
-            "amet, consetetur sadipscing elitr, sed diam nonumy eirmod tempor invidunt ut labore et dolore magna aliquyam "
-            "erat, sed diam voluptua. At vero eos et accusam et justo duo dolores et ea rebum. Stet clita kasd gubergren, "
-            "no sea takimata sanctus est Lorem ipsum dolor sit amet."
+            "Hover a module button to see a short description. Some modules are still code-only and not launchable "
+            "from the GUI yet."
+        )
+        self.p2_hydrogen_info = (
+            "P2 Hydrogen Diffusion During Welding is code-only for now. Use the scripts directly; a GUI is planned "
+            "later, but not confirmed yet."
         )
 
         # TextEdit for launcher info
@@ -128,7 +127,7 @@ class Launcher(QMainWindow):
 
         # Check if the .py file is outdated compared to the .ui file
         if not os.path.exists(py_file) or os.path.getmtime(ui_file) > os.path.getmtime(py_file):
-            subprocess.run([VENV_PYTHON, '-m', 'PyQt5.uic.pyuic', '-x', ui_file, '-o', py_file], check=True)
+            subprocess.run([sys.executable, '-m', 'PyQt5.uic.pyuic', '-x', ui_file, '-o', py_file], check=True)
 
     def replace_buttons_with_hover_buttons(self):
         """Replaces QPushButton with HoverButton after loading the UI."""
@@ -171,7 +170,7 @@ class Launcher(QMainWindow):
         hover_texts = {
             'pushButton_diffusion_overview': "Diffusion Overview: Write this later!",
             'pushButton_heat_map': "Simulate Heat Map: Write this later!",
-            'pushButton_hydrogen_during_welding': "Hydrogen During Welding: Combined heat and hydrogen diffusion simulation. Write this later!",
+            'pushButton_hydrogen_during_welding': self.p2_hydrogen_info,
             'pushButton_brownian_motion': "Simulate Brownian Motion: Visualize random motion of particles. Write this later!",
             'pushButton_iso3690': "Bead on plate (ISO 3690): Write this later!",
             'pushButton_1d_diffusion_1111_rule': "1D Diffusion (Rule 1111): Explore one-dimensional diffusion. Write this later!",
@@ -182,6 +181,7 @@ class Launcher(QMainWindow):
             btn = self.findChild(HoverButton, btn_name)
             if btn:
                 btn.hovered_text = hover_text
+                btn.setToolTip(hover_text)
 
     def update_info_text(self, text):
         """Updates the QTextEdit based on the hovered button."""
@@ -196,7 +196,7 @@ class Launcher(QMainWindow):
             btn.setEnabled(False)
 
             # Start the process and track it
-            command = [VENV_PYTHON] + program_args
+            command = [sys.executable] + program_args
             working_directory = os.path.dirname(os.path.abspath(program_args[0])) if program_args else BASE_DIR
             process = subprocess.Popen(command, cwd=working_directory)
             self.active_processes[button_name] = process
@@ -230,8 +230,8 @@ class Launcher(QMainWindow):
         print("start_heat_map")
 
     def start_hydrogen_during_welding(self):
-        # self.start_program('pushButton_hydrogen_during_welding', ['python', 'path_to_hydrogen_during_welding.py'])
-        print("start_hydrogen_during_welding")
+        self.update_info_text(self.p2_hydrogen_info)
+        print(self.p2_hydrogen_info)
 
     def start_brownian_motion(self):
         # self.start_program('pushButton_brownian_motion', ['python', 'path_to_brownian_motion.py'])

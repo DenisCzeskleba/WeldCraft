@@ -1,4 +1,4 @@
-# WeldCraft ![WIP Badge](https://img.shields.io/badge/status-WIP-yellow.svg) <a href="https://doi.org/10.5281/zenodo.18451839"><img src="https://zenodo.org/badge/DOI/10.5281/zenodo.18451839.svg" alt="DOI"></a> <a href="https://www.buymeacoffee.com/DenisCzeskleba"><img src="https://www.buymeacoffee.com/assets/img/custom_images/orange_img.png" height="20px"></a> 
+# WeldCraft ![WIP Badge](https://img.shields.io/badge/status-WIP-yellow.svg) <a href="https://doi.org/10.5281/zenodo.20854674"><img src="https://zenodo.org/badge/DOI/10.5281/zenodo.20854674.svg" alt="DOI"></a> <a href="https://www.buymeacoffee.com/DenisCzeskleba"><img src="https://www.buymeacoffee.com/assets/img/custom_images/orange_img.png" height="20px"></a> 
 
 Open-Source repository for all (currently work in progress) hydrogen/heat weld simulation scripts and programs relating to the research project "Prevention of Cold Cracking in Thick Plated High-Strength Steel SAW-Welds" 
 
@@ -16,7 +16,7 @@ This repository is licensed under the MIT License.
 You are free to use, modify, distribute, or even commercialize it under that license.
 
 So feel free to use it which ever way you like, expand on it, change it, make it your own. 
-But if you found it helpful in any way, I'd love a citation, either of this project or my dissertation. (Add link later)
+If you find it helpful, please cite the project using the Zenodo DOI above or the metadata in `CITATION.cff`.
 
 For more information, see the [LICENSE](LICENSE) file.
 
@@ -25,7 +25,7 @@ For more information, see the [LICENSE](LICENSE) file.
 If you like and use this software, please cite the specific version you used.
 
 **WeldCraft v0.4.0**  
-DOI: Add it once you AGAIN figure out Zenodo
+DOI: https://doi.org/10.5281/zenodo.20854674
 
 The Zenodo record provides ready-to-import citation formats
 (RIS, BibTeX, EndNote XML, etc.).
