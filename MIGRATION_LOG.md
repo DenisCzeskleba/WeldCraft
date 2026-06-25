@@ -7,3 +7,5 @@
 - Replaced the root README with the old simulator repository README content.
 - Moved the previous root README content into `URGENT_ToDo.md`.
 - Added repo-level ignore rules for IDE metadata, caches, generated outputs, and local state.
+- Initialized the new root as a Git repository and pointed `origin` at `https://github.com/DenisCzeskleba/WeldCraft`.
+- Marked `F:\01_BAM-Main-Simulation` as archived with `THIS_IS_OLD.txt`.
