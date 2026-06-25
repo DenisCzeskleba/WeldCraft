@@ -1,0 +1,22 @@
+# IDE and assistant metadata
+.idea/
+**/.aiassistant/
+
+# Python caches and bytecode
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+
+# Generated outputs and large local results
+**/*.mp4
+**/*.h5
+**/*.hdf5
+Results/*
+!Results/.gitkeep
+
+# Local UI/runtime state
+**/settings/settings.json
+
+# Workspace-only notes and instructions
+**/AGENTS.md
+**/REFRACTOR_NOTES.md

@@ -1,0 +1,33 @@
+# PyCharm / IDE
+.idea/
+/.aiassistant/
+
+# Python cache
+**/__pycache__/
+**/*.pyc
+
+# Local-only folders
+00_Deprecated/
+
+# Keep the folders, ignore their contents
+01_Resources/*
+02_Results/*
+
+# ...but keep the placeholder files
+!01_Resources/.gitkeep
+!02_Results/.gitkeep
+
+# personal / scratch / notes
+03_CodeBase/00_Stuff_To_Do.py
+03_CodeBase/i0_Example_Workflow.py
+03_CodeBase/i1_ReadMe.txt
+03_CodeBase/i98_test-stuff-here.py
+
+# local agent instructions/interactions
+AGENTS.md
+REFRACTOR_NOTES.md
+
+# Large binary artifacts
+**/*.mp4
+**/*.h5
+**/*.hdf5
