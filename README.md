@@ -1,22 +1,31 @@
-# WeldCraft ![WIP Badge](https://img.shields.io/badge/status-WIP-yellow.svg) <a href="https://www.buymeacoffee.com/DenisCzeskleba"><img src="https://www.buymeacoffee.com/assets/img/custom_images/orange_img.png" height="20px"></a>
+# WeldCraft ![WIP Badge](https://img.shields.io/badge/status-WIP-yellow.svg) <a href="https://doi.org/10.5281/zenodo.18451839"><img src="https://zenodo.org/badge/DOI/10.5281/zenodo.18451839.svg" alt="DOI"></a> <a href="https://www.buymeacoffee.com/DenisCzeskleba"><img src="https://www.buymeacoffee.com/assets/img/custom_images/orange_img.png" height="20px"></a> 
 
-Open-source repository for the WeldCraft simulation launcher and hydrogen diffusion workflow.
+Open-Source repository for all (currently work in progress) hydrogen/heat weld simulation scripts and programs relating to the research project "Prevention of Cold Cracking in Thick Plated High-Strength Steel SAW-Welds" 
+
+## Status - v0.4.0 - alpha
+
+CURRENT STATE (Jun 2026): Another total script refractor.
+
+This is a, work-in-progress release. It's meant to get started and provide a basic framework, but it's not feature-complete, and the code is subject to change. The structure and comments are minimal, and functionality will be updated regularly. Use at your own risk. 
+
+Until at least Q4 of 2026, this project will see constant updates, either here or on my local machine. Version 1.0 is expected by the end of Q4 2026.
 
 ## License
 
-This repository is licensed under the MIT License. See the [LICENSE](LICENSE) file.
+This repository is licensed under the MIT License. 
+You are free to use, modify, distribute, or even commercialize it under that license.
 
-## Citation
+So feel free to use it which ever way you like, expand on it, change it, make it your own. 
+But if you found it helpful in any way, I'd love a citation, either of this project or my dissertation. (Add link later)
 
-Formal citation metadata lives in [CITATION.cff](CITATION.cff).
+For more information, see the [LICENSE](LICENSE) file.
 
-The old Zenodo DOI badge has been retired. A new DOI will be minted when the next tagged GitHub release is archived through Zenodo.
+## How to cite
 
-## Status
+If you like and use this software, please cite the specific version you used.
 
-This is an active work in progress. It is meant to provide a basic framework, but it is not feature complete and the code may change frequently.
+**WeldCraft v0.4.0**  
+DOI: Add it once you AGAIN figure out Zenodo
 
-## Notes
-
-- The launcher and subprocesses use `F:\99_Virtual-Environments\02_WeldCraft\Scripts\python.exe`.
-- Local migration notes and reminders stay out of Git history.
+The Zenodo record provides ready-to-import citation formats
+(RIS, BibTeX, EndNote XML, etc.).
