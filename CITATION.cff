@@ -1,6 +1,4 @@
 cff-version: 1.2.0
-message: "If you use this software, please consider a citation it as below."
-cff-version: 1.2.0
 message: "If you use this software, please cite it as below."
 type: software
 title: "WeldCraft"
@@ -8,10 +6,10 @@ authors:
   - given-names: Denis
     family-names: Czeskleba
 repository-code: "https://github.com/DenisCzeskleba/WeldCraft"
-license: "MIT"
+license: MIT
 version: "0.3.0"
 date-released: "2026-02-01"
 url: "https://doi.org/10.5281/zenodo.18451839"
 identifiers:
   - type: doi
-    value: 10.5281/zenodo.18451839
+    value: "10.5281/zenodo.18451839"

@@ -1,0 +1,18 @@
+# An .aiignore file follows the same syntax as a .gitignore file.
+# .gitignore documentation: https://git-scm.com/docs/gitignore
+
+# Deprecated code copies
+00_Deprecated/
+
+# Large resources / datasets / binaries
+Resources/
+Results/
+P3_Hydrogen Diffusion During Welding/01_Resources/
+P3_Hydrogen Diffusion During Welding/02_Results/
+
+# IDE metadata
+.idea/
+
+# Python caches
+**/__pycache__/
+**/*.pyc

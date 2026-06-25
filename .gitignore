@@ -1,6 +1,5 @@
 # IDE and assistant metadata
 .idea/
-**/.aiassistant/
 
 # Python caches and bytecode
 **/__pycache__/
@@ -13,6 +12,11 @@
 **/*.hdf5
 Results/*
 !Results/.gitkeep
+P3_Hydrogen Diffusion During Welding/01_Resources/*
+!P3_Hydrogen Diffusion During Welding/01_Resources/.gitkeep
+P3_Hydrogen Diffusion During Welding/02_Results/*
+!P3_Hydrogen Diffusion During Welding/02_Results/.gitkeep
+MIGRATION_LOG.md
 
 # Local UI/runtime state
 **/settings/settings.json
