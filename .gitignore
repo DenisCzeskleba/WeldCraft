@@ -16,6 +16,7 @@ P3_Hydrogen Diffusion During Welding/01_Resources/*
 !P3_Hydrogen Diffusion During Welding/01_Resources/.gitkeep
 P3_Hydrogen Diffusion During Welding/02_Results/*
 !P3_Hydrogen Diffusion During Welding/02_Results/.gitkeep
+P3_Hydrogen Diffusion During Welding/00_Deprecated/
 MIGRATION_LOG.md
 
 # Local UI/runtime state

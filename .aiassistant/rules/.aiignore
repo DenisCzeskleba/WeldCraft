@@ -3,12 +3,14 @@
 
 # Deprecated code copies
 00_Deprecated/
+P3_Hydrogen Diffusion During Welding/00_Deprecated/
 
 # Large resources / datasets / binaries
 Resources/
 Results/
 P3_Hydrogen Diffusion During Welding/01_Resources/
 P3_Hydrogen Diffusion During Welding/02_Results/
+P3_Hydrogen Diffusion During Welding/00_Deprecated/
 
 # IDE metadata
 .idea/
