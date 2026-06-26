@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-# Form implementation generated from reading ui file 'f:\100_WebSite and Hosted Projects\WeldCraft\P1_Diffusion_Overview\settings\ui_diffusion_overview.ui'
+# Form implementation generated from reading ui file 'f:\100_WebSite and Hosted Projects\WeldCraft\P1_Simulate_Hydrogen_Diffusion\App_Files\ui_simulate_hydrogen_diffusion.ui'
 #
 # Created by: PyQt5 UI code generator 5.15.11
 #
@@ -1361,7 +1361,7 @@ class Ui_MainWindow(object):
 
     def retranslateUi(self, MainWindow):
         _translate = QtCore.QCoreApplication.translate
-        MainWindow.setWindowTitle(_translate("MainWindow", "MainWindow"))
+        MainWindow.setWindowTitle(_translate("MainWindow", "WeldCraft - Simulate Hydrogen Diffusion"))
         self.tabWidget.setTabText(self.tabWidget.indexOf(self.tab), _translate("MainWindow", "Mesh"))
         self.groupBox_3.setTitle(_translate("MainWindow", "Visualization"))
         self.label_canvas_1_point_or_line.setToolTip(_translate("MainWindow", "Set the coordinate for the point or line to plot here. Formatting: \"0,0\" for points and \"50\" for lines."))
@@ -1484,9 +1484,9 @@ class Ui_MainWindow(object):
         self.lineEdit_save_sim_frequency.setText(_translate("MainWindow", "60"))
         self.label_save_sim_frequency.setToolTip(_translate("MainWindow", "Save the 2D animation to h5-file every so many seconds."))
         self.label_save_sim_frequency.setText(_translate("MainWindow", "Save frequency [s]"))
-        self.lineEdit_file_name.setToolTip(_translate("MainWindow", "File name for the h5-File saving the animation matrices. Remember to add .h5 extension! Example file name: file_name.h5. Will be saved in same folder."))
-        self.lineEdit_file_name.setText(_translate("MainWindow", "charging_sample.h5"))
-        self.label_file_name.setToolTip(_translate("MainWindow", "<html><head/><body><p>File name for the h5-File saving the animation matrices. Remember to add .h5 extension! Example: &quot;file_name.h5&quot; will be saved next to the P1 script. &quot;Results/Save_Matrix.h5&quot; will be saved into the P1 results folder.</p></body></html>"))
+        self.lineEdit_file_name.setToolTip(_translate("MainWindow", "File name for the h5-file saving the animation matrices. If you use a relative path like Results/charging_sample.h5 it will be saved into the app\'s Results folder. The exported animation video will be written next to this file using the same name with .mp4."))
+        self.lineEdit_file_name.setText(_translate("MainWindow", "Results/charging_sample.h5"))
+        self.label_file_name.setToolTip(_translate("MainWindow", "<html><head/><body><p>File name for the h5-file saving the animation matrices.</p><p>If you enter a relative path like &quot;Results/charging_sample.h5&quot;, the data file is saved into the app\'s Results folder.</p><p>The exported animation video is saved next to that h5 file with the same base name and an mp4 extension.</p></body></html>"))
         self.label_file_name.setText(_translate("MainWindow", "File Name"))
         self.groupBox_2.setTitle(_translate("MainWindow", "Animation"))
         self.checkBox_incl_animation.setToolTip(_translate("MainWindow", "<html><head/><body><p>Include the 2D Animation in Tab 1. Rendering animations takes considerable time even if the calculations do not. Consider turning off during preparatory simulations.</p></body></html>"))
@@ -1575,7 +1575,7 @@ class Ui_MainWindow(object):
         self.tabWidget_Settings.setTabText(self.tabWidget_Settings.indexOf(self.tab_simple), _translate("MainWindow", "Simple"))
         self.groupBox_4.setTitle(_translate("MainWindow", "Console Output"))
         self.textEdit_console_output.setToolTip(_translate("MainWindow", "Shows simulations progress / errors"))
-from diffusion_overview import ClickableLabel, CustomLabel
+from App_Files.custom_widgets import ClickableLabel, CustomLabel
 
 
 if __name__ == "__main__":

@@ -1,6 +1,7 @@
 import json
 import os
 import re
+import shutil
 import sys
 import subprocess
 import time
@@ -20,18 +21,48 @@ from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.collections import LineCollection
 from matplotlib.figure import Figure
 
-from calculate_stuff_for_gui import analytical_solution
-from calculate_stuff_for_gui import calculate_1d, simulate_2d, create_hydrogen_animation
-from settings import ui_diffusion_overview
+from App_Files.calculate_stuff_for_gui import analytical_solution
+from App_Files.calculate_stuff_for_gui import calculate_1d, simulate_2d, create_hydrogen_animation
+from App_Files.custom_widgets import ClickableLabel, CustomLabel
+from App_Files import ui_simulate_hydrogen_diffusion
 
+APP_NAME = "WeldCraft - Simulate Hydrogen Diffusion"
+IS_FROZEN = getattr(sys, "frozen", False)
 MODULE_DIR = os.path.dirname(os.path.abspath(__file__))
+BUNDLE_ROOT = getattr(sys, "_MEIPASS", MODULE_DIR)
 REPO_ROOT = os.path.normpath(os.path.join(MODULE_DIR, ".."))
-IMAGES_DIR = os.path.join(REPO_ROOT, "Resources", "Images")
-RESULTS_DIR = os.path.join(MODULE_DIR, "Results")
+APP_FILES_DIR = os.path.join(MODULE_DIR, "App_Files")
+SOURCE_IMAGES_DIR = os.path.join(REPO_ROOT, "Resources", "Images")
+RUNTIME_ROOT = os.path.dirname(sys.executable) if IS_FROZEN else MODULE_DIR
+RUNTIME_SETTINGS_DIR = os.path.join(RUNTIME_ROOT, "settings")
+SOURCE_SETTINGS_PATH = os.path.join(APP_FILES_DIR, "settings.json")
+RESULTS_DIR = os.path.join(RUNTIME_ROOT, "Results")
 
 
 def resolve_image_path(file_name):
-    return os.path.join(IMAGES_DIR, file_name)
+    bundled_path = os.path.join(BUNDLE_ROOT, "Resources", "Images", file_name)
+    if IS_FROZEN and os.path.exists(bundled_path):
+        return bundled_path
+    return os.path.join(SOURCE_IMAGES_DIR, file_name)
+
+
+def ensure_runtime_directories():
+    os.makedirs(RESULTS_DIR, exist_ok=True)
+    if IS_FROZEN:
+        os.makedirs(RUNTIME_SETTINGS_DIR, exist_ok=True)
+
+
+def ensure_frozen_settings_seeded():
+    ensure_runtime_directories()
+    settings_path = os.path.join(RUNTIME_SETTINGS_DIR, "settings.json")
+    if not os.path.exists(settings_path):
+        template_path = os.path.join(BUNDLE_ROOT, "settings", "default_settings.json")
+        if os.path.exists(template_path):
+            shutil.copyfile(template_path, settings_path)
+        else:
+            with open(settings_path, "w", encoding="utf-8") as handle:
+                json.dump({}, handle, indent=4)
+    return settings_path
 
 
 def resolve_simulation_file_path(file_name):
@@ -51,7 +82,14 @@ def resolve_simulation_file_path(file_name):
                 return RESULTS_DIR
             return os.path.join(RESULTS_DIR, relative_suffix)
 
-    return os.path.join(MODULE_DIR, normalized_path)
+    return os.path.join(RUNTIME_ROOT, normalized_path)
+
+
+def resolve_animation_output_path(simulation_file_path):
+    root, extension = os.path.splitext(simulation_file_path)
+    if extension.lower() == ".h5":
+        return root + ".mp4"
+    return simulation_file_path + ".mp4"
 
 
 class ErrorHandler(QObject):
@@ -252,38 +290,19 @@ class CreateAnimationWorker(QtCore.QThread):
     progress = QtCore.pyqtSignal(str)
     finished = QtCore.pyqtSignal()
 
-    def __init__(self, loaded_u_arrays, loaded_t_values):
+    def __init__(self, loaded_u_arrays, loaded_t_values, output_file):
         super().__init__()
         self.loaded_u_arrays = loaded_u_arrays
         self.loaded_t_values = loaded_t_values
+        self.output_file = output_file
 
     def run(self):
-        create_hydrogen_animation(self.loaded_u_arrays, self.loaded_t_values)
+        create_hydrogen_animation(self.loaded_u_arrays, self.loaded_t_values, output_file=self.output_file)
         self.finished.emit()
 
 
 class InvalidInputError(Exception):
     pass
-
-
-class ClickableLabel(QLabel):
-    clicked = pyqtSignal()
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-
-    def mousePressEvent(self, event):
-        self.clicked.emit()
-        super().mousePressEvent(event)
-
-
-class CustomLabel(QLabel):
-    textChanged = pyqtSignal(str)
-
-    def setText(self, text):
-        if text != self.text():  # Only emit if the text actually changes
-            super().setText(text)
-            self.textChanged.emit(text)
 
 
 class VerticalNavigationToolbar(NavigationToolbar2QT):
@@ -317,7 +336,7 @@ class OverlayWidget(QtWidgets.QWidget):
         self.hide()
 
 
-class MainWindow(QtWidgets.QMainWindow, ui_diffusion_overview.Ui_MainWindow):
+class MainWindow(QtWidgets.QMainWindow, ui_simulate_hydrogen_diffusion.Ui_MainWindow):
     def __init__(self):
         super().__init__()
         self.setupUi(self)
@@ -570,6 +589,7 @@ class MainWindow(QtWidgets.QMainWindow, ui_diffusion_overview.Ui_MainWindow):
 
         # Initialize the CreateAnimationWorker
         self.animation_worker = None
+        self.current_simulation_file_path = None
 
         # Adjust the Layouts
         set_combo_box_margins(self)
@@ -713,9 +733,11 @@ class MainWindow(QtWidgets.QMainWindow, ui_diffusion_overview.Ui_MainWindow):
 
     def apply_static_assets(self):
         app_icon = QtGui.QIcon(resolve_image_path("WeldCraft.ico"))
+        self.setWindowTitle(APP_NAME)
         self.setWindowIcon(app_icon)
         qt_app = QtWidgets.QApplication.instance()
         if qt_app is not None:
+            qt_app.setApplicationDisplayName(APP_NAME)
             qt_app.setWindowIcon(app_icon)
 
         logo_path = resolve_image_path("BAM Logo.png")
@@ -745,6 +767,7 @@ class MainWindow(QtWidgets.QMainWindow, ui_diffusion_overview.Ui_MainWindow):
         self.horizontalSlider_video.setEnabled(False)
 
         file_name = resolve_simulation_file_path(self.lineEdit_file_name.text())
+        self.current_simulation_file_path = file_name
         self.data_loading_worker = DataLoadingWorker(file_name)
         self.data_loading_worker.progress.connect(self.update_console_output)
         self.data_loading_worker.result.connect(self.on_data_loaded)
@@ -780,7 +803,8 @@ class MainWindow(QtWidgets.QMainWindow, ui_diffusion_overview.Ui_MainWindow):
             self.checkBox_save_animation.setEnabled(False)  # disable the checkboxes
             self.checkBox_save_animation.setChecked(False)
             self.pushButton_start_all_sims.setEnabled(False)  # disable the option to make a new animation during saving
-            self.animation_worker = CreateAnimationWorker(loaded_u_arrays, loaded_t_values)
+            animation_output_path = resolve_animation_output_path(self.current_simulation_file_path)
+            self.animation_worker = CreateAnimationWorker(loaded_u_arrays, loaded_t_values, animation_output_path)
             self.animation_worker.progress.connect(self.update_console_output)
             self.animation_worker.finished.connect(self.on_animation_worker_finished)
             self.animation_worker.start()
@@ -1735,21 +1759,18 @@ class MainWindow(QtWidgets.QMainWindow, ui_diffusion_overview.Ui_MainWindow):
                 widget.valueChanged.connect(self.update_settings)
 
     def get_settings_path(self):
-        # Get the directory of the current script or executable
-        if getattr(sys, 'frozen', False):
-            application_path = os.path.dirname(sys.executable)
-        else:
-            application_path = MODULE_DIR
-        return os.path.join(application_path, 'settings', 'settings.json')
+        if IS_FROZEN:
+            return ensure_frozen_settings_seeded()
+        return SOURCE_SETTINGS_PATH
 
     def setup_settings(self):
         self.settings_path = self.get_settings_path()
         if not os.path.exists(self.settings_path):
-            with open(self.settings_path, 'w') as f:
+            with open(self.settings_path, 'w', encoding='utf-8') as f:
                 json.dump({}, f, indent=4)  # Format JSON with indentation
 
     def load_settings(self):
-        with open(self.settings_path, 'r') as f:
+        with open(self.settings_path, 'r', encoding='utf-8') as f:
             settings = json.load(f)
 
         self.sliders = [
@@ -1820,7 +1841,7 @@ class MainWindow(QtWidgets.QMainWindow, ui_diffusion_overview.Ui_MainWindow):
                 settings[name] = {"value": widget.value(), "enabled": widget.isEnabled()}
             # Add more widget types as needed
 
-        with open(self.settings_path, 'w') as f:
+        with open(self.settings_path, 'w', encoding='utf-8') as f:
             json.dump(settings, f, indent=4)  # Format JSON with indentation
 
     def on_sample_width_changed(self):

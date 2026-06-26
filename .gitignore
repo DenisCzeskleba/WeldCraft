@@ -13,8 +13,11 @@
 **/*.hdf5
 Results/*
 !Results/.gitkeep
-P1_Diffusion_Overview/Results/*
-!P1_Diffusion_Overview/Results/.gitkeep
+P1_Simulate_Hydrogen_Diffusion/Results/*
+!P1_Simulate_Hydrogen_Diffusion/Results/.gitkeep
+P1_Simulate_Hydrogen_Diffusion/Standalone_Release/build/
+P1_Simulate_Hydrogen_Diffusion/Standalone_Release/dist/
+P1_Simulate_Hydrogen_Diffusion/Standalone_Release/staging/
 P2_Hydrogen Diffusion During Welding/01_Resources/*
 !P2_Hydrogen Diffusion During Welding/01_Resources/.gitkeep
 P2_Hydrogen Diffusion During Welding/02_Results/*

@@ -18,7 +18,7 @@
    </sizepolicy>
   </property>
   <property name="windowTitle">
-   <string>MainWindow</string>
+   <string>WeldCraft - Simulate Hydrogen Diffusion</string>
   </property>
   <widget class="QWidget" name="centralwidget">
    <layout class="QGridLayout" name="gridLayout_9">
@@ -1459,10 +1459,10 @@ Start value at t = 0, linear interpolation of values between t = 0 and End Time.
                          <bool>false</bool>
                         </property>
                         <property name="toolTip">
-                         <string>File name for the h5-File saving the animation matrices. Remember to add .h5 extension! Example file name: file_name.h5. Will be saved in same folder.</string>
+                         <string>File name for the h5-file saving the animation matrices. If you use a relative path like Results/charging_sample.h5 it will be saved into the app's Results folder. The exported animation video will be written next to this file using the same name with .mp4.</string>
                         </property>
                         <property name="text">
-                         <string>charging_sample.h5</string>
+                         <string>Results/charging_sample.h5</string>
                         </property>
                        </widget>
                       </item>
@@ -1475,7 +1475,7 @@ Start value at t = 0, linear interpolation of values between t = 0 and End Time.
                          </sizepolicy>
                         </property>
                         <property name="toolTip">
-                         <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;File name for the h5-File saving the animation matrices. Remember to add .h5 extension! Example: &amp;quot;file_name.h5&amp;quot; will be saved next to the P1 script. &amp;quot;Results/Save_Matrix.h5&amp;quot; will be saved into the P1 results folder.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
+                         <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;File name for the h5-file saving the animation matrices.&lt;/p&gt;&lt;p&gt;If you enter a relative path like &amp;quot;Results/charging_sample.h5&amp;quot;, the data file is saved into the app's Results folder.&lt;/p&gt;&lt;p&gt;The exported animation video is saved next to that h5 file with the same base name and an mp4 extension.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
                         </property>
                         <property name="text">
                          <string>File Name</string>
@@ -2602,12 +2602,12 @@ Start value at t = 0, linear interpolation of values between t = 0 and End Time.
   <customwidget>
    <class>ClickableLabel</class>
    <extends>QLabel</extends>
-   <header>diffusion_overview</header>
+   <header>App_Files.custom_widgets</header>
   </customwidget>
   <customwidget>
    <class>CustomLabel</class>
    <extends>QLabel</extends>
-   <header>diffusion_overview</header>
+   <header>App_Files.custom_widgets</header>
   </customwidget>
  </customwidgets>
  <resources/>

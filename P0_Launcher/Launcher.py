@@ -103,7 +103,11 @@ class Launcher(QMainWindow):
         self.set_hover_text()
 
         # Set program directories
-        self.path_diffusion_overview = os.path.join(REPO_ROOT, "P1_Diffusion_Overview", "diffusion_overview.py")
+        self.path_simulate_hydrogen_diffusion = os.path.join(
+            REPO_ROOT,
+            "P1_Simulate_Hydrogen_Diffusion",
+            "simulate_hydrogen_diffusion.py",
+        )
         # self.path_heat_map = os.path.join(current_dir, "..", "Resources", "Images", "WeldCraft.ico")
         # self.path_hydrogen_during_welding = os.path.join(current_dir, "..", "Resources", "Images", "WeldCraft.ico")
         # self.path_brownian_motion = os.path.join(current_dir, "..", "Resources", "Images", "WeldCraft.ico")
@@ -114,15 +118,25 @@ class Launcher(QMainWindow):
         self.active_processes = {}
 
         # Recompile that one UI that you didn't want to completely rewrite
-        self.compile_overview_ui()
+        self.compile_p1_ui()
 
         # Connect signal to close splash screen
         self.splash_closed.connect(self.close_splash)
 
-    def compile_overview_ui(self):
-        # Recompiles that one UI
-        ui_file = os.path.join(REPO_ROOT, "P1_Diffusion_Overview", "settings", "ui_diffusion_overview.ui")
-        py_file = os.path.join(REPO_ROOT, "P1_Diffusion_Overview", "settings", "ui_diffusion_overview.py")
+    def compile_p1_ui(self):
+        # Recompile the P1 UI if the source changed.
+        ui_file = os.path.join(
+            REPO_ROOT,
+            "P1_Simulate_Hydrogen_Diffusion",
+            "App_Files",
+            "ui_simulate_hydrogen_diffusion.ui",
+        )
+        py_file = os.path.join(
+            REPO_ROOT,
+            "P1_Simulate_Hydrogen_Diffusion",
+            "App_Files",
+            "ui_simulate_hydrogen_diffusion.py",
+        )
 
         # Check if the .py file is outdated compared to the .ui file
         if not os.path.exists(py_file) or os.path.getmtime(ui_file) > os.path.getmtime(py_file):
@@ -131,7 +145,7 @@ class Launcher(QMainWindow):
     def replace_buttons_with_hover_buttons(self):
         """Replaces QPushButton with HoverButton after loading the UI."""
         button_names = [
-            'pushButton_diffusion_overview', 'pushButton_heat_map', 'pushButton_hydrogen_during_welding',
+            'pushButton_simulate_hydrogen_diffusion', 'pushButton_heat_map', 'pushButton_hydrogen_during_welding',
             'pushButton_brownian_motion', 'pushButton_iso3690', 'pushButton_1d_diffusion_1111_rule',
             'pushButton_data_visualization'
         ]
@@ -150,7 +164,7 @@ class Launcher(QMainWindow):
     def connect_buttons(self):
         """Connect each button to its respective function."""
         buttons = {
-            'pushButton_diffusion_overview': self.start_diffusion_overview,
+            'pushButton_simulate_hydrogen_diffusion': self.start_simulate_hydrogen_diffusion,
             'pushButton_heat_map': self.start_heat_map,
             'pushButton_hydrogen_during_welding': self.start_hydrogen_during_welding,
             'pushButton_brownian_motion': self.start_brownian_motion,
@@ -167,7 +181,10 @@ class Launcher(QMainWindow):
     def set_hover_text(self):
         """Assign hover text to each button."""
         hover_texts = {
-            'pushButton_diffusion_overview': "Diffusion Overview: main overview entry point.",
+            'pushButton_simulate_hydrogen_diffusion': (
+                "WeldCraft - Simulate Hydrogen Diffusion: visual 1D/2D hydrogen diffusion and heat transport "
+                "simulation with numerical accuracy and animation tools."
+            ),
             'pushButton_hydrogen_during_welding': self.p2_hydrogen_info,
             'pushButton_heat_map': "Placeholder 3 (maybe Heat Map Simulation?): Write this later!",
             'pushButton_brownian_motion': "Placeholder 4 (maybe Diffusion Visualization / Brownian Motion?): Write this later!",
@@ -221,8 +238,8 @@ class Launcher(QMainWindow):
             self.activateWindow()
 
     # Program starter methods
-    def start_diffusion_overview(self):
-        self.start_program('pushButton_diffusion_overview', [self.path_diffusion_overview])
+    def start_simulate_hydrogen_diffusion(self):
+        self.start_program('pushButton_simulate_hydrogen_diffusion', [self.path_simulate_hydrogen_diffusion])
 
     def start_heat_map(self):
         print("Placeholder 3 (maybe Heat Map Simulation?): Write this later!")

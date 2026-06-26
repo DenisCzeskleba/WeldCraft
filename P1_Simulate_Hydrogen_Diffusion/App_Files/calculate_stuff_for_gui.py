@@ -431,7 +431,15 @@ def load_sample_plot_line(time_step, file_name="charging_sample.h5"):
         print(f"An error occurred: {e}")
 
 
-def create_hydrogen_animation(loaded_u_arrays, loaded_t_values, frame_interval=10, max_length=90, dpi=100, fps=30):
+def create_hydrogen_animation(
+    loaded_u_arrays,
+    loaded_t_values,
+    output_file="hydrogen_concentration_animation.mp4",
+    frame_interval=10,
+    max_length=90,
+    dpi=100,
+    fps=30,
+):
     print("Currently creating hydrogen animation:")
 
     from matplotlib.animation import FuncAnimation
@@ -544,7 +552,7 @@ def create_hydrogen_animation(loaded_u_arrays, loaded_t_values, frame_interval=1
 
     ani = FuncAnimation(fig, update, frames=range(0, total_frames, frame_interval), repeat=False, blit=True)
 
-    ani.save('hydrogen_concentration_animation.mp4', writer='ffmpeg', dpi=dpi, fps=fps)
+    ani.save(output_file, writer='ffmpeg', dpi=dpi, fps=fps)
 
     # Close the tqdm progress bar and figure
     tqdm_bar.close()

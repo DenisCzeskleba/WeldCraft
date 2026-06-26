@@ -89,7 +89,7 @@
           </widget>
          </item>
          <item>
-          <widget class="QPushButton" name="pushButton_diffusion_overview">
+          <widget class="QPushButton" name="pushButton_simulate_hydrogen_diffusion">
            <property name="sizePolicy">
             <sizepolicy hsizetype="MinimumExpanding" vsizetype="MinimumExpanding">
              <horstretch>80</horstretch>
@@ -97,7 +97,7 @@
             </sizepolicy>
            </property>
            <property name="text">
-            <string>Diffusion Overview</string>
+            <string>Simulate Hydrogen Diffusion</string>
            </property>
           </widget>
          </item>
@@ -237,7 +237,7 @@ p, li { white-space: pre-wrap; }
   </widget>
  </widget>
  <tabstops>
-  <tabstop>pushButton_diffusion_overview</tabstop>
+  <tabstop>pushButton_simulate_hydrogen_diffusion</tabstop>
   <tabstop>pushButton_heat_map</tabstop>
   <tabstop>pushButton_hydrogen_during_welding</tabstop>
   <tabstop>pushButton_brownian_motion</tabstop>
