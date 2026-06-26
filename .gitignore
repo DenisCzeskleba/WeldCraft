@@ -31,4 +31,5 @@ MIGRATION_LOG.md
 # Workspace-only notes and instructions
 **/AGENTS.md
 **/REFRACTOR_NOTES.md
+Resources/prepare_release.py
 ToDo.md
