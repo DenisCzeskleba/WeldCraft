@@ -9,7 +9,7 @@ repository-code: "https://github.com/DenisCzeskleba/WeldCraft"
 license: MIT
 version: "0.4.0"
 date-released: "2026-06-25"
-url: "https://doi.org/10.5281/zenodo.20854674"
+url: "https://doi.org/10.5281/zenodo.18451838"
 identifiers:
   - type: doi
-    value: "10.5281/zenodo.20854674"
+    value: "10.5281/zenodo.18451838"
