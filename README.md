@@ -25,7 +25,7 @@ For more information, see the [LICENSE](LICENSE) file.
 If you like and use this software, please cite the specific version you used.
 
 **WeldCraft v0.4.0**  
-DOI: https://doi.org/10.5281/zenodo.20854674
+DOI: https://doi.org/10.5281/zenodo.18451838
 
 The Zenodo record provides ready-to-import citation formats
 (RIS, BibTeX, EndNote XML, etc.).
