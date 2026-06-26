@@ -1,3 +1,3 @@
-# P3 Hydrogen Diffusion During Welding
+# P2 Hydrogen Diffusion During Welding
 
 Module-specific notes will be written here soon.
