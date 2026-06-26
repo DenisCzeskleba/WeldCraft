@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-# Form implementation generated from reading ui file 'G:\Arbeit BAM\0_Simulation\WeldCraft\Launcher\..\P1_Diffusion_Overview\settings\ui_diffusion_overview.ui'
+# Form implementation generated from reading ui file 'f:\100_WebSite and Hosted Projects\WeldCraft\P1_Diffusion_Overview\settings\ui_diffusion_overview.ui'
 #
 # Created by: PyQt5 UI code generator 5.15.11
 #
@@ -309,7 +309,6 @@ class Ui_MainWindow(object):
         self.label_2.setMaximumSize(QtCore.QSize(984984, 60))
         self.label_2.setFrameShape(QtWidgets.QFrame.NoFrame)
         self.label_2.setText("")
-        self.label_2.setPixmap(QtGui.QPixmap("G:\\Arbeit BAM\\0_Simulation\\WeldCraft\\Launcher\\..\\P1_Diffusion_Overview\\settings\\settings/BAM Logo.png"))
         self.label_2.setScaledContents(False)
         self.label_2.setAlignment(QtCore.Qt.AlignCenter)
         self.label_2.setObjectName("label_2")
@@ -1487,7 +1486,7 @@ class Ui_MainWindow(object):
         self.label_save_sim_frequency.setText(_translate("MainWindow", "Save frequency [s]"))
         self.lineEdit_file_name.setToolTip(_translate("MainWindow", "File name for the h5-File saving the animation matrices. Remember to add .h5 extension! Example file name: file_name.h5. Will be saved in same folder."))
         self.lineEdit_file_name.setText(_translate("MainWindow", "charging_sample.h5"))
-        self.label_file_name.setToolTip(_translate("MainWindow", "<html><head/><body><p>File name for the h5-File saving the animation matrices. Remember to add .h5 extension! Example: &quot;file_name.h5&quot;, will be saved in same folder. &quot;../Results/Save_Matrix.h5&quot; will be saved into the results folder with the name Save_Matrix.h5</p></body></html>"))
+        self.label_file_name.setToolTip(_translate("MainWindow", "<html><head/><body><p>File name for the h5-File saving the animation matrices. Remember to add .h5 extension! Example: &quot;file_name.h5&quot; will be saved next to the P1 script. &quot;Results/Save_Matrix.h5&quot; will be saved into the P1 results folder.</p></body></html>"))
         self.label_file_name.setText(_translate("MainWindow", "File Name"))
         self.groupBox_2.setTitle(_translate("MainWindow", "Animation"))
         self.checkBox_incl_animation.setToolTip(_translate("MainWindow", "<html><head/><body><p>Include the 2D Animation in Tab 1. Rendering animations takes considerable time even if the calculations do not. Consider turning off during preparatory simulations.</p></body></html>"))

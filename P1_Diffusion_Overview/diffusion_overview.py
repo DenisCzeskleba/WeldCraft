@@ -24,6 +24,35 @@ from calculate_stuff_for_gui import analytical_solution
 from calculate_stuff_for_gui import calculate_1d, simulate_2d, create_hydrogen_animation
 from settings import ui_diffusion_overview
 
+MODULE_DIR = os.path.dirname(os.path.abspath(__file__))
+REPO_ROOT = os.path.normpath(os.path.join(MODULE_DIR, ".."))
+IMAGES_DIR = os.path.join(REPO_ROOT, "Resources", "Images")
+RESULTS_DIR = os.path.join(MODULE_DIR, "Results")
+
+
+def resolve_image_path(file_name):
+    return os.path.join(IMAGES_DIR, file_name)
+
+
+def resolve_simulation_file_path(file_name):
+    normalized_path = os.path.normpath(file_name)
+    if os.path.isabs(normalized_path):
+        return normalized_path
+
+    legacy_results_prefixes = [
+        os.path.normpath("Results"),
+        os.path.normpath(os.path.join(".", "Results")),
+        os.path.normpath(os.path.join("..", "Results")),
+    ]
+    for prefix in legacy_results_prefixes:
+        if normalized_path == prefix or normalized_path.startswith(prefix + os.sep):
+            relative_suffix = os.path.relpath(normalized_path, prefix)
+            if relative_suffix == ".":
+                return RESULTS_DIR
+            return os.path.join(RESULTS_DIR, relative_suffix)
+
+    return os.path.join(MODULE_DIR, normalized_path)
+
 
 class ErrorHandler(QObject):
     show_error_signal = pyqtSignal(str)
@@ -292,13 +321,9 @@ class MainWindow(QtWidgets.QMainWindow, ui_diffusion_overview.Ui_MainWindow):
     def __init__(self):
         super().__init__()
         self.setupUi(self)
+        self.apply_static_assets()
         self.setup_settings()
         self.load_settings()
-
-        # Set taskbar icon
-        current_dir = os.path.dirname(os.path.abspath(__file__))
-        ico_path = os.path.join(current_dir, "..", "Resources", "Images", "WeldCraft.ico")
-        app.setWindowIcon(QtGui.QIcon(ico_path))
 
         # Initialize worker attributes
         self.worker = None
@@ -686,6 +711,19 @@ class MainWindow(QtWidgets.QMainWindow, ui_diffusion_overview.Ui_MainWindow):
         self.horizontalSlider_left_boundary_simple.valueChanged.connect(self.update_left_boundary_simple)
         self.horizontalSlider_right_boundary_simple.valueChanged.connect(self.update_right_boundary_simple)
 
+    def apply_static_assets(self):
+        app_icon = QtGui.QIcon(resolve_image_path("WeldCraft.ico"))
+        self.setWindowIcon(app_icon)
+        qt_app = QtWidgets.QApplication.instance()
+        if qt_app is not None:
+            qt_app.setWindowIcon(app_icon)
+
+        logo_path = resolve_image_path("BAM Logo.png")
+        if os.path.exists(logo_path):
+            self.label_2.setPixmap(QtGui.QPixmap(logo_path))
+        else:
+            self.label_2.clear()
+
     def calc_time_and_units(self):
         # Set the display time stuff here already
         if len(self.loaded_t_values) > 0:
@@ -706,7 +744,7 @@ class MainWindow(QtWidgets.QMainWindow, ui_diffusion_overview.Ui_MainWindow):
     def load_data(self):
         self.horizontalSlider_video.setEnabled(False)
 
-        file_name = self.lineEdit_file_name.text()
+        file_name = resolve_simulation_file_path(self.lineEdit_file_name.text())
         self.data_loading_worker = DataLoadingWorker(file_name)
         self.data_loading_worker.progress.connect(self.update_console_output)
         self.data_loading_worker.result.connect(self.on_data_loaded)
@@ -1701,8 +1739,8 @@ class MainWindow(QtWidgets.QMainWindow, ui_diffusion_overview.Ui_MainWindow):
         if getattr(sys, 'frozen', False):
             application_path = os.path.dirname(sys.executable)
         else:
-            application_path = os.path.dirname(os.path.abspath(__file__))
-        return os.path.join(application_path, 'settings/settings.json')
+            application_path = MODULE_DIR
+        return os.path.join(application_path, 'settings', 'settings.json')
 
     def setup_settings(self):
         self.settings_path = self.get_settings_path()
@@ -1894,7 +1932,8 @@ class MainWindow(QtWidgets.QMainWindow, ui_diffusion_overview.Ui_MainWindow):
             k_value = self.safe_eval(self.lineEdit_k_value.text())
 
             save_every_x_s = float(self.lineEdit_save_sim_frequency.text())
-            file_name = self.lineEdit_file_name.text()
+            file_name = resolve_simulation_file_path(self.lineEdit_file_name.text())
+            os.makedirs(os.path.dirname(file_name), exist_ok=True)
 
             self.worker2d = Worker2D(dx, dim_x, dim_y, sim_time, init_hydrogen_conc, border_hydrogen, border_bc,
                                      diffusion_coefficient, warm_up_time, k_value, save_every_x_s, file_name)

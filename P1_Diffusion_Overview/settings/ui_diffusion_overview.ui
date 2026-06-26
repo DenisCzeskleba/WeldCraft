@@ -454,9 +454,6 @@
           <property name="text">
            <string/>
           </property>
-          <property name="pixmap">
-           <pixmap>settings/BAM Logo.png</pixmap>
-          </property>
           <property name="scaledContents">
            <bool>false</bool>
           </property>
@@ -1478,7 +1475,7 @@ Start value at t = 0, linear interpolation of values between t = 0 and End Time.
                          </sizepolicy>
                         </property>
                         <property name="toolTip">
-                         <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;File name for the h5-File saving the animation matrices. Remember to add .h5 extension! Example: &amp;quot;file_name.h5&amp;quot;, will be saved in same folder. &amp;quot;../Results/Save_Matrix.h5&amp;quot; will be saved into the results folder with the name Save_Matrix.h5&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
+                         <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;File name for the h5-File saving the animation matrices. Remember to add .h5 extension! Example: &amp;quot;file_name.h5&amp;quot; will be saved next to the P1 script. &amp;quot;Results/Save_Matrix.h5&amp;quot; will be saved into the P1 results folder.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
                         </property>
                         <property name="text">
                          <string>File Name</string>
