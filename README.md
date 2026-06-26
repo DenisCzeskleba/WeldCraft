@@ -2,7 +2,7 @@
 
 Open-Source repository for all (currently work in progress) hydrogen/heat weld simulation scripts and programs relating to the research project "Prevention of Cold Cracking in Thick Plated High-Strength Steel SAW-Welds"
 
-## Status - v0.4.0 - alpha
+## Status - v0.4.1
 
 CURRENT STATE (Jun 2026): Another total script refractor.
 
