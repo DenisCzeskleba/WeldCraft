@@ -102,19 +102,6 @@
           </widget>
          </item>
          <item>
-          <widget class="QPushButton" name="pushButton_heat_map">
-           <property name="sizePolicy">
-            <sizepolicy hsizetype="MinimumExpanding" vsizetype="MinimumExpanding">
-             <horstretch>80</horstretch>
-             <verstretch>80</verstretch>
-            </sizepolicy>
-           </property>
-           <property name="text">
-            <string>Heat Map Simulation</string>
-           </property>
-          </widget>
-         </item>
-         <item>
           <widget class="QPushButton" name="pushButton_hydrogen_during_welding">
            <property name="sizePolicy">
             <sizepolicy hsizetype="MinimumExpanding" vsizetype="MinimumExpanding">
@@ -123,7 +110,20 @@
             </sizepolicy>
            </property>
            <property name="text">
-            <string>P2 Hydrogen Diffusion During Welding</string>
+            <string>Hydrogen Diffusion During Welding</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QPushButton" name="pushButton_heat_map">
+           <property name="sizePolicy">
+            <sizepolicy hsizetype="MinimumExpanding" vsizetype="MinimumExpanding">
+             <horstretch>80</horstretch>
+             <verstretch>80</verstretch>
+            </sizepolicy>
+           </property>
+           <property name="text">
+            <string>Placeholder 1</string>
            </property>
           </widget>
          </item>
@@ -136,7 +136,7 @@
             </sizepolicy>
            </property>
            <property name="text">
-            <string>Diffusion Visualization (Brownian Motion)</string>
+            <string>Placeholder 2</string>
            </property>
           </widget>
          </item>
@@ -149,7 +149,7 @@
             </sizepolicy>
            </property>
            <property name="text">
-            <string>Bead-On-Plate-Weld (ISO3690)</string>
+            <string>Placeholder 3</string>
            </property>
           </widget>
          </item>
@@ -162,7 +162,7 @@
             </sizepolicy>
            </property>
            <property name="text">
-            <string>1D Diffusion (1111 Rule)</string>
+            <string>Placeholder 4</string>
            </property>
           </widget>
          </item>
@@ -175,7 +175,7 @@
             </sizepolicy>
            </property>
            <property name="text">
-            <string>Data Visualization</string>
+            <string>Placeholder 5</string>
            </property>
           </widget>
          </item>
@@ -221,8 +221,7 @@
 p, li { white-space: pre-wrap; }
 &lt;/style&gt;&lt;/head&gt;&lt;body style=&quot; font-family:'MS Shell Dlg 2'; font-size:7.8pt; font-weight:400; font-style:normal;&quot;&gt;
 &lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;Hover a module button to see a short description.&lt;/p&gt;
-&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;Some modules are still code-only and not launchable from the GUI yet.&lt;/p&gt;
-&lt;/body&gt;&lt;/html&gt;</string>
+&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;Some modules are still code-only and not launchable from the GUI yet.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
            </property>
            <property name="textInteractionFlags">
             <set>Qt::NoTextInteraction</set>

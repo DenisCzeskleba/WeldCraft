@@ -107,7 +107,6 @@ class Launcher(QMainWindow):
         # self.path_heat_map = os.path.join(current_dir, "..", "Resources", "Images", "WeldCraft.ico")
         # self.path_hydrogen_during_welding = os.path.join(current_dir, "..", "Resources", "Images", "WeldCraft.ico")
         # self.path_brownian_motion = os.path.join(current_dir, "..", "Resources", "Images", "WeldCraft.ico")
-        self.path_iso3690 = os.path.join(REPO_ROOT, "P5_BoP_ISO3690", "bead_on_plate.py")
         # self.path_1d_diffusion_1111_rule = os.path.join(current_dir, "..", "Resources", "Images", "WeldCraft.ico")
         # self.path_data_visualization = os.path.join(current_dir, "..", "Resources", "Images", "WeldCraft.ico")
 
@@ -168,13 +167,13 @@ class Launcher(QMainWindow):
     def set_hover_text(self):
         """Assign hover text to each button."""
         hover_texts = {
-            'pushButton_diffusion_overview': "Diffusion Overview: Write this later!",
-            'pushButton_heat_map': "Simulate Heat Map: Write this later!",
+            'pushButton_diffusion_overview': "Diffusion Overview: main overview entry point.",
             'pushButton_hydrogen_during_welding': self.p2_hydrogen_info,
-            'pushButton_brownian_motion': "Simulate Brownian Motion: Visualize random motion of particles. Write this later!",
-            'pushButton_iso3690': "Bead on plate (ISO 3690): Write this later!",
-            'pushButton_1d_diffusion_1111_rule': "1D Diffusion (Rule 1111): Explore one-dimensional diffusion. Write this later!",
-            'pushButton_data_visualization': "Visualize Data: Might not be necessary, people can make their own. Write this later!"
+            'pushButton_heat_map': "Placeholder 3 (maybe Heat Map Simulation?): Write this later!",
+            'pushButton_brownian_motion': "Placeholder 4 (maybe Diffusion Visualization / Brownian Motion?): Write this later!",
+            'pushButton_iso3690': "Placeholder 5 (maybe Bead-On-Plate-Weld / ISO3690?): Write this later!",
+            'pushButton_1d_diffusion_1111_rule': "Placeholder 6 (maybe 1D Diffusion / 1111 Rule?): Write this later!",
+            'pushButton_data_visualization': "Placeholder 7 (maybe Data Visualization?): Write this later!"
         }
 
         for btn_name, hover_text in hover_texts.items():
@@ -226,28 +225,23 @@ class Launcher(QMainWindow):
         self.start_program('pushButton_diffusion_overview', [self.path_diffusion_overview])
 
     def start_heat_map(self):
-        # self.start_program('pushButton_heat_map', ['python', 'path_to_heat_map.py'])
-        print("start_heat_map")
+        print("Placeholder 3 (maybe Heat Map Simulation?): Write this later!")
 
     def start_hydrogen_during_welding(self):
         self.update_info_text(self.p2_hydrogen_info)
         print(self.p2_hydrogen_info)
 
     def start_brownian_motion(self):
-        # self.start_program('pushButton_brownian_motion', ['python', 'path_to_brownian_motion.py'])
-        print("start_brownian_motion")
+        print("Placeholder 4 (maybe Diffusion Visualization / Brownian Motion?): Write this later!")
 
     def start_iso3690(self):
-        # self.start_program('pushButton_iso3690', ['python', self.path_iso3690])
-        print("start_iso3690")
+        print("Placeholder 5 (maybe Bead-On-Plate-Weld / ISO3690?): Write this later!")
 
     def start_diffusion_1111_rule(self):
-        # self.start_program('pushButton_1d_diffusion_1111_rule', ['python', 'path_to_diffusion_1111_rule.py'])
-        print("start_diffusion_1111_rule")
+        print("Placeholder 6 (maybe 1D Diffusion / 1111 Rule?): Write this later!")
 
     def start_data_visualization(self):
-        # self.start_program('pushButton_data_visualization', ['python', 'path_to_data_visualization.py'])
-        print("start_data_visualization")
+        print("Placeholder 7 (maybe Data Visualization?): Write this later!")
 
     def close_splash(self):
         splash.close()
