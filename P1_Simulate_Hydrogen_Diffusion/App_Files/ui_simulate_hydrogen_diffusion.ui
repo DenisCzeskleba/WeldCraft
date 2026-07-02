@@ -503,7 +503,7 @@
                 <enum>QTabWidget::Rounded</enum>
                </property>
                <property name="currentIndex">
-                <number>0</number>
+                <number>1</number>
                </property>
                <property name="elideMode">
                 <enum>Qt::ElideLeft</enum>
@@ -1659,7 +1659,7 @@ Start value at t = 0, linear interpolation of values between t = 0 and End Time.
                       <item>
                        <widget class="QCheckBox" name="checkBox_equilibrium">
                         <property name="text">
-                         <string>Include Equilibrium</string>
+                         <string>Include Steady-State</string>
                         </property>
                         <property name="checked">
                          <bool>true</bool>
@@ -2390,7 +2390,7 @@ Start value at t = 0, linear interpolation of values between t = 0 and End Time.
                       </sizepolicy>
                      </property>
                      <property name="title">
-                      <string>Flux Calculation</string>
+                      <string>Display Options</string>
                      </property>
                      <property name="checkable">
                       <bool>false</bool>
@@ -2415,14 +2415,54 @@ Start value at t = 0, linear interpolation of values between t = 0 and End Time.
                        <number>2</number>
                       </property>
                       <item>
-                       <widget class="QCheckBox" name="checkBox_show_flux">
-                        <property name="text">
-                         <string>Show Flux</string>
-                        </property>
-                        <property name="checked">
-                         <bool>true</bool>
-                        </property>
-                       </widget>
+                       <layout class="QHBoxLayout" name="horizontalLayout_43">
+                        <item>
+                         <widget class="QCheckBox" name="checkBox_show_flux">
+                          <property name="sizePolicy">
+                           <sizepolicy hsizetype="Expanding" vsizetype="Fixed">
+                            <horstretch>0</horstretch>
+                            <verstretch>0</verstretch>
+                           </sizepolicy>
+                          </property>
+                          <property name="text">
+                           <string>Show Flux</string>
+                          </property>
+                          <property name="checked">
+                           <bool>true</bool>
+                          </property>
+                         </widget>
+                        </item>
+                        <item>
+                         <widget class="QComboBox" name="comboBox_flux_units">
+                          <property name="sizePolicy">
+                           <sizepolicy hsizetype="Expanding" vsizetype="Fixed">
+                            <horstretch>0</horstretch>
+                            <verstretch>0</verstretch>
+                           </sizepolicy>
+                          </property>
+                          <item>
+                           <property name="text">
+                            <string>Fourier's Law (Heat) - Absolute</string>
+                           </property>
+                          </item>
+                          <item>
+                           <property name="text">
+                            <string>Fourier's Law (Heat) - Relative</string>
+                           </property>
+                          </item>
+                          <item>
+                           <property name="text">
+                            <string>Fick's Law (Hydrogen) - Absolute</string>
+                           </property>
+                          </item>
+                          <item>
+                           <property name="text">
+                            <string>Fick's Law (Hydrogen) - Relative</string>
+                           </property>
+                          </item>
+                         </widget>
+                        </item>
+                       </layout>
                       </item>
                       <item>
                        <layout class="QHBoxLayout" name="horizontalLayout_34">
@@ -2497,6 +2537,82 @@ Start value at t = 0, linear interpolation of values between t = 0 and End Time.
                           </property>
                           <property name="text">
                            <string>Specific heat capacity [J/kgK]</string>
+                          </property>
+                         </widget>
+                        </item>
+                       </layout>
+                      </item>
+                      <item>
+                       <widget class="QCheckBox" name="checkBox_show_min_value">
+                        <property name="text">
+                         <string>Show Minimum Absolute Value</string>
+                        </property>
+                        <property name="checked">
+                         <bool>true</bool>
+                        </property>
+                       </widget>
+                      </item>
+                      <item>
+                       <widget class="QComboBox" name="comboBox_mode_switch">
+                        <property name="sizePolicy">
+                         <sizepolicy hsizetype="Expanding" vsizetype="Fixed">
+                          <horstretch>0</horstretch>
+                          <verstretch>0</verstretch>
+                         </sizepolicy>
+                        </property>
+                        <item>
+                         <property name="text">
+                          <string>Hydrogen Diffusion Labels</string>
+                         </property>
+                        </item>
+                        <item>
+                         <property name="text">
+                          <string>Heat Conduction Labels</string>
+                         </property>
+                        </item>
+                       </widget>
+                      </item>
+                      <item>
+                       <layout class="QHBoxLayout" name="horizontalLayout_41">
+                        <item>
+                         <widget class="QLabel" name="label_plot_points">
+                          <property name="sizePolicy">
+                           <sizepolicy hsizetype="Expanding" vsizetype="Preferred">
+                            <horstretch>20</horstretch>
+                            <verstretch>0</verstretch>
+                           </sizepolicy>
+                          </property>
+                          <property name="toolTip">
+                           <string>Set the number of terms in Fourier Series.</string>
+                          </property>
+                          <property name="text">
+                           <string>No. of Points to Plot</string>
+                          </property>
+                         </widget>
+                        </item>
+                        <item>
+                         <widget class="QLineEdit" name="lineEdit_plot_points">
+                          <property name="enabled">
+                           <bool>false</bool>
+                          </property>
+                          <property name="toolTip">
+                           <string>Set the number of terms in Fourier Series.</string>
+                          </property>
+                          <property name="text">
+                           <string>1000</string>
+                          </property>
+                         </widget>
+                        </item>
+                        <item>
+                         <widget class="QCheckBox" name="checkBox_plot_points_auto">
+                          <property name="toolTip">
+                           <string>Calculate enough terms in the analytical solution to reach e-12 precision (meaning the next term would lead to a less than e-12 change in the solution)</string>
+                          </property>
+                          <property name="text">
+                           <string>Auto</string>
+                          </property>
+                          <property name="checked">
+                           <bool>true</bool>
                           </property>
                          </widget>
                         </item>

@@ -70,12 +70,64 @@ def numerical_solution(length, dx, alpha, u0, uL, dt, t_max, init_conc=0, worker
     return x, u, dt
 
 
+def calculate_boundary_flux(x, u, alpha, mode="fourier", factor_1=1.0, factor_2=1.0):
+    if len(x) < 2 or len(u) < 2:
+        return None, None, None
+
+    delta_u = u[-1] - u[-2]
+    delta_x_mm = x[-1] - x[-2]
+    if delta_x_mm == 0:
+        return None, None, None
+
+    if mode == "fick":
+        # The simple tab stores a normalized field, so Fick mode needs a user-provided
+        # concentration scaling to turn GUI units into a physical concentration.
+        concentration_scale = factor_1  # mol/mm^3 per plotted unit
+        diffusivity_ratio = factor_2
+        effective_diffusivity = alpha * diffusivity_ratio  # mm^2/s
+        concentration_gradient = (delta_u * concentration_scale) / delta_x_mm  # mol/mm^4
+        flux = -effective_diffusivity * concentration_gradient
+        return flux, "mol/(mm²·s)", "Hydrogen Flux"
+
+    alpha_m = alpha * 1e-6  # m^2/s
+    thermal_conductivity = alpha_m * factor_1 * factor_2
+    flux_w_per_m2 = -thermal_conductivity * (delta_u / (delta_x_mm * 1e-3))
+    flux_w_per_mm2 = flux_w_per_m2 / 1e6
+    return flux_w_per_mm2, "W/mm²", "Heat Flux"
+
+
+def calculate_boundary_flux(x, u, alpha, mode="fourier", factor_1=1.0, factor_2=1.0):
+    if len(x) < 2 or len(u) < 2:
+        return None, None, None
+
+    delta_u = u[-1] - u[-2]
+    delta_x_mm = x[-1] - x[-2]
+    if delta_x_mm == 0:
+        return None, None, None
+
+    if mode == "fick":
+        concentration_scale = factor_1  # mol/mm^3 per plotted unit
+        diffusivity_ratio = factor_2
+        effective_diffusivity = alpha * diffusivity_ratio  # mm^2/s
+        concentration_gradient = (delta_u * concentration_scale) / delta_x_mm  # mol/mm^4
+        flux = -effective_diffusivity * concentration_gradient
+        return flux, "mol/(mm²·s)", "Hydrogen Flux"
+
+    alpha_m = alpha * 1e-6  # m^2/s
+    thermal_conductivity = alpha_m * factor_1 * factor_2
+    flux_w_per_m2 = -thermal_conductivity * (delta_u / (delta_x_mm * 1e-3))
+    flux_w_per_mm2 = flux_w_per_m2 / 1e6
+    return flux_w_per_mm2, "W/mm²", "Heat Flux"
+
+
 def analytical_solution(length, alpha, u0, uL, t, init_conc=0, points=None, show_flux=0, density=1, heat_capa=1, num_terms=100):
 
-    if points is not None:
-        x = np.array(points)
-    else:
+    if points is None:
         x = np.linspace(0, length, 200)
+    elif np.isscalar(points):
+        x = np.linspace(0, length, max(int(points), 2))
+    else:
+        x = np.array(points)
 
     if u0 == uL:  # for some reason i need to figure out later, when they are the same, the calc is weird
         u0 += 1e-8
@@ -112,6 +164,13 @@ def analytical_solution(length, alpha, u0, uL, t, init_conc=0, points=None, show
         error_estimate = np.max(np.abs(B_n * np.sin(lambda_n * x) * np.exp(-alpha * lambda_n ** 2 * t)))
 
     u = v + u_s
+    flux = None
+    if show_flux:
+        flux, _, _ = calculate_boundary_flux(x, u, alpha, "fourier", density, heat_capa)
+    return x, u, u_s, error_estimate, flux
+
+    if False:
+        heat_flux, _, _ = calculate_boundary_flux(x, u, alpha, "fourier", density, heat_capa)
 
     heat_flux = None
     if show_flux:

@@ -22,7 +22,7 @@ from matplotlib.collections import LineCollection
 from matplotlib.figure import Figure
 
 from App_Files.calculate_stuff_for_gui import analytical_solution
-from App_Files.calculate_stuff_for_gui import calculate_1d, simulate_2d, create_hydrogen_animation
+from App_Files.calculate_stuff_for_gui import calculate_1d, simulate_2d, create_hydrogen_animation, calculate_boundary_flux
 from App_Files.custom_widgets import ClickableLabel, CustomLabel
 from App_Files import ui_simulate_hydrogen_diffusion
 
@@ -117,6 +117,15 @@ def global_exception_handler(exctype, value, tb):
 
 
 sys.excepthook = global_exception_handler
+
+
+class PlotPointsValidator(QtGui.QValidator):
+    def validate(self, text, pos):
+        if text == "":
+            return QtGui.QValidator.Intermediate, text, pos
+        if text.isdigit() and int(text) > 0:
+            return QtGui.QValidator.Acceptable, text, pos
+        return QtGui.QValidator.Invalid, text, pos
 
 
 def set_combo_box_margins(parent):
@@ -566,12 +575,22 @@ class MainWindow(QtWidgets.QMainWindow, ui_simulate_hydrogen_diffusion.Ui_MainWi
         self.checkBox_equilibrium.stateChanged.connect(self.on_checkBox_equilibrium_changed)
         self.checkBox_anal_number_of_terms.stateChanged.connect(self.on_checkBox_anal_number_of_terms_changed)
         self.checkBox_show_flux.stateChanged.connect(self.on_checkBox_flux_changed)
+        self.checkBox_show_min_value.stateChanged.connect(self.on_checkBox_show_min_value_changed)
+        self.comboBox_flux_units.currentIndexChanged.connect(self.on_flux_units_changed)
+        self.comboBox_mode_switch.currentIndexChanged.connect(self.calc_and_plot_to_tab_5)
+        self.checkBox_plot_points_auto.stateChanged.connect(self.on_checkBox_plot_points_auto_changed)
+        self.lineEdit_density.editingFinished.connect(self.calc_and_plot_to_tab_5)
+        self.lineEdit_heat_capa.editingFinished.connect(self.calc_and_plot_to_tab_5)
+        self.lineEdit_plot_points.editingFinished.connect(self.on_lineEdit_plot_points_changed)
+        self.lineEdit_plot_points.setValidator(PlotPointsValidator())
 
         # Set the initial view
         self.tabWidget_Settings.setCurrentIndex(0)  # Show Mesh Tab
         self.tabWidget.setCurrentIndex(0)  # Show Mesh Tab
         self.toggle_tab_visibility()  # Set visible Tabs accordingly
         self.on_checkBox_anal_number_of_terms_changed()  # Set the Terms lineEdit accordingly
+        self.on_checkBox_plot_points_auto_changed()
+        self.update_flux_input_labels()
 
         # Draw the initial shape
         self.update_drawing()
@@ -1363,6 +1382,206 @@ class MainWindow(QtWidgets.QMainWindow, ui_simulate_hydrogen_diffusion.Ui_MainWi
     def on_checkBox_flux_changed(self):
         self.calc_and_plot_to_tab_5()
 
+    def on_checkBox_show_min_value_changed(self):
+        self.calc_and_plot_to_tab_5()
+
+    def on_flux_units_changed(self):
+        self.update_flux_input_labels()
+        self.calc_and_plot_to_tab_5()
+
+    def on_checkBox_plot_points_auto_changed(self):
+        use_auto = self.checkBox_plot_points_auto.isChecked()
+        self.lineEdit_plot_points.setEnabled(not use_auto)
+        self.calc_and_plot_to_tab_5()
+
+    def on_lineEdit_plot_points_changed(self):
+        if self.checkBox_plot_points_auto.isChecked():
+            return
+        text = self.lineEdit_plot_points.text().strip()
+        if text and text.isdigit() and int(text) > 0:
+            self.calc_and_plot_to_tab_5()
+
+    def get_plot_point_count(self):
+        if self.checkBox_plot_points_auto.isChecked():
+            return 200
+        text = self.lineEdit_plot_points.text().strip()
+        if not text.isdigit():
+            raise InvalidInputError("Plot points must be a positive integer.")
+        value = int(text)
+        if value <= 0:
+            raise InvalidInputError("Plot points must be larger than zero.")
+        return value
+
+    def get_flux_selection(self):
+        return self.comboBox_flux_units.currentText()
+
+    def get_selected_flux_mode(self):
+        if "Fick" in self.get_flux_selection():
+            return "fick"
+        return "fourier"
+
+    def is_relative_flux_mode(self):
+        return "Relative" in self.get_flux_selection()
+
+    @staticmethod
+    def format_flux_value(value, is_relative=False):
+        if value is None or (isinstance(value, float) and np.isnan(value)):
+            return "NaN"
+        if is_relative:
+            if abs(value) < 0.005:
+                return "0.00"
+            return f"{value:.2f}"
+        if abs(value) < 1e-21:
+            return "<1.0e-21"
+        return f"{value:.1e}"
+
+    def update_flux_input_labels(self):
+        if self.is_relative_flux_mode():
+            tooltip = "Not used in relative mode. Relative flux is reported as a percent of the steady-state flux."
+            self.label_density.setText("Not used in relative mode")
+            self.label_density.setToolTip(tooltip)
+            self.label_density_2.setText("Not used in relative mode")
+            self.label_density_2.setToolTip(tooltip)
+            self.lineEdit_density.setToolTip(tooltip)
+            self.lineEdit_heat_capa.setToolTip(tooltip)
+            self.lineEdit_density.setEnabled(False)
+            self.lineEdit_heat_capa.setEnabled(False)
+        elif self.get_selected_flux_mode() == "fick":
+            tooltip_1 = ("Use this only for absolute hydrogen flux. It converts the plotted hydrogen value "
+                         "into a molar concentration for Fick's law: C = u × factor.")
+            tooltip_2 = ("Use this only for absolute hydrogen flux. It sets the diffusion coefficient used "
+                         "in Fick's law relative to the simple-tab alpha: D = alpha × ratio.")
+            self.label_density.setText("Molar concentration conversion factor [mol/mm³ per plotted unit]")
+            self.label_density.setToolTip(tooltip_1)
+            self.label_density_2.setText("Diffusion coefficient ratio D/alpha [-]")
+            self.label_density_2.setToolTip(tooltip_2)
+            self.lineEdit_density.setToolTip(tooltip_1)
+            self.lineEdit_heat_capa.setToolTip(tooltip_2)
+            self.lineEdit_density.setEnabled(True)
+            self.lineEdit_heat_capa.setEnabled(True)
+        else:
+            tooltip_1 = "Mass density used with alpha and cp to compute thermal conductivity for Fourier's law."
+            tooltip_2 = "Specific heat capacity used with alpha and density to compute thermal conductivity for Fourier's law."
+            self.label_density.setText("Mass density ρ [kg/m³]")
+            self.label_density.setToolTip(tooltip_1)
+            self.label_density_2.setText("Specific heat capacity cₚ [J/(kg·K)]")
+            self.label_density_2.setToolTip(tooltip_2)
+            self.lineEdit_density.setToolTip(tooltip_1)
+            self.lineEdit_heat_capa.setToolTip(tooltip_2)
+            self.lineEdit_density.setEnabled(True)
+            self.lineEdit_heat_capa.setEnabled(True)
+
+    def get_simple_mode_axis_label(self):
+        if "Heat" in self.comboBox_mode_switch.currentText():
+            return "Temperature [°C]"
+        return "Hydrogen Concentration"
+
+    def _legacy_update_flux_input_labels_notes(self):
+        # Legacy prototype kept for reference:
+        # it used a generic concentration conversion factor and a D/alpha ratio.
+        if self.is_relative_flux_mode():
+            tooltip = "Not used in relative mode. Relative flux is reported as a percent of the steady-state flux."
+            self.label_density.setText("Not used in relative mode")
+            self.label_density.setToolTip(tooltip)
+            self.label_density_2.setText("Not used in relative mode")
+            self.label_density_2.setToolTip(tooltip)
+            self.lineEdit_density.setToolTip(tooltip)
+            self.lineEdit_heat_capa.setToolTip(tooltip)
+            self.lineEdit_density.setEnabled(False)
+            self.lineEdit_heat_capa.setEnabled(False)
+            self.lineEdit_heat_capa.setVisible(False)
+            self.label_density_2.setVisible(False)
+        elif self.get_selected_flux_mode() == "fick":
+            tooltip_1 = ("EXPERIMENTAL FEATURE. Use this only for left-to-right permeation-style interpretation "
+                         "of the simple plot. Enter the left-side subsurface hydrogen concentration that corresponds "
+                         "to the \"fully filled\" normalized state u = 100, i.e. left boundary value 1.0. "
+                         "The code maps the normalized field to concentration with C = (u/100) x C_ref. "
+                         "Default: C_ref = 3.5 x 10^-8 mol/mm^3, based on 5 ml/100 g Fe ≈ 4.5 wt ppm ≈ 3.5 x 10^-8 mol/mm^3.")
+            tooltip_2 = "Not used for hydrogen absolute mode. Alpha is treated as the hydrogen diffusivity D_H."
+            tooltip_1 = ("EXPERIMENTAL FEATURE. Use this only for left-to-right permeation-style interpretation "
+                         "of the simple plot. Enter the left-side subsurface hydrogen concentration that corresponds "
+                         "to the fully filled normalized state u = 100, i.e. left boundary value 1.0. "
+                         "The code maps the normalized field to concentration with C = (u/100) x C_ref. "
+                         "Default: C_ref = 3.5 x 10^-8 mol/mm³, based on 5 ml/100 g Fe ≈ 4.5 wt ppm ≈ 3.5 x 10^-8 mol/mm³.")
+            self.label_density.setText("Left Side Subsurface Concentration [mol/mm³]")
+            self.label_density.setToolTip(tooltip_1)
+            self.label_density_2.setText("Not used in hydrogen absolute mode")
+            self.label_density_2.setToolTip(tooltip_2)
+            self.lineEdit_density.setToolTip(tooltip_1)
+            self.lineEdit_heat_capa.setToolTip(tooltip_2)
+            if self.lineEdit_density.text().strip() in {"", "100"}:
+                self.lineEdit_density.setText("3.5e-08")
+            self.lineEdit_density.setEnabled(True)
+            self.lineEdit_heat_capa.setEnabled(False)
+            self.lineEdit_heat_capa.setVisible(False)
+            self.label_density_2.setVisible(False)
+        else:
+            tooltip_1 = "Mass density used with alpha and c_p to compute thermal conductivity for Fourier's law."
+            tooltip_2 = "Specific heat capacity used with alpha and density to compute thermal conductivity for Fourier's law."
+            self.label_density.setText("Mass density rho [kg/m³]")
+            self.label_density.setToolTip(tooltip_1)
+            self.label_density_2.setText("Specific heat capacity c_p [J/(kg·K)]")
+            self.label_density_2.setToolTip(tooltip_2)
+            self.lineEdit_density.setToolTip(tooltip_1)
+            self.lineEdit_heat_capa.setToolTip(tooltip_2)
+            self.lineEdit_density.setEnabled(True)
+            self.lineEdit_heat_capa.setEnabled(True)
+            self.lineEdit_heat_capa.setVisible(True)
+            self.label_density_2.setVisible(True)
+
+    def update_flux_input_labels(self):
+        if self.is_relative_flux_mode():
+            tooltip = "Not used in relative mode. Relative flux is reported as a percent of the steady-state flux."
+            self.label_density.setText("Not used in relative mode")
+            self.label_density.setToolTip(tooltip)
+            self.label_density_2.setText("Not used in relative mode")
+            self.label_density_2.setToolTip(tooltip)
+            self.lineEdit_density.setToolTip(tooltip)
+            self.lineEdit_heat_capa.setToolTip(tooltip)
+            self.lineEdit_density.setEnabled(False)
+            self.lineEdit_heat_capa.setEnabled(False)
+            self.lineEdit_heat_capa.setVisible(False)
+            self.label_density_2.setVisible(False)
+        elif self.get_selected_flux_mode() == "fick":
+            tooltip_1 = (
+                "EXPERIMENTAL FEATURE. Use this only for left-to-right permeation-style interpretation "
+                "of the simple plot. Enter the left-side subsurface hydrogen concentration that corresponds "
+                "to the fully filled normalized state u = 100, i.e. left boundary value 1.0. "
+                "The code maps the normalized field to concentration with C = (u/100) x C_ref. "
+                "Default: C_ref = 3.5 x 10^-8 mol/mm³, based on 5 ml/100 g Fe ≈ 4.5 wt ppm ≈ 3.5 x 10^-8 mol/mm³."
+            )
+            tooltip_2 = "Not used for hydrogen absolute mode. Alpha is treated as the hydrogen diffusivity D_H."
+            self.label_density.setText("Left Side Subsurface Concentration [mol/mm³]")
+            self.label_density.setToolTip(tooltip_1)
+            self.label_density_2.setText("Not used in hydrogen absolute mode")
+            self.label_density_2.setToolTip(tooltip_2)
+            self.lineEdit_density.setToolTip(tooltip_1)
+            self.lineEdit_heat_capa.setToolTip(tooltip_2)
+            if self.lineEdit_density.text().strip() in {"", "100"}:
+                self.lineEdit_density.setText("3.5e-08")
+            self.lineEdit_density.setEnabled(True)
+            self.lineEdit_heat_capa.setEnabled(False)
+            self.lineEdit_heat_capa.setVisible(False)
+            self.label_density_2.setVisible(False)
+        else:
+            tooltip_1 = "Mass density used with alpha and c_p to compute thermal conductivity for Fourier's law."
+            tooltip_2 = "Specific heat capacity used with alpha and density to compute thermal conductivity for Fourier's law."
+            self.label_density.setText("Mass density ρ [kg/m³]")
+            self.label_density.setToolTip(tooltip_1)
+            self.label_density_2.setText("Specific heat capacity cₚ [J/(kg·K)]")
+            self.label_density_2.setToolTip(tooltip_2)
+            self.lineEdit_density.setToolTip(tooltip_1)
+            self.lineEdit_heat_capa.setToolTip(tooltip_2)
+            self.lineEdit_density.setEnabled(True)
+            self.lineEdit_heat_capa.setEnabled(True)
+            self.lineEdit_heat_capa.setVisible(True)
+            self.label_density_2.setVisible(True)
+
+    def get_simple_mode_axis_label(self):
+        if "Heat" in self.comboBox_mode_switch.currentText():
+            return "Temperature [°C]"
+        return "Hydrogen Concentration"
+
     def on_checkBox_anal_number_of_terms_changed(self):
         if self.checkBox_anal_number_of_terms.isChecked():
             self.lineEdit_anal_number_of_terms.setText("Calculate until Error < 1e-12")
@@ -1402,10 +1621,22 @@ class MainWindow(QtWidgets.QMainWindow, ui_simulate_hydrogen_diffusion.Ui_MainWi
             init_conc = float(self.get_nth_part(
                 self.label_init_hydro_simple.text().replace('<html><head/><body><p align="center">', '').replace(
                     '</p></body></html>', ''), 3))
+            plot_points = self.get_plot_point_count()
 
             show_flux = self.checkBox_show_flux.isChecked()
-            density = float(self.lineEdit_density.text())
-            heat_capa = float(self.lineEdit_heat_capa.text())
+            show_min_value = self.checkBox_show_min_value.isChecked()
+            flux_mode = self.get_selected_flux_mode()
+            use_relative_flux = self.is_relative_flux_mode()
+            if show_flux and not use_relative_flux:
+                flux_factor_1 = float(self.lineEdit_density.text())
+                if flux_mode == "fick":
+                    flux_factor_1 = flux_factor_1 / 100.0
+                    flux_factor_2 = 1.0
+                else:
+                    flux_factor_2 = float(self.lineEdit_heat_capa.text())
+            else:
+                flux_factor_1 = 1.0
+                flux_factor_2 = 1.0
 
             display_time_on_graph = time_to_show
 
@@ -1419,7 +1650,7 @@ class MainWindow(QtWidgets.QMainWindow, ui_simulate_hydrogen_diffusion.Ui_MainWi
                 time_to_show = time_to_show * 60 * 60 * 24
             elif unit_to_show == "[y]":
                 time_to_show = time_to_show * 60 * 60 * 24 * 365.25
-            values = [rod_width, alpha, u0, uL, time_to_show, init_conc, None, show_flux, density, heat_capa]
+            values = [rod_width, alpha, u0, uL, time_to_show, init_conc, plot_points, False, flux_factor_1, flux_factor_2]
 
             # Get the number of terms to calculate
             if self.checkBox_anal_number_of_terms.isChecked():
@@ -1431,52 +1662,78 @@ class MainWindow(QtWidgets.QMainWindow, ui_simulate_hydrogen_diffusion.Ui_MainWi
                     raise InvalidInputError("Invalid input for number of Fourier series terms!")
 
             # If all values are valid, proceed to calculate and plot
-            x, u, u_stable, error_estimate, flux = analytical_solution(*values, num_terms)
+            x, u, u_stable, error_estimate, _ = analytical_solution(*values, num_terms)
 
             # Clear the canvas and plot the new solution
 
             self.canvas5.axes.clear()
-            self.canvas5.axes.plot(x, u, label=f'Time = {display_time_on_graph} {unit_to_show}')
+            self.canvas5.axes.plot(
+                x, u,
+                label=f'Time = {display_time_on_graph} {unit_to_show}',
+                zorder=4,
+                clip_on=False,
+            )
             if self.checkBox_equilibrium.isChecked():
-                self.canvas5.axes.plot(x, u_stable, label=f'Equilibrium Solution', color='purple')
+                self.canvas5.axes.plot(x, u_stable, label='Steady-State Solution', color='purple', zorder=3)
             self.canvas5.axes.legend()
             # Set the title
             title = f"1D analytical solution"
             self.canvas5.axes.set_title(title)
+            y_upper = max(uL, u0, init_conc) * 1.05
             self.canvas5.axes.set_xlim(0, rod_width)
-            self.canvas5.axes.set_ylim(0, max(uL, u0, init_conc) * 1.05)
+            self.canvas5.axes.set_ylim(0, y_upper)
+            self.canvas5.axes.set_xlabel("Length L [mm]")
+            self.canvas5.axes.set_ylabel(self.get_simple_mode_axis_label())
             self.canvas5.axes.grid(True)
-            # Add an arrow to display min value:
-            min_value = u.min()
-            min_index = u.argmin()
-            min_x = x[min_index]
-
-            # Get the y-axis limits
+            # Get the axis limits for the optional annotations below.
             ylim_min, ylim_max = self.canvas5.axes.get_ylim()
-
-            # Get the y-axis limits
             xlim_min, xlim_max = self.canvas5.axes.get_xlim()
 
-            # Determine arrow position
-            if (min_value - ylim_min) > (ylim_max - min_value):  # Choose position based on available space
-                arrow_pos_y = min_value - (ylim_max - ylim_min) * 0.15  # Positioning of the arrow
+            if show_min_value:
+                min_value = u.min()
+                min_index = u.argmin()
+                min_x = x[min_index]
+
+                if (min_value - ylim_min) > (ylim_max - min_value):
+                    arrow_pos_y = min_value - (ylim_max - ylim_min) * 0.15
+                else:
+                    arrow_pos_y = min_value + (ylim_max - ylim_min) * 0.15
+
+                self.canvas5.axes.annotate(f"{min_value:.2f}",
+                            xy=(min_x, min_value), xycoords='data',
+                            xytext=(min_x, arrow_pos_y), textcoords='data',
+                            arrowprops=dict(facecolor='black', arrowstyle='->', shrinkA=5, shrinkB=5,
+                                            connectionstyle='arc3,rad=0.2'),
+                            ha='center', va='bottom', fontsize=10)
+
+            if show_flux:
+                flux, flux_units, flux_name = calculate_boundary_flux(
+                    x, u, alpha, flux_mode, flux_factor_1, flux_factor_2
+                )
+                if use_relative_flux:
+                    steady_flux, _, _ = calculate_boundary_flux(
+                        x, u_stable, alpha, flux_mode, flux_factor_1, flux_factor_2
+                    )
+                    if steady_flux is None or steady_flux == 0:
+                        flux = np.nan
+                    else:
+                        flux = (flux / steady_flux) * 100
+                    flux_units = "%"
+                    if flux_mode == "fick":
+                        flux_name = "Rel. Hydrogen Flux"
+                    else:
+                        flux_name = "Rel. Heat Flux"
             else:
-                arrow_pos_y = min_value + (ylim_max - ylim_min) * 0.15  # Positioning of the arrow
+                flux = None
+                flux_units = None
+                flux_name = None
 
-            # Add the arrow and the minimal saturation value
-            self.canvas5.axes.annotate(f"{min_value:.2f}",
-                        xy=(min_x, min_value), xycoords='data',
-                        xytext=(min_x, arrow_pos_y), textcoords='data',
-                        arrowprops=dict(facecolor='black', arrowstyle='->', shrinkA=5, shrinkB=5,
-                                        connectionstyle='arc3,rad=0.2'),
-                        ha='center', va='bottom', fontsize=10)
-
-            # Add the heat flux arrow
+            # Add the flux arrow
             if flux is not None:
                 arrow_start_x = x[-1]
                 arrow_start_y = u[-1]
-                delta_u = u[-1] - u[-2]  # Temperature difference between the last two points
-                delta_x = x[-1] - x[-2]  # Position difference between the last two points
+                delta_u = u[-1] - u[-2]
+                delta_x = x[-1] - x[-2]
 
                 # Scaling factors to normalize the axes
                 x_scale = (xlim_max - xlim_min)
@@ -1505,13 +1762,33 @@ class MainWindow(QtWidgets.QMainWindow, ui_simulate_hydrogen_diffusion.Ui_MainWi
                 arrow_end_y = arrow_start_y + unit_delta_y
 
                 if flux < 0:
-                    arrowstyle = '->'  # Arrow pointing down for negative flux
+                    arrow_tail_x, arrow_tail_y = arrow_end_x, arrow_end_y
+                    arrow_head_x, arrow_head_y = arrow_start_x, arrow_start_y
                 else:
-                    arrowstyle = '<-'  # Arrow pointing up for positive flux
-
-                    # Adjust the text position to avoid overlap with the arrow
-                text_offset_x = unit_delta_x * 0.5
-                text_offset_y = unit_delta_y * 0.5
+                    arrow_tail_x, arrow_tail_y = arrow_start_x, arrow_start_y
+                    arrow_head_x, arrow_head_y = arrow_end_x, arrow_end_y
+                label_x = xlim_max - (xlim_max - xlim_min) * -0.06
+                label_y = ylim_min + (ylim_max - ylim_min) * -0.06
+                formatted_flux = self.format_flux_value(flux, use_relative_flux)
+                if formatted_flux == "NaN":
+                    flux_annotation = f"{flux_name}: NaN"
+                elif use_relative_flux:
+                    flux_annotation = f"{flux_name} {formatted_flux}%"
+                else:
+                    flux_annotation = f"{flux_name}: {formatted_flux} {flux_units}"
+                self.canvas5.axes.annotate(
+                    "",
+                    xy=(arrow_head_x, arrow_head_y), xycoords='data',
+                    xytext=(arrow_tail_x, arrow_tail_y), textcoords='data',
+                    arrowprops=dict(color='red', arrowstyle='->', linewidth=2, shrinkA=0, shrinkB=0),
+                    annotation_clip=False,
+                )
+                self.canvas5.axes.text(
+                    label_x, label_y, flux_annotation,
+                    ha='right', va='bottom', fontsize=10, color='red'
+                )
+                self.canvas5.draw()
+                return
 
                 self.canvas5.axes.annotate(f"Flux: {flux:.1e} W/m²",
                                            xy=(arrow_start_x, arrow_start_y), xycoords='data',
@@ -1523,9 +1800,12 @@ class MainWindow(QtWidgets.QMainWindow, ui_simulate_hydrogen_diffusion.Ui_MainWi
 
             self.canvas5.draw()
 
-        except InvalidInputError as e:
+        except (InvalidInputError, ValueError, TypeError) as e:
             self.textEdit_console_output.clear()
-            print(e)
+            if str(e):
+                print(e)
+            else:
+                print("Invalid input")
             self.canvas5.axes.clear()
             self.canvas5.axes.text(0.5, 0.5, 'Invalid input', horizontalalignment='center', verticalalignment='center')
             self.canvas5.draw()
