@@ -140,11 +140,11 @@
         "enabled": true
     },
     "radioButton_s": {
-        "value": false,
+        "value": true,
         "enabled": true
     },
     "radioButton_min": {
-        "value": true,
+        "value": false,
         "enabled": true
     },
     "radioButton_h": {
@@ -160,7 +160,7 @@
         "enabled": true
     },
     "label_time_simple": {
-        "value": "Time Displayed: 1.01 [min]",
+        "value": "Time Displayed: 30.00 [s]",
         "enabled": true
     },
     "lineEdit_time_simple_min": {
@@ -168,11 +168,11 @@
         "enabled": true
     },
     "horizontalSlider_time_simple": {
-        "value": 3,
+        "value": 100,
         "enabled": true
     },
     "lineEdit_time_simple_max": {
-        "value": "50",
+        "value": "30",
         "enabled": true
     },
     "label_width_simple": {
@@ -184,11 +184,11 @@
         "enabled": true
     },
     "horizontalSlider_width_simple": {
-        "value": 100,
+        "value": 45,
         "enabled": true
     },
     "lineEdit_width_simple_max": {
-        "value": "0.5",
+        "value": "1",
         "enabled": true
     },
     "label_alpha_simple": {
@@ -260,7 +260,7 @@
         "enabled": true
     },
     "comboBox_flux_units": {
-        "value": 2,
+        "value": 3,
         "enabled": true
     },
     "lineEdit_density": {

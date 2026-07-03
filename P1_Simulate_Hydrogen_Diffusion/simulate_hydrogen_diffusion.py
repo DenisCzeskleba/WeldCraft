@@ -38,6 +38,23 @@ RUNTIME_SETTINGS_DIR = os.path.join(RUNTIME_ROOT, "settings")
 SOURCE_SETTINGS_PATH = os.path.join(APP_FILES_DIR, "settings.json")
 RESULTS_DIR = os.path.join(RUNTIME_ROOT, "Results")
 
+# Simple plot appearance knobs
+SIMPLE_PLOT_SOLUTION_LINEWIDTH = 3.5
+SIMPLE_PLOT_STEADY_STATE_LINEWIDTH = 3.5
+SIMPLE_PLOT_MIN_ARROW_LINEWIDTH = 1.0
+SIMPLE_PLOT_FLUX_ARROW_LINEWIDTH = 3.5
+SIMPLE_PLOT_TITLE_FONTSIZE = 18
+SIMPLE_PLOT_AXIS_LABEL_FONTSIZE = 18
+SIMPLE_PLOT_TICK_LABEL_FONTSIZE = 16
+SIMPLE_PLOT_LEGEND_FONTSIZE = 18
+SIMPLE_PLOT_MIN_LABEL_FONTSIZE = 10
+SIMPLE_PLOT_FLUX_LABEL_FONTSIZE = 18
+SIMPLE_PLOT_GRID_LINEWIDTH = 0.8
+SIMPLE_PLOT_GRID_ALPHA = 1.0
+SIMPLE_PLOT_FLUX_ARROW_LENGTH = 0.08
+SIMPLE_PLOT_FLUX_LABEL_X_OFFSET_POINTS = +50
+SIMPLE_PLOT_FLUX_LABEL_Y_OFFSET_POINTS = -26
+
 
 def resolve_image_path(file_name):
     bundled_path = os.path.join(BUNDLE_ROOT, "Resources", "Images", file_name)
@@ -1672,19 +1689,27 @@ class MainWindow(QtWidgets.QMainWindow, ui_simulate_hydrogen_diffusion.Ui_MainWi
                 label=f'Time = {display_time_on_graph} {unit_to_show}',
                 zorder=4,
                 clip_on=False,
+                linewidth=SIMPLE_PLOT_SOLUTION_LINEWIDTH,
             )
             if self.checkBox_equilibrium.isChecked():
-                self.canvas5.axes.plot(x, u_stable, label='Steady-State Solution', color='purple', zorder=3)
-            self.canvas5.axes.legend()
+                self.canvas5.axes.plot(
+                    x, u_stable,
+                    label='Steady-State Solution',
+                    color='purple',
+                    zorder=3,
+                    linewidth=SIMPLE_PLOT_STEADY_STATE_LINEWIDTH,
+                )
+            self.canvas5.axes.legend(fontsize=SIMPLE_PLOT_LEGEND_FONTSIZE)
             # Set the title
             title = f"1D analytical solution"
-            self.canvas5.axes.set_title(title)
+            self.canvas5.axes.set_title(title, fontsize=SIMPLE_PLOT_TITLE_FONTSIZE)
             y_upper = max(uL, u0, init_conc) * 1.05
             self.canvas5.axes.set_xlim(0, rod_width)
             self.canvas5.axes.set_ylim(0, y_upper)
-            self.canvas5.axes.set_xlabel("Length L [mm]")
-            self.canvas5.axes.set_ylabel(self.get_simple_mode_axis_label())
-            self.canvas5.axes.grid(True)
+            self.canvas5.axes.set_xlabel("Length L [mm]", fontsize=SIMPLE_PLOT_AXIS_LABEL_FONTSIZE)
+            self.canvas5.axes.set_ylabel(self.get_simple_mode_axis_label(), fontsize=SIMPLE_PLOT_AXIS_LABEL_FONTSIZE)
+            self.canvas5.axes.tick_params(axis='both', labelsize=SIMPLE_PLOT_TICK_LABEL_FONTSIZE)
+            self.canvas5.axes.grid(True, linewidth=SIMPLE_PLOT_GRID_LINEWIDTH, alpha=SIMPLE_PLOT_GRID_ALPHA)
             # Get the axis limits for the optional annotations below.
             ylim_min, ylim_max = self.canvas5.axes.get_ylim()
             xlim_min, xlim_max = self.canvas5.axes.get_xlim()
@@ -1703,8 +1728,9 @@ class MainWindow(QtWidgets.QMainWindow, ui_simulate_hydrogen_diffusion.Ui_MainWi
                             xy=(min_x, min_value), xycoords='data',
                             xytext=(min_x, arrow_pos_y), textcoords='data',
                             arrowprops=dict(facecolor='black', arrowstyle='->', shrinkA=5, shrinkB=5,
+                                            linewidth=SIMPLE_PLOT_MIN_ARROW_LINEWIDTH,
                                             connectionstyle='arc3,rad=0.2'),
-                            ha='center', va='bottom', fontsize=10)
+                            ha='center', va='bottom', fontsize=SIMPLE_PLOT_MIN_LABEL_FONTSIZE)
 
             if show_flux:
                 flux, flux_units, flux_name = calculate_boundary_flux(
@@ -1744,7 +1770,7 @@ class MainWindow(QtWidgets.QMainWindow, ui_simulate_hydrogen_diffusion.Ui_MainWi
                 norm_delta_u = delta_u / y_scale
 
                 # Desired arrow length
-                arrow_length = 0.04  # Adjust arrow length
+                arrow_length = SIMPLE_PLOT_FLUX_ARROW_LENGTH
 
                 # Calculate the length of the vector (delta_x, delta_u)
                 vector_length = (norm_delta_x ** 2 + norm_delta_u ** 2) ** 0.5
@@ -1767,8 +1793,6 @@ class MainWindow(QtWidgets.QMainWindow, ui_simulate_hydrogen_diffusion.Ui_MainWi
                 else:
                     arrow_tail_x, arrow_tail_y = arrow_start_x, arrow_start_y
                     arrow_head_x, arrow_head_y = arrow_end_x, arrow_end_y
-                label_x = xlim_max - (xlim_max - xlim_min) * -0.06
-                label_y = ylim_min + (ylim_max - ylim_min) * -0.06
                 formatted_flux = self.format_flux_value(flux, use_relative_flux)
                 if formatted_flux == "NaN":
                     flux_annotation = f"{flux_name}: NaN"
@@ -1776,16 +1800,27 @@ class MainWindow(QtWidgets.QMainWindow, ui_simulate_hydrogen_diffusion.Ui_MainWi
                     flux_annotation = f"{flux_name} {formatted_flux}%"
                 else:
                     flux_annotation = f"{flux_name}: {formatted_flux} {flux_units}"
+                if flux_mode == "fick" and flux_annotation != f"{flux_name}: NaN":
+                    if use_relative_flux:
+                        flux_annotation = f"{flux_name}\n{formatted_flux}%"
+                    else:
+                        flux_annotation = f"{flux_name}:\n{formatted_flux} {flux_units}"
+                elif flux_mode == "fick":
+                    flux_annotation = f"{flux_name}:\nNaN"
                 self.canvas5.axes.annotate(
                     "",
                     xy=(arrow_head_x, arrow_head_y), xycoords='data',
                     xytext=(arrow_tail_x, arrow_tail_y), textcoords='data',
-                    arrowprops=dict(color='red', arrowstyle='->', linewidth=2, shrinkA=0, shrinkB=0),
+                    arrowprops=dict(color='red', arrowstyle='->', linewidth=SIMPLE_PLOT_FLUX_ARROW_LINEWIDTH, shrinkA=0, shrinkB=0),
                     annotation_clip=False,
                 )
-                self.canvas5.axes.text(
-                    label_x, label_y, flux_annotation,
-                    ha='right', va='bottom', fontsize=10, color='red'
+                self.canvas5.axes.annotate(
+                    flux_annotation,
+                    xy=(1.0, 0.0), xycoords='axes fraction',
+                    xytext=(SIMPLE_PLOT_FLUX_LABEL_X_OFFSET_POINTS, SIMPLE_PLOT_FLUX_LABEL_Y_OFFSET_POINTS),
+                    textcoords='offset points',
+                    ha='right', va='top', fontsize=SIMPLE_PLOT_FLUX_LABEL_FONTSIZE, color='red',
+                    annotation_clip=False,
                 )
                 self.canvas5.draw()
                 return
