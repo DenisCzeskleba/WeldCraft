@@ -4,7 +4,7 @@ Open-Source repository for all (currently work in progress) hydrogen/heat weld s
 
 ## Status - v0.4.1
 
-CURRENT STATE (Jun 2026): Another total script refractor.
+CURRENT STATE (July 2026): Another total script refractor.
 
 This is a, work-in-progress release. It's meant to get started and provide a basic framework, but it's not feature-complete, and the code is subject to change. The structure and comments are minimal, and functionality will be updated regularly. Use at your own risk. 
 
