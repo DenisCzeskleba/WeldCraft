@@ -1,4 +1,5 @@
 # IDE and assistant metadata
+.aiassistant/
 .idea/
 .vscode/
 
@@ -31,5 +32,5 @@ MIGRATION_LOG.md
 # Workspace-only notes and instructions
 **/AGENTS.md
 **/REFRACTOR_NOTES.md
-Resources/prepare_release.py
+Resources/Common/prepare_release.py
 ToDo.md

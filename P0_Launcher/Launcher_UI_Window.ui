@@ -89,7 +89,7 @@
           </widget>
          </item>
          <item>
-          <widget class="QPushButton" name="pushButton_simulate_hydrogen_diffusion">
+          <widget class="QPushButton" name="pushButton_slot_1">
            <property name="sizePolicy">
             <sizepolicy hsizetype="MinimumExpanding" vsizetype="MinimumExpanding">
              <horstretch>80</horstretch>
@@ -102,7 +102,7 @@
           </widget>
          </item>
          <item>
-          <widget class="QPushButton" name="pushButton_hydrogen_during_welding">
+          <widget class="QPushButton" name="pushButton_slot_2">
            <property name="sizePolicy">
             <sizepolicy hsizetype="MinimumExpanding" vsizetype="MinimumExpanding">
              <horstretch>80</horstretch>
@@ -115,7 +115,7 @@
           </widget>
          </item>
          <item>
-          <widget class="QPushButton" name="pushButton_heat_map">
+          <widget class="QPushButton" name="pushButton_slot_3">
            <property name="sizePolicy">
             <sizepolicy hsizetype="MinimumExpanding" vsizetype="MinimumExpanding">
              <horstretch>80</horstretch>
@@ -128,7 +128,7 @@
           </widget>
          </item>
          <item>
-          <widget class="QPushButton" name="pushButton_brownian_motion">
+          <widget class="QPushButton" name="pushButton_slot_4">
            <property name="sizePolicy">
             <sizepolicy hsizetype="MinimumExpanding" vsizetype="MinimumExpanding">
              <horstretch>80</horstretch>
@@ -141,7 +141,7 @@
           </widget>
          </item>
          <item>
-          <widget class="QPushButton" name="pushButton_iso3690">
+          <widget class="QPushButton" name="pushButton_slot_5">
            <property name="sizePolicy">
             <sizepolicy hsizetype="MinimumExpanding" vsizetype="MinimumExpanding">
              <horstretch>80</horstretch>
@@ -154,7 +154,7 @@
           </widget>
          </item>
          <item>
-          <widget class="QPushButton" name="pushButton_1d_diffusion_1111_rule">
+          <widget class="QPushButton" name="pushButton_slot_6">
            <property name="sizePolicy">
             <sizepolicy hsizetype="MinimumExpanding" vsizetype="MinimumExpanding">
              <horstretch>80</horstretch>
@@ -167,7 +167,7 @@
           </widget>
          </item>
          <item>
-          <widget class="QPushButton" name="pushButton_data_visualization">
+          <widget class="QPushButton" name="pushButton_slot_7">
            <property name="sizePolicy">
             <sizepolicy hsizetype="MinimumExpanding" vsizetype="MinimumExpanding">
              <horstretch>80</horstretch>
@@ -175,7 +175,7 @@
             </sizepolicy>
            </property>
            <property name="text">
-            <string>Placeholder 5</string>
+            <string>Analysis Tools</string>
            </property>
           </widget>
          </item>
@@ -237,13 +237,13 @@ p, li { white-space: pre-wrap; }
   </widget>
  </widget>
  <tabstops>
-  <tabstop>pushButton_simulate_hydrogen_diffusion</tabstop>
-  <tabstop>pushButton_heat_map</tabstop>
-  <tabstop>pushButton_hydrogen_during_welding</tabstop>
-  <tabstop>pushButton_brownian_motion</tabstop>
-  <tabstop>pushButton_iso3690</tabstop>
-  <tabstop>pushButton_1d_diffusion_1111_rule</tabstop>
-  <tabstop>pushButton_data_visualization</tabstop>
+  <tabstop>pushButton_slot_1</tabstop>
+  <tabstop>pushButton_slot_2</tabstop>
+  <tabstop>pushButton_slot_3</tabstop>
+  <tabstop>pushButton_slot_4</tabstop>
+  <tabstop>pushButton_slot_5</tabstop>
+  <tabstop>pushButton_slot_6</tabstop>
+  <tabstop>pushButton_slot_7</tabstop>
   <tabstop>textEdit_info_text</tabstop>
  </tabstops>
  <resources/>

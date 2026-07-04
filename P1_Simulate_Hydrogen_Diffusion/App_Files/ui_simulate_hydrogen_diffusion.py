@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-# Form implementation generated from reading ui file 'P1_Simulate_Hydrogen_Diffusion\App_Files\ui_simulate_hydrogen_diffusion.ui'
+# Form implementation generated from reading ui file 'F:\100_WebSite and Hosted Projects\WeldCraft\P1_Simulate_Hydrogen_Diffusion\App_Files\ui_simulate_hydrogen_diffusion.ui'
 #
 # Created by: PyQt5 UI code generator 5.15.11
 #
@@ -1643,4 +1643,14 @@ class Ui_MainWindow(object):
         self.tabWidget_Settings.setTabText(self.tabWidget_Settings.indexOf(self.tab_simple), _translate("MainWindow", "Simple"))
         self.groupBox_4.setTitle(_translate("MainWindow", "Console Output"))
         self.textEdit_console_output.setToolTip(_translate("MainWindow", "Shows simulations progress / errors"))
-from App_Files.custom_widgets import ClickableLabel, CustomLabel
+from Common.custom_widgets import ClickableLabel, CustomLabel
+
+
+if __name__ == "__main__":
+    import sys
+    app = QtWidgets.QApplication(sys.argv)
+    MainWindow = QtWidgets.QMainWindow()
+    ui = Ui_MainWindow()
+    ui.setupUi(MainWindow)
+    MainWindow.show()
+    sys.exit(app.exec_())

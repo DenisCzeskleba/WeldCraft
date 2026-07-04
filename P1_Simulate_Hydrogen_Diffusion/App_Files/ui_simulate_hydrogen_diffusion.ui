@@ -2718,12 +2718,12 @@ Start value at t = 0, linear interpolation of values between t = 0 and End Time.
   <customwidget>
    <class>ClickableLabel</class>
    <extends>QLabel</extends>
-   <header>App_Files.custom_widgets</header>
+   <header>Common.custom_widgets</header>
   </customwidget>
   <customwidget>
    <class>CustomLabel</class>
    <extends>QLabel</extends>
-   <header>App_Files.custom_widgets</header>
+   <header>Common.custom_widgets</header>
   </customwidget>
  </customwidgets>
  <resources/>

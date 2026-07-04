@@ -8,6 +8,12 @@ import time
 import traceback
 from datetime import datetime
 
+MODULE_DIR = os.path.dirname(os.path.abspath(__file__))
+REPO_ROOT = os.path.normpath(os.path.join(MODULE_DIR, ".."))
+RESOURCES_DIR = os.path.join(REPO_ROOT, "Resources")
+if RESOURCES_DIR not in sys.path:
+    sys.path.insert(0, RESOURCES_DIR)
+
 import h5py
 import matplotlib.colors as mcolors
 import numpy as np
@@ -23,20 +29,20 @@ from matplotlib.figure import Figure
 
 from App_Files.calculate_stuff_for_gui import analytical_solution
 from App_Files.calculate_stuff_for_gui import calculate_1d, simulate_2d, create_hydrogen_animation, calculate_boundary_flux
-from App_Files.custom_widgets import ClickableLabel, CustomLabel
 from App_Files import ui_simulate_hydrogen_diffusion
 
 APP_NAME = "WeldCraft - Simulate Hydrogen Diffusion"
 IS_FROZEN = getattr(sys, "frozen", False)
-MODULE_DIR = os.path.dirname(os.path.abspath(__file__))
 BUNDLE_ROOT = getattr(sys, "_MEIPASS", MODULE_DIR)
-REPO_ROOT = os.path.normpath(os.path.join(MODULE_DIR, ".."))
 APP_FILES_DIR = os.path.join(MODULE_DIR, "App_Files")
 SOURCE_IMAGES_DIR = os.path.join(REPO_ROOT, "Resources", "Images")
 RUNTIME_ROOT = os.path.dirname(sys.executable) if IS_FROZEN else MODULE_DIR
 RUNTIME_SETTINGS_DIR = os.path.join(RUNTIME_ROOT, "settings")
 SOURCE_SETTINGS_PATH = os.path.join(APP_FILES_DIR, "settings.json")
 RESULTS_DIR = os.path.join(RUNTIME_ROOT, "Results")
+
+from Common.custom_widgets import ClickableLabel, CustomLabel
+from Common.launch_ready import StartupReadySignal
 
 # Simple plot appearance knobs
 SIMPLE_PLOT_SOLUTION_LINEWIDTH = 3.5
@@ -626,6 +632,7 @@ class MainWindow(QtWidgets.QMainWindow, ui_simulate_hydrogen_diffusion.Ui_MainWi
         # Initialize the CreateAnimationWorker
         self.animation_worker = None
         self.current_simulation_file_path = None
+        self.startup_ready_signal = StartupReadySignal(self)
 
         # Adjust the Layouts
         set_combo_box_margins(self)

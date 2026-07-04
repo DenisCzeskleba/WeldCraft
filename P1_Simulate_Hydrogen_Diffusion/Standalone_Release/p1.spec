@@ -32,7 +32,7 @@ hiddenimports += collect_submodules("numba")
 
 a = Analysis(
     [str(ENTRY_SCRIPT)],
-    pathex=[str(P1_DIR)],
+    pathex=[str(P1_DIR), str(REPO_ROOT / "Resources")],
     binaries=[],
     datas=datas,
     hiddenimports=hiddenimports,
