@@ -25,7 +25,7 @@ from b4_functions import in_results, get_spec_value_at_temp, find_min_max_value
 """ ---------------------- Main Simulation Settings ----------------------------- """
 model_version = "0.4.0"  # For provenance. Don't change, unless you customize logic. Then its yours, Yay!
 simulation_type = "butt joint"  # Options: "lap joint", "butt joint" and "iso3690"
-diffusion_scheme = 0  # 0 = centered D * Laplacian) | 1 = flux-conservative | 2 = flux + mu-driven (solubility incl.)
+diffusion_scheme = 0  # 0 = centered D * Laplacian | 1 = flux-conservative | 2 = mu-driven using relative S-factor
 thermal_diffusion_calibration = True  # True = thermal-only calibration mode (hydrogen disabled)
 
 """ ---------------------- Spacial Discretization (Step Size) ------------------- """
@@ -122,12 +122,12 @@ material: none
 ] -inf, +inf ]: D_H = 0
 
 material: base_metal
-] -inf, 20 ]:    D_H_mean = 0.07465 * exp(-11072 / (R * 293.15))
-] 20, 200 ]:     D_H_mean = 0.07465 * exp(-11072 / (R * T_K))
-] 200, 740 ]:    D_H_mean = 0.1104  * exp(-12437 / (R * T_K))
-] 740, 1450 ]:   D_H_mean = 0.8753  * exp(-46396 / (R * T_K))
-] 1450, 1540 ]:  D_H_mean = 1.2104  * exp(-37785 / (R * T_K))
-] 1540, 2000 ]:  D_H_mean = 1.1578  * exp(-37007 / (R * T_K))
+] -inf, 20 ]:    D_H = 0.07465 * exp(-11072 / (R * 293.15))
+] 20, 200 ]:     D_H = 0.07465 * exp(-11072 / (R * T_K))
+] 200, 740 ]:    D_H = 0.1104  * exp(-12437 / (R * T_K))
+] 740, 1450 ]:   D_H = 0.8753  * exp(-46396 / (R * T_K))
+] 1450, 1540 ]:  D_H = 1.2104  * exp(-37785 / (R * T_K))
+] 1540, 2000 ]:  D_H = 1.1578  * exp(-37007 / (R * T_K))
 
 material: weld_metal
 ] -inf, 20 ]:    D_H = 0.07465 * exp(-11072 / (R * 293.15))
@@ -148,6 +148,17 @@ material: HAZ
 
 # Solubility used for chemical potential driven diffusion. Due to lack of data, relative values only for now!
 # Idea: baseline S=1 below transformation, linear ramp to S=10 across 740–800°C, then constant.
+# Solubility factor used only for diffusion_scheme = 2 (mu-driven diffusion).
+# IMPORTANT:
+# - S is treated here as a relative storage / solubility factor, not as an absolute
+#   physical solubility in units such as ml/100g Fe or atoms/mm^3.
+# - Ratios matter: e.g. S=2 means that, at the same driving potential proxy, this
+#   region can hold twice as much hydrogen as a region with S=1.
+# - In the bulk scheme-2 update, S acts as a storage / partition factor: using a
+#   larger uniform S should not, by itself, slow down the apparent diffusion rate.
+# - The lap-joint variable inside-pipeline boundary scales the Sieverts target with
+#   local S when scheme 2 is active, so the boundary concentration stays consistent
+#   with the same h/S driving-potential convention.
 microstructure_solubility = """
 material: none
 ] -inf, +inf ]: S = 0

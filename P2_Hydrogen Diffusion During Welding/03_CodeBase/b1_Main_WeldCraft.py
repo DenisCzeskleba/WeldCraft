@@ -51,7 +51,7 @@ room_temp = get_value("t_room")  # Room temperature
 pipe_line_inner_hydrogen = get_value("pipe_line_inner_hydrogen")
 hydro_inside = get_value("h_on_the_inside")
 boundary_temperature = get_value("t_cool")
-diffusion_scheme = get_value("diffusion_scheme")  # "Solver" 0=simplified Fick, 2=Flux conservation, 3=Flux + solubility
+diffusion_scheme = get_value("diffusion_scheme")  # "Solver" 0=simplified Fick, 1=Flux conservation, 2=mu-driven (solubility)
 precalc_min_temp = get_value("precalc_min_temp")
 precalc_max_temp = get_value("precalc_max_temp")
 precalc_grid_step = get_value("precalc_grid_step")
@@ -154,9 +154,6 @@ dhdy2 = np.zeros((ny, nx))
 # Dont check for HAZ all the time!
 check_for_HAZ_creation = 0
 HAZ_creation_time_start = 0
-
-max_u0 = get_value("highest_temp_in_sim")  # precalculate diffusion values for different temperatures
-precomputed_powers = np.arange(max_u0 + 1) ** 2.2285  # Create an array to store precomputed values of u0**2.2285
 
 # Preset some functions/values for the hydrogen inside pipeline / ISO3690 boundary conditions
 # cache: solubility lookup (100 bar table) and the inside row index
@@ -302,8 +299,7 @@ while current_time <= total_max_time:
     # Actual calculation here
     u0, u, h0, h, dudx2, dudy2, dhdx2, dhdy2 = do_timestep(simulation_type, current_phase, u0, u, D, h0, h, D_H, mask,
                                                            faces, dt, dx2, dy2, ign_ab, fr_le, th, su_h, we, dx, dudx2,
-                                                           dudy2, dhdx2, dhdy2, room_temp, precomputed_powers, sol_fn,
-                                                           row_inside_const, two_over_sqrt_pi,
+                                                           dudy2, dhdx2, dhdy2, room_temp, sol_fn, row_inside_const, two_over_sqrt_pi,
                                                            current_forced_part_temperature, pipe_line_inner_hydrogen,
                                                            hydro_inside, boundary_temperature, inv_dx2, inv_dy2,
                                                            coef_robin_x_air, coef_robin_y_air, coef_robin_x_h2,

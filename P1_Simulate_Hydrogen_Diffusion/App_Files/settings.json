@@ -160,7 +160,7 @@
         "enabled": true
     },
     "label_time_simple": {
-        "value": "Time Displayed: 30.00 [s]",
+        "value": "Time Displayed: 900.00 [s]",
         "enabled": true
     },
     "lineEdit_time_simple_min": {
@@ -172,7 +172,7 @@
         "enabled": true
     },
     "lineEdit_time_simple_max": {
-        "value": "30",
+        "value": "900",
         "enabled": true
     },
     "label_width_simple": {
@@ -208,7 +208,7 @@
         "enabled": true
     },
     "label_init_hydro_simple": {
-        "value": "Initial Hydro: 0",
+        "value": "Initial Hydro: 100.00",
         "enabled": true
     },
     "lineEdit_init_hydro_simple_min": {
@@ -216,7 +216,7 @@
         "enabled": true
     },
     "horizontalSlider_init_hydro_simple": {
-        "value": 1,
+        "value": 100,
         "enabled": true
     },
     "lineEdit_init_hydro_simple_max": {
@@ -265,7 +265,7 @@
     },
     "lineEdit_density": {
         "value": "3.5e-08",
-        "enabled": true
+        "enabled": false
     },
     "lineEdit_heat_capa": {
         "value": "450",
