@@ -9,7 +9,7 @@ _SPEC_V2_R_GAS = 8.315
 
 
 def get_value(param_name):
-    import b2_param_config  # local import avoids circular import at module load time
+    import b2_param_config  # local import avoids circular imports at module load time
 
     # Check if the parameter exists in the config file
     if hasattr(b2_param_config, param_name):
