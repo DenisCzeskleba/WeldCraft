@@ -125,9 +125,16 @@ def define_concentration_to_halves(h_spots_matrix, concentration_a, concentratio
     return h_spots_matrix
 
 
-def define_concentration_sink_source(h_spots_matrix, pixel_thickness=1):
-    h_spots_matrix[:, :pixel_thickness] = 1
-    h_spots_matrix[:, -pixel_thickness:] = 2
+def define_concentration_sink_source(h_spots_matrix, pixel_thickness=1, source_side="left"):
+    if source_side == "left":
+        h_spots_matrix[:, :pixel_thickness] = 2
+        h_spots_matrix[:, -pixel_thickness:] = 1
+    elif source_side == "right":
+        h_spots_matrix[:, :pixel_thickness] = 1
+        h_spots_matrix[:, -pixel_thickness:] = 2
+    else:
+        raise ValueError("source_side must be 'left' or 'right'")
+
     return h_spots_matrix
 
 
@@ -207,10 +214,24 @@ def should_save_frame(step, save_every_steps):
     return step % save_every_steps == 0
 
 
+def create_jump_probability_table(max_radius_to_jump, sigma):
+    table_size = 2 * max_radius_to_jump + 1
+    jump_probability_table = np.zeros((table_size, table_size), dtype=np.float32)
+
+    for move_y in range(-max_radius_to_jump, max_radius_to_jump + 1):
+        for move_x in range(-max_radius_to_jump, max_radius_to_jump + 1):
+            distance_squared = move_x**2 + move_y**2
+            jump_probability_table[move_y + max_radius_to_jump, move_x + max_radius_to_jump] = np.exp(
+                -distance_squared / (2 * sigma**2)
+            )
+
+    return jump_probability_table
+
+
 @njit
 def simulate_brownian_motion(matrix, random_values, nx, ny, rand_index, random_size, max_radius_to_jump,
-                             movement_probability_matrix, sigma, sink_source_thickness, use_sink_source, region_map,
-                             num_regions):
+                             movement_probability_matrix, jump_probability_table, sink_source_thickness,
+                             use_sink_source, source_on_left, region_map, num_regions):
     new_matrix = np.copy(matrix)
     displacement_stats = np.zeros((num_regions, 3), dtype=np.float32)
 
@@ -234,10 +255,8 @@ def simulate_brownian_motion(matrix, random_values, nx, ny, rand_index, random_s
                 if new_j < 0 or new_j >= ny or new_i < 0 or new_i >= nx:
                     continue
 
-                distance = np.sqrt(move_x**2 + move_y**2)
-                adjusted_probability = movement_probability_matrix[j, i] * np.exp(
-                    -(distance**2) / (2 * sigma**2)
-                )
+                jump_probability = jump_probability_table[move_y + max_radius_to_jump, move_x + max_radius_to_jump]
+                adjusted_probability = movement_probability_matrix[j, i] * jump_probability
 
                 if matrix[new_j, new_i] == 1 and new_matrix[new_j, new_i] == 1 and rand_prob < adjusted_probability:
                     region_id = region_map[i]
@@ -250,14 +269,24 @@ def simulate_brownian_motion(matrix, random_values, nx, ny, rand_index, random_s
                     new_matrix[new_j, new_i] = 2
 
     if use_sink_source:
-        for j in range(ny):
-            for i in range(sink_source_thickness):
-                new_matrix[j, i] = 1
+        if source_on_left:
+            for j in range(ny):
+                for i in range(sink_source_thickness):
+                    if new_matrix[j, i] == 1:
+                        new_matrix[j, i] = 2
 
-        for j in range(ny):
-            for i in range(nx - sink_source_thickness, nx):
-                if new_matrix[j, i] == 1:
-                    new_matrix[j, i] = 2
+            for j in range(ny):
+                for i in range(nx - sink_source_thickness, nx):
+                    new_matrix[j, i] = 1
+        else:
+            for j in range(ny):
+                for i in range(sink_source_thickness):
+                    new_matrix[j, i] = 1
+
+            for j in range(ny):
+                for i in range(nx - sink_source_thickness, nx):
+                    if new_matrix[j, i] == 1:
+                        new_matrix[j, i] = 2
 
     return new_matrix, rand_index, displacement_stats
 

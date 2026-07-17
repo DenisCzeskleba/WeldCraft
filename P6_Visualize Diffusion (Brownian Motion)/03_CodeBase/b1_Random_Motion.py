@@ -6,6 +6,8 @@ from b3_Brown_Functions import *
 
 
 cfg = load_brown_config()
+if cfg.SOURCE_SIDE not in ("left", "right"):
+    raise ValueError("SOURCE_SIDE must be 'left' or 'right'")
 
 
 # Make the initial Matrix
@@ -19,6 +21,7 @@ random_size = cfg.random_size
 random_values = np.random.rand(random_size).astype(np.float32)
 rand_index = 0
 sigma = max_radius_to_jump / 3
+jump_probability_table = create_jump_probability_table(max_radius_to_jump, sigma)
 
 # Generate TIFF-like movement probability matrix
 tiff_like_matrix = np.ones((y, x)) * cfg.tiff_like_value
@@ -52,13 +55,16 @@ region_map, num_regions = create_region_mapping(
 )
 
 print("Applying concentration")
+h_spots_matrix = define_concentration_to_halves(
+    h_spots_matrix,
+    cfg.concentration_a,
+    cfg.concentration_b,
+)
 if cfg.USE_SINK_SOURCE:
-    h_spots_matrix = define_concentration_sink_source(h_spots_matrix, sink_source_thickness)
-else:
-    h_spots_matrix = define_concentration_to_halves(
+    h_spots_matrix = define_concentration_sink_source(
         h_spots_matrix,
-        cfg.concentration_a,
-        cfg.concentration_b,
+        sink_source_thickness,
+        source_side=cfg.SOURCE_SIDE,
     )
 
 print("Adding Specials")
@@ -131,9 +137,10 @@ with h5py.File(h5_filename, "w") as hf:
             random_size,
             max_radius_to_jump,
             movement_probability_matrix,
-            sigma,
+            jump_probability_table,
             sink_source_thickness,
             cfg.USE_SINK_SOURCE,
+            cfg.SOURCE_SIDE == "left",
             region_map,
             num_regions,
         )

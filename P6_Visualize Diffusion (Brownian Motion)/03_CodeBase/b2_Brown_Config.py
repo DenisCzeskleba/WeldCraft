@@ -12,7 +12,7 @@ from fractions import Fraction
 y = 200  # Height (y)
 x = 400  # Width (x)
 # x = 2 * y  # Width (x)
-steps = 40000
+steps = 400000
 max_radius_to_jump = 10
 
 random_size = 10 ** 7  # Number of precomputed random numbers
@@ -43,15 +43,16 @@ concentration_b = 50
 # ---------------------- Layer / Boundary Options ---------------------- #
 USE_SPOT = True
 SPOT_DIAMETER = 50
-SPOT_CENTER_X = x // 4  # Column position of the spot center
+SPOT_CENTER_X = 3 * x // 4  # Column position of the spot center
 SPOT_CENTER_Y = y // 2  # Row position of the spot center
 
 USE_TRAP_LAYER = False
 TRAP_LAYER_WIDTH = 19
 TRAP_LAYER_MOVEMENT_PROBABILITY = 0.2
 
-USE_SINK_SOURCE = False
+USE_SINK_SOURCE = True
 SINK_SOURCE_THICKNESS = 10
+SOURCE_SIDE = "left"  # Options: "left" or "right"
 num_subregions = 1
 
 
