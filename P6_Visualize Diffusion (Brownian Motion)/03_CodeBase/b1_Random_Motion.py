@@ -27,7 +27,7 @@ movement_probability_matrix = 1.0 - (tiff_like_matrix / 255.0)
 h5_filename = results_dir() / cfg.h5_filename
 num_saved_frames = sum(should_save_frame(step, cfg.save_every_steps) for step in range(steps))
 print(f"Total frames to be saved: {num_saved_frames}, approx. "
-      f"{int((num_saved_frames * (y * x * 4) / (1024 ** 2)) * 1.15)} MB")
+      f"{int((num_saved_frames * (y * x * np.dtype(np.int8).itemsize) / (1024 ** 2)) * 1.15)} MB")
 
 print("Creating initial matrix")
 if cfg.USE_IMAGE_MATRIX:
@@ -85,7 +85,7 @@ if cfg.delete_old_h5 and h5_filename.exists():
     h5_filename.unlink()
 
 height, width = h_spots_matrix.shape
-snapshot_size_mb = (height * width * 4) / (1024 ** 2)
+snapshot_size_mb = (height * width * np.dtype(np.int8).itemsize) / (1024 ** 2)
 optimal_batch_size = max(1, int(cfg.max_ram_mb / snapshot_size_mb))
 
 print(f"Matrix size: {height}x{width}, Snapshot size: {snapshot_size_mb:.2f} MB")
@@ -98,7 +98,7 @@ for region, count in zip(unique_regions, counts):
     print(f"Region {region}: {count} columns assigned")
 
 with h5py.File(h5_filename, "w") as hf:
-    dset = hf.create_dataset("snapshots", shape=(num_saved_frames, height, width), dtype=int, chunks=True)
+    dset = hf.create_dataset("snapshots", shape=(num_saved_frames, height, width), dtype=np.int8, chunks=True)
 
     displacement_dsets = {}
     for i in range(num_regions):
@@ -115,7 +115,7 @@ with h5py.File(h5_filename, "w") as hf:
         )
 
     save_counter = 0
-    buffer = np.empty((optimal_batch_size, height, width), dtype=int)
+    buffer = np.empty((optimal_batch_size, height, width), dtype=np.int8)
     buffer_index = 0
 
     disp_buffer = np.zeros((optimal_batch_size, num_regions, 3), dtype=np.float32)

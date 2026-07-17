@@ -51,7 +51,7 @@ def in_resources(*parts: str) -> Path:
 
 
 def create_custom_matrix(x_func, y_func, num_possible_spots_a, num_possible_spots_b):
-    matrix = np.zeros((y_func, x_func), dtype=int)
+    matrix = np.zeros((y_func, x_func), dtype=np.int8)
 
     indices_a = np.random.choice(x_func // 2 * y_func, num_possible_spots_a, replace=False)
     matrix[np.unravel_index(indices_a, (y_func, x_func // 2))] = 1
@@ -74,7 +74,7 @@ def create_matrix_from_image(image_path, max_sol_white, max_sol_black, show_plot
     num_white_ones = int(np.sum(white_mask) * max_sol_white)
     num_black_ones = int(np.sum(black_mask) * max_sol_black)
 
-    matrix = np.zeros_like(img_array, dtype=int)
+    matrix = np.zeros_like(img_array, dtype=np.int8)
 
     if num_white_ones > 0:
         white_indices = np.argwhere(white_mask)
