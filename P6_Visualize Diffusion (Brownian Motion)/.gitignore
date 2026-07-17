@@ -1,0 +1,14 @@
+# Local historical copies
+/alternative versions/
+
+# Generated simulation data and animations
+/02_Results/*
+!/02_Results/.gitkeep
+*.h5
+*.hdf5
+*.mp4
+
+# Python runtime artifacts
+__pycache__/
+*.pyc
+*.pyo
