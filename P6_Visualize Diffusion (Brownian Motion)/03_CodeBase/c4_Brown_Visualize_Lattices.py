@@ -1,3 +1,10 @@
+"""
+Standalone lattice visualization demo.
+
+Lattice-based initialization was planned for the Brownian simulation, but it is
+not currently wired into the active simulation pipeline or actively developed.
+"""
+
 import matplotlib.pyplot as plt
 
 from b3_Brown_Functions import *

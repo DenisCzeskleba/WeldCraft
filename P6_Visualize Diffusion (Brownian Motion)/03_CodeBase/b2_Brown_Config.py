@@ -88,7 +88,7 @@ animation_filename = "brownian_motion_animation.mp4"
 
 # ---------------------- Video Output ---------------------- #
 animation_fps = 12
-animation_dpi = 120
+animation_dpi = 300
 animation_artist = "Denis Czeskleba"
 animation_bitrate = 3000
 ffmpeg_path = (
