@@ -1,10 +1,9 @@
 """
-This is just to comfortably start the different simulations
-
+Convenience starter for the Brownian motion simulation and animation.
 """
 
-import sys
 import subprocess
+import sys
 from pathlib import Path
 
 
@@ -20,9 +19,5 @@ def run_script(script_name):
 
 
 if __name__ == "__main__":
-
-    # Run the main simulation script
-    run_script('random motion.py')
-
-    # Run the script that makes you a nice animation of it
-    run_script('Make_Brownian_Animation.py')
+    run_script("b1_Random_Motion.py")
+    run_script("c1_Brown_Make_Animation.py")
