@@ -18,6 +18,18 @@ RESULTS_DIR = P6_ROOT / "02_Results"
 IMAGE_DIR = RESOURCES_DIR / "Bilder"
 
 
+# ---------------------- Simulation Options ---------------------- #
+USE_SPOT = True
+SPOT_DIAMETER = 50
+
+USE_TRAP_LAYER = False
+TRAP_LAYER_WIDTH = 19
+TRAP_LAYER_MOVEMENT_PROBABILITY = 0.2
+
+USE_SINK_SOURCE = True
+SINK_SOURCE_THICKNESS = 10
+
+
 def create_custom_matrix(x_func, y_func, num_possible_spots_a, num_possible_spots_b):
 
     # Create the matrix
@@ -37,7 +49,7 @@ def create_custom_matrix(x_func, y_func, num_possible_spots_a, num_possible_spot
 
 
 def define_concentration_to_halves(h_spots_matrix, concentration_a, concentration_b):
-    half_x = h_spots_matrix.shape[0]
+    half_x = h_spots_matrix.shape[1] // 2
 
     # Left half change
     left_indices = np.where(h_spots_matrix[:, :half_x] == 1)
@@ -98,12 +110,12 @@ def apply_spot(matrix, diameter=50):
         for x in range(mid_x - radius, mid_x + radius):
             # Check if the point is inside the circle
             if (x - mid_x) ** 2 + (y - mid_y) ** 2 < radius ** 2:
-                h_spots_matrix[y, x] = 1
+                matrix[y, x] = 1
 
-    return h_spots_matrix
+    return matrix
 
 
-def apply_layer(matrix, prob_matrix, width=10):
+def apply_layer(matrix, prob_matrix, width=10, movement_probability=0.2):
     rows, cols = matrix.shape
     mid_x = cols // 2  # Middle column of the matrix
 
@@ -111,7 +123,7 @@ def apply_layer(matrix, prob_matrix, width=10):
     right_bound = min(cols, mid_x + width // 2)
 
     matrix[:, left_bound:right_bound] = 1  # Set all values in the layer to 1
-    prob_matrix[:, left_bound:right_bound] = 0.2  # make jumps less likely
+    prob_matrix[:, left_bound:right_bound] = movement_probability  # make jumps less likely
 
     return matrix, prob_matrix
 
@@ -170,7 +182,8 @@ def should_save_frame(step):
     # return False  # Skip otherwise
 
 @njit
-def simulate_brownian_motion(matrix, random_values, nx, ny, rand_index, max_radius_to_jump, movement_probability_matrix, sigma, sink_source_thickness, region_map, num_regions):
+def simulate_brownian_motion(matrix, random_values, nx, ny, rand_index, max_radius_to_jump, movement_probability_matrix,
+                             sigma, sink_source_thickness, use_sink_source, region_map, num_regions):
 
     new_matrix = np.copy(matrix)
     displacement_stats = np.zeros((num_regions, 3), dtype=np.float32)  # Columns: [x_sum, x_sq_sum, count]
@@ -222,7 +235,7 @@ def simulate_brownian_motion(matrix, random_values, nx, ny, rand_index, max_radi
                     new_matrix[j, i] = 1  # Free original position
                     new_matrix[new_j, new_i] = 2  # Move molecule
 
-    if True:  # This is sort of like a boundary condition you can use if you use sinks/sources
+    if use_sink_source:  # This is sort of like a boundary condition you can use if you use sinks/sources
         # Step 5: Apply boundary conditions correctly
         # (sink)
         for j in range(ny):
@@ -282,24 +295,32 @@ h_spots_matrix = create_custom_matrix(x, y, num_possible_spots_a, num_possible_s
 # Apply the current concentration - looks funny if its the same as above e.i 20/60 and 20/60 for both
 concentration_a = 50
 concentration_b = 50
-sink_source_thickness = 10  # should be the same as jump range to avoid jams on the sink side
+sink_source_thickness = SINK_SOURCE_THICKNESS if USE_SINK_SOURCE else 0  # match jump range to avoid sink-side jams
 
 # Define regions
 num_subregions = 1  # Number of parts to split left/right into
-layer_width = 19  # Width of the middle trap layer
+layer_width = TRAP_LAYER_WIDTH  # Width of the middle trap layer
 # Generate the region map
 region_map, num_regions = create_region_mapping(x, y, sink_source_thickness, layer_width, num_subregions)
 
 print("Applying concentration")
 # This gives each half the initial concentration
-# h_spots_matrix = define_concentration_to_halves(h_spots_matrix, concentration_a, concentration_b)
-# This applies a thin layer on the left and right side
-h_spots_matrix = define_concentration_sink_source(h_spots_matrix, sink_source_thickness)
+if USE_SINK_SOURCE:
+    # This applies a thin layer on the left and right side
+    h_spots_matrix = define_concentration_sink_source(h_spots_matrix, sink_source_thickness)
+else:
+    h_spots_matrix = define_concentration_to_halves(h_spots_matrix, concentration_a, concentration_b)
 
 print("Adding Specials")
-# add something?
-h_spots_matrix = apply_spot(h_spots_matrix)  # add a spot
-# h_spots_matrix, movement_probability_matrix = apply_layer(h_spots_matrix, movement_probability_matrix)  # add a layer (trap?)
+if USE_SPOT:
+    h_spots_matrix = apply_spot(h_spots_matrix, diameter=SPOT_DIAMETER)  # add a spot
+if USE_TRAP_LAYER:
+    h_spots_matrix, movement_probability_matrix = apply_layer(
+        h_spots_matrix,
+        movement_probability_matrix,
+        width=TRAP_LAYER_WIDTH,
+        movement_probability=TRAP_LAYER_MOVEMENT_PROBABILITY,
+    )
 
 print("Cleaning Loners")
 # Clean some loners
@@ -354,7 +375,7 @@ with h5py.File(h5_filename, 'w') as hf:
     for step in tqdm(range(steps)):
         h_spots_matrix, rand_index, disp_stats = simulate_brownian_motion(
             h_spots_matrix, random_values, x, y, rand_index, max_radius_to_jump, movement_probability_matrix,
-            sigma, sink_source_thickness, region_map, num_regions
+            sigma, sink_source_thickness, USE_SINK_SOURCE, region_map, num_regions
         )
 
         if should_save_frame(step):
