@@ -23,10 +23,6 @@ rand_index = 0
 sigma = max_radius_to_jump / 3
 jump_probability_table = create_jump_probability_table(max_radius_to_jump, sigma)
 
-# Generate TIFF-like movement probability matrix
-tiff_like_matrix = np.ones((y, x)) * cfg.tiff_like_value
-movement_probability_matrix = 1.0 - (tiff_like_matrix / 255.0)
-
 h5_filename = results_dir() / cfg.h5_filename
 num_saved_frames = sum(should_save_frame(step, cfg.save_every_steps) for step in range(steps))
 print(f"Total frames to be saved: {num_saved_frames}, approx. "
@@ -77,11 +73,9 @@ if cfg.USE_SPOT:
     )
 
 if cfg.USE_TRAP_LAYER:
-    h_spots_matrix, movement_probability_matrix = apply_layer(
+    h_spots_matrix = apply_layer(
         h_spots_matrix,
-        movement_probability_matrix,
         width=cfg.TRAP_LAYER_WIDTH,
-        movement_probability=cfg.TRAP_LAYER_MOVEMENT_PROBABILITY,
     )
 
 print("Cleaning Loners")
@@ -91,10 +85,12 @@ if cfg.delete_old_h5 and h5_filename.exists():
     h5_filename.unlink()
 
 height, width = h_spots_matrix.shape
+active_y, active_x = create_active_site_arrays(h_spots_matrix)
 snapshot_size_mb = (height * width * np.dtype(np.int8).itemsize) / (1024 ** 2)
 optimal_batch_size = max(1, int(cfg.max_ram_mb / snapshot_size_mb))
 
 print(f"Matrix size: {height}x{width}, Snapshot size: {snapshot_size_mb:.2f} MB")
+print(f"Active sites scanned per step: {len(active_y)} of {height * width}")
 print(f"Using batch size of {optimal_batch_size} frames (max {cfg.max_ram_mb}MB RAM usage)")
 print(f"Initial matrix unique values: {np.unique(h_spots_matrix)}")
 
@@ -131,12 +127,14 @@ with h5py.File(h5_filename, "w") as hf:
         h_spots_matrix, rand_index, disp_stats = simulate_brownian_motion(
             h_spots_matrix,
             random_values,
+            active_y,
+            active_x,
             x,
             y,
             rand_index,
             random_size,
             max_radius_to_jump,
-            movement_probability_matrix,
+            cfg.base_movement_probability,
             jump_probability_table,
             sink_source_thickness,
             cfg.USE_SINK_SOURCE,

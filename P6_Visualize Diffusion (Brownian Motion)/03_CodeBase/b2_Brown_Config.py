@@ -11,15 +11,9 @@ from fractions import Fraction
 # ---------------------- Main Simulation Settings ---------------------- #
 y = 200  # Height (y)
 x = 400  # Width (x)
-# x = 2 * y  # Width (x)
-steps = 400000
+
+steps = 40000
 max_radius_to_jump = 10
-
-random_size = 10 ** 7  # Number of precomputed random numbers
-max_ram_mb = 2000  # Adjustable memory target for HDF5 frame buffering
-save_every_steps = 1000
-delete_old_h5 = True
-
 
 # ---------------------- Matrix Source ---------------------- #
 USE_IMAGE_MATRIX = False
@@ -31,8 +25,8 @@ max_sol_black = Fraction(2, 100)
 show_image_matrix_plot = True
 
 # Used when USE_IMAGE_MATRIX = False
-max_sol_a = Fraction(10, 100)
-max_sol_b = Fraction(5, 100)
+max_sol_a = Fraction(5, 100)
+max_sol_b = Fraction(10, 100)
 
 
 # ---------------------- Initial Concentration ---------------------- #
@@ -48,7 +42,6 @@ SPOT_CENTER_Y = y // 2  # Row position of the spot center
 
 USE_TRAP_LAYER = False
 TRAP_LAYER_WIDTH = 19
-TRAP_LAYER_MOVEMENT_PROBABILITY = 0.2
 
 USE_SINK_SOURCE = True
 SINK_SOURCE_THICKNESS = 10
@@ -57,13 +50,14 @@ num_subregions = 1
 
 
 # ---------------------- Movement Probability ---------------------- #
-tiff_like_value = 125
+base_movement_probability = 1.0
 
+# --------------------- Numerics stuff --------------------- #
 
-# ---------------------- Output Files ---------------------- #
-h5_filename = "random_motion.h5"
-animation_output_folder = "Saved Animations"
-animation_filename = "brownian_motion_animation.mp4"
+random_size = 10 ** 7  # Number of precomputed random numbers
+max_ram_mb = 2000  # Adjustable memory target for HDF5 frame buffering
+save_every_steps = 1000
+delete_old_h5 = True
 
 
 # ---------------------- Animation Panels ---------------------- #
@@ -87,6 +81,10 @@ DIFFUSION_SPEED_COLORS = [
     "#000000",
 ]
 
+# ---------------------- Output Files ---------------------- #
+h5_filename = "random_motion.h5"
+animation_output_folder = "Saved Animations"
+animation_filename = "brownian_motion_animation.mp4"
 
 # ---------------------- Video Output ---------------------- #
 animation_fps = 12

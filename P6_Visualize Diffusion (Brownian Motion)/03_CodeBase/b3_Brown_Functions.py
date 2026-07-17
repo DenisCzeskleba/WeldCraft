@@ -170,7 +170,7 @@ def apply_spot(matrix, diameter=50, center_x=None, center_y=None):
     return matrix
 
 
-def apply_layer(matrix, prob_matrix, width=10, movement_probability=0.2):
+def apply_layer(matrix, width=10):
     rows, cols = matrix.shape
     mid_x = cols // 2
 
@@ -178,9 +178,8 @@ def apply_layer(matrix, prob_matrix, width=10, movement_probability=0.2):
     right_bound = min(cols, mid_x + width // 2)
 
     matrix[:, left_bound:right_bound] = 1
-    prob_matrix[:, left_bound:right_bound] = movement_probability
 
-    return matrix, prob_matrix
+    return matrix
 
 
 def create_region_mapping(nx, ny, sink_source_thickness, layer_width, num_subregions=3):
@@ -228,45 +227,53 @@ def create_jump_probability_table(max_radius_to_jump, sigma):
     return jump_probability_table
 
 
+def create_active_site_arrays(matrix):
+    active_y, active_x = np.where(matrix > 0)
+    return active_y.astype(np.int32), active_x.astype(np.int32)
+
+
 @njit
-def simulate_brownian_motion(matrix, random_values, nx, ny, rand_index, random_size, max_radius_to_jump,
-                             movement_probability_matrix, jump_probability_table, sink_source_thickness,
+def simulate_brownian_motion(matrix, random_values, active_y, active_x, nx, ny, rand_index, random_size, max_radius_to_jump,
+                             base_movement_probability, jump_probability_table, sink_source_thickness,
                              use_sink_source, source_on_left, region_map, num_regions):
-    new_matrix = np.copy(matrix)
+    # new_matrix = np.copy(matrix)
+    new_matrix = matrix
     displacement_stats = np.zeros((num_regions, 3), dtype=np.float32)
 
-    for j in range(ny):
-        for i in range(nx):
-            if matrix[j, i] == 2:
-                rand_index = (rand_index + 3) % random_size
-                rand_val_x = random_values[rand_index - 3]
-                rand_val_y = random_values[rand_index - 2]
-                rand_prob = random_values[rand_index - 1]
+    for active_index in range(len(active_y)):
+        j = active_y[active_index]
+        i = active_x[active_index]
 
-                move_x = int(rand_val_x * (2 * max_radius_to_jump + 1)) - max_radius_to_jump
-                move_y = int(rand_val_y * (2 * max_radius_to_jump + 1)) - max_radius_to_jump
+        if matrix[j, i] == 2:
+            rand_index = (rand_index + 3) % random_size
+            rand_val_x = random_values[rand_index - 3]
+            rand_val_y = random_values[rand_index - 2]
+            rand_prob = random_values[rand_index - 1]
 
-                new_j = j + move_y
-                new_i = i + move_x
+            move_x = int(rand_val_x * (2 * max_radius_to_jump + 1)) - max_radius_to_jump
+            move_y = int(rand_val_y * (2 * max_radius_to_jump + 1)) - max_radius_to_jump
 
-                if new_j == j and new_i == i:
-                    continue
+            new_j = j + move_y
+            new_i = i + move_x
 
-                if new_j < 0 or new_j >= ny or new_i < 0 or new_i >= nx:
-                    continue
+            if new_j == j and new_i == i:
+                continue
 
-                jump_probability = jump_probability_table[move_y + max_radius_to_jump, move_x + max_radius_to_jump]
-                adjusted_probability = movement_probability_matrix[j, i] * jump_probability
+            if new_j < 0 or new_j >= ny or new_i < 0 or new_i >= nx:
+                continue
 
-                if matrix[new_j, new_i] == 1 and new_matrix[new_j, new_i] == 1 and rand_prob < adjusted_probability:
-                    region_id = region_map[i]
-                    if region_id >= 0:
-                        displacement_stats[region_id, 0] += np.float32(abs(move_x))
-                        displacement_stats[region_id, 1] += np.float32(move_x ** 2)
-                        displacement_stats[region_id, 2] += np.float32(1)
+            jump_probability = jump_probability_table[move_y + max_radius_to_jump, move_x + max_radius_to_jump]
+            adjusted_probability = base_movement_probability * jump_probability
 
-                    new_matrix[j, i] = 1
-                    new_matrix[new_j, new_i] = 2
+            if matrix[new_j, new_i] == 1 and new_matrix[new_j, new_i] == 1 and rand_prob < adjusted_probability:
+                region_id = region_map[i]
+                if region_id >= 0:
+                    displacement_stats[region_id, 0] += np.float32(abs(move_x))
+                    displacement_stats[region_id, 1] += np.float32(move_x ** 2)
+                    displacement_stats[region_id, 2] += np.float32(1)
+
+                new_matrix[j, i] = 1
+                new_matrix[new_j, new_i] = 2
 
     if use_sink_source:
         if source_on_left:
