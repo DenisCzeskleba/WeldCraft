@@ -12,7 +12,7 @@ from fractions import Fraction
 y = 650  # Height (y)
 x = 1300  # Width (x)
 
-steps = 40000000
+steps = 20_000_000  # use 10_000_000 notation, or 10000000. DO NOT use 100.000.000
 max_radius_to_jump = 10
 
 # ---------------------- Matrix Source ---------------------- #
@@ -21,7 +21,7 @@ MATRIX_SOURCE = "random"  # Options: "random", "image", "lattice"
 
 # Used when MATRIX_SOURCE = "random" or "lattice"
 max_sol_a = Fraction(5, 100)
-max_sol_b = Fraction(10, 100)
+max_sol_b = Fraction(5, 100)
 
 # Used when MATRIX_SOURCE = "lattice"
 LATTICE_STYLE = "prime"
@@ -35,12 +35,12 @@ max_sol_black = Fraction(2, 100)
 show_image_matrix_plot = True
 
 # ---------------------- Initial Concentration ---------------------- #
-concentration_a = 30
-concentration_b = 30
+concentration_a = 75
+concentration_b = 25
 
 
 # ---------------------- Layer / Boundary Options ---------------------- #
-USE_SPOT = True
+USE_SPOT = False
 SPOT_DIAMETER = 50
 SPOT_CENTER_X = 3 * x // 4  # Column position of the spot center
 SPOT_CENTER_Y = y // 2  # Row position of the spot center
@@ -60,14 +60,14 @@ base_movement_probability = 1.0
 # --------------------- Numerics stuff --------------------- #
 
 random_size = 10 ** 7  # Number of precomputed random numbers
-max_ram_mb = 2000  # Adjustable memory target for HDF5 frame buffering
-save_every_steps = 1000
+max_ram_mb = 1000  # Adjustable memory target for HDF5 frame buffering
+save_every_steps = 25000
 delete_old_h5 = True
 
 
 # ---------------------- Animation Panels ---------------------- #
 SHOW_MAIN_SIMULATION_PANEL = True
-SHOW_CONCENTRATION_PROFILE_PANEL = False
+SHOW_CONCENTRATION_PROFILE_PANEL = True
 SHOW_DIFFUSION_SPEED_PANEL = False
 
 # ---------------------- Main Panel Render Mode ---------------------- #
@@ -79,7 +79,7 @@ DOT_ALPHA_HYDROGEN = 0.95
 
 
 # ---------------------- Animation Colors ---------------------- #
-COLOR_EMPTY = "#FFFFFF"  # "#440154" 
+COLOR_EMPTY = "#440154"  # "#440154" 
 COLOR_AVAILABLE_SPOT = "#0000FF"
 COLOR_HYDROGEN = "#FF0000"
 COLOR_CONCENTRATION_LINE = "#0000FF"
@@ -99,7 +99,7 @@ animation_output_folder = "Saved Animations"
 animation_filename = "brownian_motion_animation.mp4"
 
 # ---------------------- Video Output ---------------------- #
-render_every_nth_frame = 1000  # Render every Nth saved HDF5 frame; use larger values for huge runs to keep videos and memory smaller.
+render_every_nth_frame = 1  # Render every Nth saved HDF5 frame; use larger values for huge runs to keep videos and memory smaller.
 animation_fps = 12
 animation_dpi = 300
 animation_artist = "Denis Czeskleba"
