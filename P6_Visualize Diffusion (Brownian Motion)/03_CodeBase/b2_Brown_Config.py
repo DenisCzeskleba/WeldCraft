@@ -9,10 +9,11 @@ from fractions import Fraction
 
 
 # ---------------------- Main Simulation Settings ---------------------- #
+simulation_mode = "molecular_wiggle"  # Options: "molecular_wiggle", "forced_jump"
 y = 650  # Height (y)
 x = 1300  # Width (x)
 
-steps = 20_000_000  # use 10_000_000 notation, or 10000000. DO NOT use 100.000.000
+steps = 10_000_000  # use 10_000_000 notation, or 10000000. DO NOT use 100.000.000
 max_radius_to_jump = 10
 
 # ---------------------- Matrix Source ---------------------- #
@@ -35,20 +36,20 @@ max_sol_black = Fraction(2, 100)
 show_image_matrix_plot = True
 
 # ---------------------- Initial Concentration ---------------------- #
-concentration_a = 75
-concentration_b = 25
+concentration_a = 50
+concentration_b = 50
 
 
 # ---------------------- Layer / Boundary Options ---------------------- #
-USE_SPOT = False
-SPOT_DIAMETER = 50
-SPOT_CENTER_X = 3 * x // 4  # Column position of the spot center
+USE_SPOT = True
+SPOT_DIAMETER = 75
+SPOT_CENTER_X = 1 * x // 2  # Column position of the spot center
 SPOT_CENTER_Y = y // 2  # Row position of the spot center
 
 USE_TRAP_LAYER = False
 TRAP_LAYER_WIDTH = 19
 
-USE_SINK_SOURCE = True
+USE_SINK_SOURCE = False
 SINK_SOURCE_THICKNESS = 10
 SOURCE_SIDE = "left"  # Options: "left" or "right"
 num_subregions = 1
