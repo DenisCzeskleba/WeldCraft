@@ -19,7 +19,13 @@ if cfg.MAIN_RENDER_MODE not in ("pixels", "dots"):
 if int(cfg.render_every_nth_frame) < 1:
     raise ValueError("render_every_nth_frame must be 1 or greater")
 
-file_name = results_dir() / cfg.h5_filename
+# ---------------------- Input File ---------------------- #
+INPUT_H5_FILENAME = None  # Use None for config controlled filename, or set a string like "random_motion_sparse.h5".
+
+
+input_h5_filename = cfg.h5_filename if INPUT_H5_FILENAME is None else INPUT_H5_FILENAME
+input_h5_path = Path(input_h5_filename)
+file_name = input_h5_path if input_h5_path.is_absolute() else results_dir() / input_h5_path
 output_dir = results_dir() / cfg.animation_output_folder
 if not output_dir.exists():
     raise FileNotFoundError(f"Expected output directory does not exist: {output_dir}")

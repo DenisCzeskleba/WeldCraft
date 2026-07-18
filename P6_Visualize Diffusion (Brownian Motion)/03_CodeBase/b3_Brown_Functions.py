@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 import importlib
+from fractions import Fraction
 
 import h5py
 import numpy as np
@@ -20,6 +22,72 @@ def get_config_value(param_name):
     if hasattr(cfg, param_name):
         return getattr(cfg, param_name)
     raise ValueError(f"Parameter '{param_name}' not found in b2_Brown_Config.py")
+
+
+def _serialize_brown_config_value(value):
+    if isinstance(value, (np.integer, np.floating, np.bool_)):
+        return value.item()
+    if isinstance(value, Fraction):
+        return str(value)
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, (list, tuple, np.ndarray)):
+        return [_serialize_brown_config_value(v) for v in list(value)]
+    if isinstance(value, dict):
+        return {str(k): _serialize_brown_config_value(v) for k, v in value.items()}
+    if isinstance(value, (int, float, bool, str)) or value is None:
+        return value
+    return repr(value)
+
+
+def brown_config_snapshot(runtime_values=None):
+    cfg = load_brown_config()
+    snapshot = {}
+
+    for name in dir(cfg):
+        if name.startswith("_"):
+            continue
+        value = getattr(cfg, name)
+        if callable(value):
+            continue
+        snapshot[name] = _serialize_brown_config_value(value)
+
+    snapshot["convention"] = "matrix rows: top->bottom, matrix columns: left->right"
+    if runtime_values:
+        snapshot.update({key: _serialize_brown_config_value(value) for key, value in runtime_values.items()})
+
+    return snapshot
+
+
+def write_brown_h5_metadata(hf, runtime_values=None):
+    meta_group = hf["/meta"] if "/meta" in hf else hf.create_group("/meta")
+    meta_group.attrs["brown_config_json"] = json.dumps(
+        brown_config_snapshot(runtime_values),
+        sort_keys=True,
+        indent=2,
+    )
+    meta_group.attrs["brown_config_source"] = "b2_Brown_Config.py"
+
+
+def load_brown_config_json(h5_filename, required=True):
+    with h5py.File(h5_filename, "r") as hf:
+        meta_group = hf.get("/meta")
+        if meta_group is None:
+            message = "Missing /meta group in HDF5 file; Brownian config metadata is unavailable."
+            if required:
+                raise RuntimeError(message)
+            print(f"Warning: {message}")
+            return None
+
+        config_json = meta_group.attrs.get("brown_config_json")
+        if config_json is None:
+            message = "brown_config_json not found in /meta attrs; Brownian config metadata is unavailable."
+            if required:
+                raise RuntimeError(message)
+            print(f"Warning: {message}")
+            return None
+
+        return json.loads(config_json)
 
 
 def codebase_dir() -> Path:

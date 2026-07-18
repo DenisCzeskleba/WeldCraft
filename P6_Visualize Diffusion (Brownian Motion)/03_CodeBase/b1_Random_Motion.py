@@ -32,6 +32,7 @@ print(f"Total frames to be saved: {num_saved_frames}, approx. "
       f"{int((num_saved_frames * (y * x * np.dtype(np.int8).itemsize) / (1024 ** 2)) * 1.15)} MB")
 
 print("Creating initial matrix")
+lattice_spacing_used = None
 if cfg.MATRIX_SOURCE == "image":
     h_spots_matrix = create_matrix_from_image(
         image_dir() / cfg.image_name,
@@ -115,6 +116,20 @@ for region, count in zip(unique_regions, counts):
     print(f"Region {region}: {count} columns assigned")
 
 with h5py.File(h5_filename, "w") as hf:
+    write_brown_h5_metadata(
+        hf,
+        runtime_values={
+            "actual_matrix_shape": h_spots_matrix.shape,
+            "num_saved_frames": num_saved_frames,
+            "saved_steps_first": int(saved_steps[0]) if len(saved_steps) else None,
+            "saved_steps_last": int(saved_steps[-1]) if len(saved_steps) else None,
+            "sink_source_thickness_used": sink_source_thickness,
+            "num_regions": num_regions,
+            "active_site_count": len(active_y),
+            "lattice_spacing_used": lattice_spacing_used,
+        },
+    )
+
     dset = hf.create_dataset("snapshots", shape=(num_saved_frames, height, width), dtype=np.int8, chunks=True)
     hf.create_dataset("saved_steps", data=saved_steps, dtype=np.int64)
 
