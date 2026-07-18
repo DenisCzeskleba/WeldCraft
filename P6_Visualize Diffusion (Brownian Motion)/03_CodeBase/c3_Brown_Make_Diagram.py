@@ -27,7 +27,7 @@ with contextlib.redirect_stdout(io.StringIO()):
 
 
 # ---------------------- Input Snapshot ---------------------- #
-INPUT_H5_FILENAME = "Diss Case 2 test 1.h5"  # Set to a sparse H5 name such as "random_motion_sparse.h5" when needed.
+INPUT_H5_FILENAME = "random_motion.h5"  # Set to a sparse H5 name such as "random_motion_sparse.h5" when needed.
 SNAPSHOT_INDEX = -1  # HDF5 saved-frame index to plot; -1 means the last saved frame, 0 means first saved frame.
 
 

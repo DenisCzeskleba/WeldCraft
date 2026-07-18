@@ -9,11 +9,11 @@ from fractions import Fraction
 
 
 # ---------------------- Main Simulation Settings ---------------------- #
-simulation_mode = "forced_jump"  # Options: "molecular_wiggle", "forced_jump"
+simulation_mode = "molecular_wiggle"  # Options: "molecular_wiggle", "forced_jump"
 y = 650  # Height (y)
 x = 1300  # Width (x)
 
-steps = 1_000  # use 10_000_000 notation, or 10000000. DO NOT use 100.000.000
+steps = 20_000_000  # use 10_000_000 notation, or 10000000. DO NOT use 100.000.000
 max_radius_to_jump = 10
 
 # ---------------------- Matrix Source ---------------------- #
@@ -36,8 +36,8 @@ max_sol_black = Fraction(2, 100)
 show_image_matrix_plot = True
 
 # ---------------------- Initial Concentration ---------------------- #
-concentration_a = 25
-concentration_b = 25
+concentration_a = 50
+concentration_b = 50
 
 
 # ---------------------- Layer / Boundary Options ---------------------- #
@@ -62,7 +62,7 @@ base_movement_probability = 1.0
 
 random_size = 10 ** 7  # Number of precomputed random numbers
 max_ram_mb = 1000  # Adjustable memory target for HDF5 frame buffering
-save_every_steps = 10
+save_every_steps = 25000
 delete_old_h5 = True
 
 
