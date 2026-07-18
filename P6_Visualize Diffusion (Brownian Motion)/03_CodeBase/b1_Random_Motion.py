@@ -8,6 +8,8 @@ from b3_Brown_Functions import *
 cfg = load_brown_config()
 if cfg.SOURCE_SIDE not in ("left", "right"):
     raise ValueError("SOURCE_SIDE must be 'left' or 'right'")
+if cfg.MATRIX_SOURCE not in ("random", "image", "lattice"):
+    raise ValueError("MATRIX_SOURCE must be 'random', 'image', or 'lattice'")
 
 
 # Make the initial Matrix
@@ -24,12 +26,13 @@ sigma = max_radius_to_jump / 3
 jump_probability_table = create_jump_probability_table(max_radius_to_jump, sigma)
 
 h5_filename = results_dir() / cfg.h5_filename
-num_saved_frames = sum(should_save_frame(step, cfg.save_every_steps) for step in range(steps))
+saved_steps = np.arange(0, steps, cfg.save_every_steps, dtype=np.int64)
+num_saved_frames = len(saved_steps)
 print(f"Total frames to be saved: {num_saved_frames}, approx. "
       f"{int((num_saved_frames * (y * x * np.dtype(np.int8).itemsize) / (1024 ** 2)) * 1.15)} MB")
 
 print("Creating initial matrix")
-if cfg.USE_IMAGE_MATRIX:
+if cfg.MATRIX_SOURCE == "image":
     h_spots_matrix = create_matrix_from_image(
         image_dir() / cfg.image_name,
         cfg.max_sol_white,
@@ -39,7 +42,19 @@ if cfg.USE_IMAGE_MATRIX:
 else:
     num_possible_spots_a = int(y * (x // 2) * cfg.max_sol_a)
     num_possible_spots_b = int(y * (x // 2) * cfg.max_sol_b)
-    h_spots_matrix = create_custom_matrix(x, y, num_possible_spots_a, num_possible_spots_b)
+    if cfg.MATRIX_SOURCE == "random":
+        h_spots_matrix = create_custom_matrix(x, y, num_possible_spots_a, num_possible_spots_b)
+    else:
+        h_spots_matrix, lattice_spacing_used = create_lattice_matrix_for_halves(
+            x,
+            y,
+            num_possible_spots_a,
+            num_possible_spots_b,
+            lattice_style=cfg.LATTICE_STYLE,
+            start_spacing=cfg.LATTICE_START_SPACING,
+            min_spacing=cfg.LATTICE_MIN_SPACING,
+        )
+        print(f"Lattice style: {cfg.LATTICE_STYLE}, spacing used: {lattice_spacing_used}")
 
 sink_source_thickness = cfg.SINK_SOURCE_THICKNESS if cfg.USE_SINK_SOURCE else 0
 region_map, num_regions = create_region_mapping(
@@ -101,6 +116,7 @@ for region, count in zip(unique_regions, counts):
 
 with h5py.File(h5_filename, "w") as hf:
     dset = hf.create_dataset("snapshots", shape=(num_saved_frames, height, width), dtype=np.int8, chunks=True)
+    hf.create_dataset("saved_steps", data=saved_steps, dtype=np.int64)
 
     displacement_dsets = {}
     for i in range(num_regions):
@@ -154,9 +170,8 @@ with h5py.File(h5_filename, "w") as hf:
                 dset[save_counter:save_counter + buffer_index] = buffer[:buffer_index]
 
                 for i in range(num_regions):
-                    displacement_dsets[f"time_{i}"][save_counter:save_counter + buffer_index] = np.arange(
-                        save_counter,
-                        save_counter + buffer_index,
+                    displacement_dsets[f"time_{i}"][save_counter:save_counter + buffer_index] = (
+                        saved_steps[save_counter:save_counter + buffer_index]
                     )
                     displacement_dsets[f"mean_disp_{i}"][save_counter:save_counter + buffer_index] = (
                         disp_buffer[:buffer_index, i, 0] / np.maximum(disp_buffer[:buffer_index, i, 2], 1)
@@ -175,9 +190,8 @@ with h5py.File(h5_filename, "w") as hf:
         dset[save_counter:save_counter + buffer_index] = buffer[:buffer_index]
 
         for i in range(num_regions):
-            displacement_dsets[f"time_{i}"][save_counter:save_counter + buffer_index] = np.arange(
-                save_counter,
-                save_counter + buffer_index,
+            displacement_dsets[f"time_{i}"][save_counter:save_counter + buffer_index] = (
+                saved_steps[save_counter:save_counter + buffer_index]
             )
             displacement_dsets[f"mean_disp_{i}"][save_counter:save_counter + buffer_index] = (
                 disp_buffer[:buffer_index, i, 0] / np.maximum(disp_buffer[:buffer_index, i, 2], 1)
@@ -190,4 +204,3 @@ with h5py.File(h5_filename, "w") as hf:
     hf.attrs["max_radius_to_jump"] = max_radius_to_jump
     hf.attrs["matrix_shape"] = h_spots_matrix.shape
     hf.attrs["sink_source_thickness"] = sink_source_thickness
-    hf.attrs["saved_steps"] = np.array([step for step in range(steps) if should_save_frame(step, cfg.save_every_steps)])

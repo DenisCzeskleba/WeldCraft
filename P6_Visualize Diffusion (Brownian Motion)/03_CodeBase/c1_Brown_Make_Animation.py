@@ -14,6 +14,10 @@ except ImportError:
 
 
 cfg = load_brown_config()
+if cfg.MAIN_RENDER_MODE not in ("pixels", "dots"):
+    raise ValueError("MAIN_RENDER_MODE must be 'pixels' or 'dots'")
+if int(cfg.render_every_nth_frame) < 1:
+    raise ValueError("render_every_nth_frame must be 1 or greater")
 
 file_name = results_dir() / cfg.h5_filename
 output_dir = results_dir() / cfg.animation_output_folder
@@ -25,7 +29,7 @@ ffmpeg_path = Path(cfg.ffmpeg_path)
 if ffmpeg_path.exists():
     mpl.rcParams["animation.ffmpeg_path"] = str(ffmpeg_path)
 
-matrices, saved_steps, diffusion_data = load_brownian_animation_data(file_name)
+matrices, saved_steps, diffusion_data = load_brownian_animation_data(file_name, cfg.render_every_nth_frame)
 
 
 def setup_plot(matrix_shape, saved_steps, diffusion_data):
@@ -55,15 +59,40 @@ def setup_plot(matrix_shape, saved_steps, diffusion_data):
     state = {
         "axes": axes,
         "im": None,
+        "available_dots": None,
+        "hydrogen_dots": None,
         "conc_plot": None,
         "speed_lines": [],
     }
 
     if cfg.SHOW_MAIN_SIMULATION_PANEL:
-        cmap = ListedColormap([cfg.COLOR_EMPTY, cfg.COLOR_AVAILABLE_SPOT, cfg.COLOR_HYDROGEN])
-        norm = BoundaryNorm([-0.5, 0.5, 1.5, 2.5], cmap.N)
-
-        state["im"] = axes["main"].imshow(np.zeros(matrix_shape), cmap=cmap, norm=norm)
+        if cfg.MAIN_RENDER_MODE == "pixels":
+            cmap = ListedColormap([cfg.COLOR_EMPTY, cfg.COLOR_AVAILABLE_SPOT, cfg.COLOR_HYDROGEN])
+            norm = BoundaryNorm([-0.5, 0.5, 1.5, 2.5], cmap.N)
+            state["im"] = axes["main"].imshow(np.zeros(matrix_shape), cmap=cmap, norm=norm)
+        else:
+            axes["main"].set_facecolor(cfg.COLOR_EMPTY)
+            state["available_dots"] = axes["main"].scatter(
+                [],
+                [],
+                s=cfg.DOT_SIZE_AVAILABLE,
+                c=cfg.COLOR_AVAILABLE_SPOT,
+                alpha=cfg.DOT_ALPHA_AVAILABLE,
+                marker="o",
+                edgecolors="none",
+            )
+            state["hydrogen_dots"] = axes["main"].scatter(
+                [],
+                [],
+                s=cfg.DOT_SIZE_HYDROGEN,
+                c=cfg.COLOR_HYDROGEN,
+                alpha=cfg.DOT_ALPHA_HYDROGEN,
+                marker="o",
+                edgecolors="none",
+            )
+            axes["main"].set_xlim(-0.5, matrix_shape[1] - 0.5)
+            axes["main"].set_ylim(matrix_shape[0] - 0.5, -0.5)
+            axes["main"].set_aspect("equal")
         axes["main"].set_title("Diffusion as a result of random motion (Frame: 0)")
 
     if cfg.SHOW_CONCENTRATION_PROFILE_PANEL:
@@ -115,6 +144,14 @@ def update(frame, state, matrices, saved_steps):
         state["im"].set_data(h_spots_matrix)
         state["axes"]["main"].set_title(f"Diffusion as a result of random motion (Step: {saved_steps[frame]})")
         artists.append(state["im"])
+    elif state["available_dots"] is not None and state["hydrogen_dots"] is not None:
+        available_y, available_x = np.where(h_spots_matrix == 1)
+        hydrogen_y, hydrogen_x = np.where(h_spots_matrix == 2)
+
+        state["available_dots"].set_offsets(np.column_stack((available_x, available_y)))
+        state["hydrogen_dots"].set_offsets(np.column_stack((hydrogen_x, hydrogen_y)))
+        state["axes"]["main"].set_title(f"Diffusion as a result of random motion (Step: {saved_steps[frame]})")
+        artists.extend([state["available_dots"], state["hydrogen_dots"]])
 
     if state["conc_plot"] is not None:
         total_spots = np.sum(h_spots_matrix > 0, axis=0)
@@ -135,7 +172,11 @@ def update(frame, state, matrices, saved_steps):
 
 fig, animation_state = setup_plot(matrices.shape[1:], saved_steps, diffusion_data)
 
-print(f"Converting to .mp4 now. Please wait...\nSaving to: {output_file.resolve()}")
+print(
+    "Converting to .mp4 now. Please wait...\n"
+    f"Rendering every {cfg.render_every_nth_frame} saved HDF5 frame(s): {len(matrices)} video frames.\n"
+    f"Saving to: {output_file.resolve()}"
+)
 
 writer = FFMpegWriter(
     fps=cfg.animation_fps,

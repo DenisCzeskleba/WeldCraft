@@ -9,29 +9,34 @@ from fractions import Fraction
 
 
 # ---------------------- Main Simulation Settings ---------------------- #
-y = 200  # Height (y)
-x = 400  # Width (x)
+y = 650  # Height (y)
+x = 1300  # Width (x)
 
-steps = 40000
+steps = 40000000
 max_radius_to_jump = 10
 
 # ---------------------- Matrix Source ---------------------- #
-USE_IMAGE_MATRIX = False
-image_name = "Gef\u00fcge_array.tiff"
+MATRIX_SOURCE = "random"  # Options: "random", "image", "lattice"
+
+
+# Used when MATRIX_SOURCE = "random" or "lattice"
+max_sol_a = Fraction(5, 100)
+max_sol_b = Fraction(10, 100)
+
+# Used when MATRIX_SOURCE = "lattice"
+LATTICE_STYLE = "prime"
+LATTICE_START_SPACING = 5
+LATTICE_MIN_SPACING = 1
 
 # Used when USE_IMAGE_MATRIX = True
+image_name = "Gef\u00fcge_array.tiff"
 max_sol_white = Fraction(40, 100)
 max_sol_black = Fraction(2, 100)
 show_image_matrix_plot = True
 
-# Used when USE_IMAGE_MATRIX = False
-max_sol_a = Fraction(5, 100)
-max_sol_b = Fraction(10, 100)
-
-
 # ---------------------- Initial Concentration ---------------------- #
-concentration_a = 50
-concentration_b = 50
+concentration_a = 30
+concentration_b = 30
 
 
 # ---------------------- Layer / Boundary Options ---------------------- #
@@ -65,9 +70,16 @@ SHOW_MAIN_SIMULATION_PANEL = True
 SHOW_CONCENTRATION_PROFILE_PANEL = False
 SHOW_DIFFUSION_SPEED_PANEL = False
 
+# ---------------------- Main Panel Render Mode ---------------------- #
+MAIN_RENDER_MODE = "pixels"  # Options: "pixels", "dots"
+DOT_SIZE_AVAILABLE = 12
+DOT_SIZE_HYDROGEN = 12
+DOT_ALPHA_AVAILABLE = 0.85
+DOT_ALPHA_HYDROGEN = 0.95
+
 
 # ---------------------- Animation Colors ---------------------- #
-COLOR_EMPTY = "#440154"
+COLOR_EMPTY = "#FFFFFF"  # "#440154" 
 COLOR_AVAILABLE_SPOT = "#0000FF"
 COLOR_HYDROGEN = "#FF0000"
 COLOR_CONCENTRATION_LINE = "#0000FF"
@@ -87,6 +99,7 @@ animation_output_folder = "Saved Animations"
 animation_filename = "brownian_motion_animation.mp4"
 
 # ---------------------- Video Output ---------------------- #
+render_every_nth_frame = 1000  # Render every Nth saved HDF5 frame; use larger values for huge runs to keep videos and memory smaller.
 animation_fps = 12
 animation_dpi = 300
 animation_artist = "Denis Czeskleba"

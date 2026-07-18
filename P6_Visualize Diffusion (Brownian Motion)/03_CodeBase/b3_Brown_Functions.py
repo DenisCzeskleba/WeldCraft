@@ -64,6 +64,56 @@ def create_custom_matrix(x_func, y_func, num_possible_spots_a, num_possible_spot
     return matrix
 
 
+def _pick_lattice_candidates(candidate_matrix, row_slice, col_slice, num_to_pick):
+    rows, cols = np.where(candidate_matrix[row_slice, col_slice] == 1)
+    if len(rows) < num_to_pick:
+        raise ValueError(f"Not enough lattice candidates: requested {num_to_pick}, found {len(rows)}")
+
+    selected = np.random.choice(len(rows), num_to_pick, replace=False)
+    row_offset = row_slice.start or 0
+    col_offset = col_slice.start or 0
+
+    return rows[selected] + row_offset, cols[selected] + col_offset
+
+
+def create_lattice_matrix_for_halves(x_func, y_func, num_possible_spots_a, num_possible_spots_b,
+                                     lattice_style="prime", start_spacing=5, min_spacing=1):
+    spacing = start_spacing
+    half_x = x_func // 2
+
+    while spacing >= min_spacing:
+        candidate_matrix = create_crystal_lattice_matrix(y_func, x_func, spacing, lattice_style=lattice_style)
+        left_candidates = np.sum(candidate_matrix[:, :half_x] == 1)
+        right_candidates = np.sum(candidate_matrix[:, half_x:] == 1)
+
+        if left_candidates >= num_possible_spots_a and right_candidates >= num_possible_spots_b:
+            matrix = np.zeros((y_func, x_func), dtype=np.int8)
+
+            left_rows, left_cols = _pick_lattice_candidates(
+                candidate_matrix,
+                slice(None),
+                slice(0, half_x),
+                num_possible_spots_a,
+            )
+            right_rows, right_cols = _pick_lattice_candidates(
+                candidate_matrix,
+                slice(None),
+                slice(half_x, x_func),
+                num_possible_spots_b,
+            )
+
+            matrix[left_rows, left_cols] = 1
+            matrix[right_rows, right_cols] = 1
+            return matrix, spacing
+
+        spacing -= 1
+
+    raise ValueError(
+        f"Lattice style '{lattice_style}' could not provide enough candidates "
+        f"for max_sol_a/max_sol_b at spacing >= {min_spacing}."
+    )
+
+
 def create_matrix_from_image(image_path, max_sol_white, max_sol_black, show_plot=True):
     img = Image.open(image_path).convert("L")
     img_array = np.array(img)
@@ -299,7 +349,7 @@ def simulate_brownian_motion(matrix, random_values, active_y, active_x, nx, ny, 
 
 
 def create_crystal_lattice_matrix(rows, cols, spacing, lattice_style="even"):
-    matrix = np.zeros((rows, cols), dtype=int)
+    matrix = np.zeros((rows, cols), dtype=np.int8)
 
     if lattice_style == "even":
         matrix[spacing // 2::spacing, spacing // 2::spacing] = 1
@@ -347,10 +397,24 @@ def create_crystal_lattice_matrix(rows, cols, spacing, lattice_style="even"):
     return matrix
 
 
-def load_brownian_animation_data(h5_filename):
+def read_saved_steps(hf):
+    if "saved_steps" in hf:
+        return hf["saved_steps"][:]
+    if "saved_steps" in hf.attrs:
+        return hf.attrs["saved_steps"][:]
+    raise RuntimeError("saved_steps not found in HDF5 file")
+
+
+def load_brownian_animation_data(h5_filename, render_every_nth_frame=1):
+    render_every_nth_frame = int(render_every_nth_frame)
+    if render_every_nth_frame < 1:
+        raise ValueError("render_every_nth_frame must be 1 or greater")
+
+    frame_slice = slice(None, None, render_every_nth_frame)
+
     with h5py.File(h5_filename, "r") as hf:
-        matrices = hf["snapshots"][:]
-        saved_steps = hf.attrs["saved_steps"][:]
+        matrices = hf["snapshots"][frame_slice]
+        saved_steps = read_saved_steps(hf)[frame_slice]
 
         region_indices = []
         for key in hf.keys():
@@ -364,7 +428,7 @@ def load_brownian_animation_data(h5_filename):
             group_name = f"region_{region_index}"
             group = hf[group_name]
             if "mean_disp" in group:
-                mean_disp = group["mean_disp"][:]
+                mean_disp = group["mean_disp"][frame_slice]
             else:
                 mean_disp = np.zeros(len(saved_steps), dtype=float)
 
@@ -380,9 +444,9 @@ def load_brownian_animation_data(h5_filename):
 
 def load_last_snapshot(h5_filename):
     with h5py.File(h5_filename, "r") as hf:
-        matrices = hf["snapshots"][:]
-        saved_steps = hf.attrs["saved_steps"][:]
-    return matrices[-1], saved_steps[-1]
+        matrix = hf["snapshots"][-1]
+        saved_steps = read_saved_steps(hf)
+    return matrix, saved_steps[-1]
 
 
 def compute_concentration_profile(matrix, smoothing_window=5, gaussian_sigma=1.5):
@@ -403,7 +467,7 @@ def compute_concentration_profile(matrix, smoothing_window=5, gaussian_sigma=1.5
 def load_simulation_data(h5_filename):
     with h5py.File(h5_filename, "r") as hf:
         matrices = hf["snapshots"][:]
-        saved_steps = hf.attrs["saved_steps"][:]
+        saved_steps = read_saved_steps(hf)
         sink_source_thickness = hf.attrs["sink_source_thickness"]
     return matrices, saved_steps, sink_source_thickness
 
@@ -500,7 +564,7 @@ def compute_variance_speed(time_values, com_positions, window_size=50):
 
 def load_diffusion_data(h5_filename):
     with h5py.File(h5_filename, "r") as hf:
-        saved_steps = hf.attrs["saved_steps"][:]
+        saved_steps = read_saved_steps(hf)
 
         region_indices = []
         for key in hf.keys():
