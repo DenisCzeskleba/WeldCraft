@@ -408,6 +408,145 @@ def create_matrix_from_site_states(matrix_shape, site_y, site_x, site_states):
 
 
 @njit
+def count_random_sequential_targets(site_y, site_x, site_lookup, max_radius_to_jump, transitions_enabled):
+    target_counts = np.zeros(len(site_y), dtype=np.int32)
+    if not transitions_enabled:
+        return target_counts
+
+    rows, cols = site_lookup.shape
+    for site_id in range(len(site_y)):
+        source_y = site_y[site_id]
+        source_x = site_x[site_id]
+        y_start = max(0, source_y - max_radius_to_jump)
+        y_end = min(rows, source_y + max_radius_to_jump + 1)
+        x_start = max(0, source_x - max_radius_to_jump)
+        x_end = min(cols, source_x + max_radius_to_jump + 1)
+        count = 0
+
+        for target_y in range(y_start, y_end):
+            for target_x in range(x_start, x_end):
+                target_site_id = site_lookup[target_y, target_x]
+                if target_site_id >= 0 and target_site_id != site_id:
+                    count += 1
+
+        target_counts[site_id] = count
+
+    return target_counts
+
+
+@njit
+def fill_random_sequential_transitions(site_y, site_x, site_lookup, transition_offsets,
+                                       transition_targets, transition_cdf, transition_totals,
+                                       max_radius_to_jump, base_movement_probability,
+                                       jump_probability_table):
+    if base_movement_probability <= 0:
+        return
+
+    rows, cols = site_lookup.shape
+    proposal_count = (2 * max_radius_to_jump + 1) ** 2
+
+    for site_id in range(len(site_y)):
+        source_y = site_y[site_id]
+        source_x = site_x[site_id]
+        y_start = max(0, source_y - max_radius_to_jump)
+        y_end = min(rows, source_y + max_radius_to_jump + 1)
+        x_start = max(0, source_x - max_radius_to_jump)
+        x_end = min(cols, source_x + max_radius_to_jump + 1)
+        write_index = transition_offsets[site_id]
+        cumulative_probability = 0.0
+
+        for target_y in range(y_start, y_end):
+            for target_x in range(x_start, x_end):
+                target_site_id = site_lookup[target_y, target_x]
+                if target_site_id < 0 or target_site_id == site_id:
+                    continue
+
+                move_y = target_y - source_y
+                move_x = target_x - source_x
+                acceptance_probability = base_movement_probability * jump_probability_table[
+                    move_y + max_radius_to_jump,
+                    move_x + max_radius_to_jump,
+                ]
+                if acceptance_probability > 1.0:
+                    acceptance_probability = 1.0
+
+                cumulative_probability += acceptance_probability / proposal_count
+                transition_targets[write_index] = target_site_id
+                transition_cdf[write_index] = cumulative_probability
+                write_index += 1
+
+        transition_totals[site_id] = cumulative_probability
+
+
+def create_random_sequential_wiggle_lookup(matrix, max_radius_to_jump, base_movement_probability,
+                                           jump_probability_table, sink_source_thickness=0,
+                                           use_sink_source=False, source_on_left=True):
+    """Build compact site states and the exact marginal wiggle kernel for sequential updates."""
+    site_y, site_x = create_active_site_arrays(matrix)
+    site_lookup = np.full(matrix.shape, -1, dtype=np.int32)
+    site_lookup[site_y, site_x] = np.arange(len(site_y), dtype=np.int32)
+
+    target_counts = count_random_sequential_targets(
+        site_y,
+        site_x,
+        site_lookup,
+        max_radius_to_jump,
+        base_movement_probability > 0,
+    )
+    transition_offsets = np.empty(len(site_y) + 1, dtype=np.int64)
+    transition_offsets[0] = 0
+    np.cumsum(target_counts, dtype=np.int64, out=transition_offsets[1:])
+
+    transition_count = int(transition_offsets[-1])
+    transition_targets = np.empty(transition_count, dtype=np.int32)
+    transition_cdf = np.empty(transition_count, dtype=np.float32)
+    transition_totals = np.zeros(len(site_y), dtype=np.float32)
+    fill_random_sequential_transitions(
+        site_y,
+        site_x,
+        site_lookup,
+        transition_offsets,
+        transition_targets,
+        transition_cdf,
+        transition_totals,
+        max_radius_to_jump,
+        base_movement_probability,
+        jump_probability_table,
+    )
+
+    site_states = matrix[site_y, site_x].astype(np.int8)
+    initial_hydrogen_site_ids = np.flatnonzero(site_states == 2).astype(np.int32)
+    hydrogen_site_ids = np.empty(len(site_states), dtype=np.int32)
+    hydrogen_site_ids[:len(initial_hydrogen_site_ids)] = initial_hydrogen_site_ids
+    hydrogen_count = len(initial_hydrogen_site_ids)
+
+    source_site_flags = np.zeros(len(site_y), dtype=np.uint8)
+    sink_site_flags = np.zeros(len(site_y), dtype=np.uint8)
+    if use_sink_source:
+        matrix_width = matrix.shape[1]
+        if source_on_left:
+            source_site_flags[site_x < sink_source_thickness] = 1
+            sink_site_flags[site_x >= matrix_width - sink_source_thickness] = 1
+        else:
+            sink_site_flags[site_x < sink_source_thickness] = 1
+            source_site_flags[site_x >= matrix_width - sink_source_thickness] = 1
+
+    return (
+        site_y,
+        site_x,
+        site_states,
+        hydrogen_site_ids,
+        hydrogen_count,
+        transition_offsets,
+        transition_targets,
+        transition_cdf,
+        transition_totals,
+        source_site_flags,
+        sink_site_flags,
+    )
+
+
+@njit
 def unit_interval_index(random_value, size):
     """Map a nominal [0, 1) value to a valid index, including rounded 1.0 inputs."""
     index = int(random_value * size)
@@ -453,6 +592,117 @@ def xoshiro256ss_next(rng_state):
     rng_state[3] = rotate_left_uint64(rng_state[3], 45)
 
     return result
+
+
+@njit
+def bounded_index_rejection_threshold(size):
+    """Return the multiply-high rejection threshold for an exact uint32-to-range mapping."""
+    return (1 << 32) % size
+
+
+@njit
+def sample_index_and_unit_float(rng_state, size, rejection_threshold):
+    """Use disjoint halves of one random word for an exact bounded index and [0, 1) value."""
+    index_mask = np.uint64((1 << 32) - 1)
+
+    while True:
+        random_word = xoshiro256ss_next(rng_state)
+        raw_index = random_word & index_mask
+        index_product = raw_index * np.uint64(size)
+        product_low = index_product & index_mask
+
+        if product_low >= rejection_threshold:
+            bounded_index = int(index_product >> 32)
+            unit_float = float(random_word >> 32) * (1.0 / (1 << 32))
+            return bounded_index, unit_float
+
+
+@njit
+def find_transition_from_cdf(transition_cdf, start, end, random_value):
+    low = start
+    high = end
+    while low < high:
+        middle = low + (high - low) // 2
+        if random_value < transition_cdf[middle]:
+            high = middle
+        else:
+            low = middle + 1
+    return low
+
+
+@njit
+def simulate_random_sequential_wiggle_steps(site_states, hydrogen_site_ids, hydrogen_count,
+                                            transition_offsets, transition_targets, transition_cdf,
+                                            transition_totals, source_site_flags, sink_site_flags,
+                                            site_x, region_map, num_regions, rng_state, num_steps):
+    """Run sequential wiggles; one step is H-at-start random selections with replacement."""
+    displacement_stats = np.zeros((num_regions, 3), dtype=np.float64)
+    wiggle_attempt_count = 0
+    selection_rejection_threshold = (
+        bounded_index_rejection_threshold(hydrogen_count) if hydrogen_count > 0 else 0
+    )
+
+    for _ in range(num_steps):
+        attempts_this_step = hydrogen_count
+        wiggle_attempt_count += attempts_this_step
+
+        for _ in range(attempts_this_step):
+            if hydrogen_count == 0:
+                break
+
+            hydrogen_index, random_value = sample_index_and_unit_float(
+                rng_state,
+                hydrogen_count,
+                selection_rejection_threshold,
+            )
+            source_site_id = hydrogen_site_ids[hydrogen_index]
+            total_transition_probability = transition_totals[source_site_id]
+            if random_value >= total_transition_probability:
+                continue
+
+            transition_start = transition_offsets[source_site_id]
+            transition_end = transition_offsets[source_site_id + 1]
+            transition_index = find_transition_from_cdf(
+                transition_cdf,
+                transition_start,
+                transition_end,
+                random_value,
+            )
+            if transition_index >= transition_end:
+                continue
+
+            target_site_id = transition_targets[transition_index]
+            if site_states[target_site_id] != 1:
+                continue
+
+            move_x = site_x[target_site_id] - site_x[source_site_id]
+            region_id = region_map[site_x[source_site_id]]
+            if region_id >= 0:
+                displacement_stats[region_id, 0] += abs(move_x)
+                displacement_stats[region_id, 1] += move_x ** 2
+                displacement_stats[region_id, 2] += 1
+
+            source_is_reservoir = source_site_flags[source_site_id] == 1
+            target_is_sink = sink_site_flags[target_site_id] == 1
+
+            if target_is_sink:
+                if not source_is_reservoir:
+                    site_states[source_site_id] = 1
+                    hydrogen_count -= 1
+                    hydrogen_site_ids[hydrogen_index] = hydrogen_site_ids[hydrogen_count]
+                    if hydrogen_count > 0:
+                        selection_rejection_threshold = bounded_index_rejection_threshold(hydrogen_count)
+            elif source_is_reservoir:
+                site_states[target_site_id] = 2
+                hydrogen_site_ids[hydrogen_count] = target_site_id
+                hydrogen_count += 1
+                selection_rejection_threshold = bounded_index_rejection_threshold(hydrogen_count)
+            else:
+                site_states[source_site_id] = 1
+                site_states[target_site_id] = 2
+                hydrogen_site_ids[hydrogen_index] = target_site_id
+
+    return hydrogen_count, displacement_stats, wiggle_attempt_count
 
 
 @njit

@@ -9,7 +9,9 @@ from fractions import Fraction
 
 
 # ---------------------- Main Simulation Settings ---------------------- #
-simulation_mode = "molecular_wiggle"  # Options: "molecular_wiggle", "forced_jump"
+# See ../01_Resources/README.md for execution and step definitions.
+# Options: "molecular_wiggle", "random_sequential_wiggle", "forced_jump"
+simulation_mode = "molecular_wiggle"
 y = 650  # Height (y)
 x = 1300  # Width (x)
 
