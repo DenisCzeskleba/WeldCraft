@@ -350,12 +350,68 @@ def create_active_site_arrays(matrix):
     return active_y.astype(np.int32), active_x.astype(np.int32)
 
 
+def create_hydrogen_site_arrays(matrix):
+    hydrogen_y, hydrogen_x = np.where(matrix == 2)
+    return hydrogen_y.astype(np.int32), hydrogen_x.astype(np.int32)
+
+
+def create_forced_jump_lookup(matrix, max_radius_to_jump):
+    site_y, site_x = create_active_site_arrays(matrix)
+    site_lookup = np.full(matrix.shape, -1, dtype=np.int32)
+    site_lookup[site_y, site_x] = np.arange(len(site_y), dtype=np.int32)
+
+    max_target_count = (2 * max_radius_to_jump + 1) ** 2 - 1
+    neighbor_site_ids = np.full((len(site_y), max_target_count), -1, dtype=np.int32)
+    neighbor_counts = np.zeros(len(site_y), dtype=np.int32)
+
+    rows, cols = matrix.shape
+    for site_id in range(len(site_y)):
+        y_pos = site_y[site_id]
+        x_pos = site_x[site_id]
+        count = 0
+
+        y_start = max(0, y_pos - max_radius_to_jump)
+        y_end = min(rows, y_pos + max_radius_to_jump + 1)
+        x_start = max(0, x_pos - max_radius_to_jump)
+        x_end = min(cols, x_pos + max_radius_to_jump + 1)
+
+        for target_y in range(y_start, y_end):
+            for target_x in range(x_start, x_end):
+                if target_y == y_pos and target_x == x_pos:
+                    continue
+
+                target_site_id = site_lookup[target_y, target_x]
+                if target_site_id >= 0:
+                    neighbor_site_ids[site_id, count] = target_site_id
+                    count += 1
+
+        neighbor_counts[site_id] = count
+
+    hydrogen_y, hydrogen_x = create_hydrogen_site_arrays(matrix)
+    hydrogen_site_ids = site_lookup[hydrogen_y, hydrogen_x].astype(np.int32)
+    site_states = matrix[site_y, site_x].astype(np.int8)
+
+    return (
+        site_y.astype(np.int32),
+        site_x.astype(np.int32),
+        neighbor_site_ids,
+        neighbor_counts,
+        site_states,
+        hydrogen_site_ids,
+    )
+
+
+def create_matrix_from_site_states(matrix_shape, site_y, site_x, site_states):
+    matrix = np.zeros(matrix_shape, dtype=np.int8)
+    matrix[site_y, site_x] = site_states
+    return matrix
+
+
 @njit
 def simulate_brownian_motion(matrix, random_values, active_y, active_x, nx, ny, rand_index, random_size, max_radius_to_jump,
                              base_movement_probability, jump_probability_table, sink_source_thickness,
                              use_sink_source, source_on_left, region_map, num_regions):
-    # new_matrix = np.copy(matrix)
-    new_matrix = matrix
+    new_matrix = np.copy(matrix)
     displacement_stats = np.zeros((num_regions, 3), dtype=np.float32)
 
     for active_index in range(len(active_y)):
@@ -384,6 +440,155 @@ def simulate_brownian_motion(matrix, random_values, active_y, active_x, nx, ny, 
             adjusted_probability = base_movement_probability * jump_probability
 
             if matrix[new_j, new_i] == 1 and new_matrix[new_j, new_i] == 1 and rand_prob < adjusted_probability:
+                region_id = region_map[i]
+                if region_id >= 0:
+                    displacement_stats[region_id, 0] += np.float32(abs(move_x))
+                    displacement_stats[region_id, 1] += np.float32(move_x ** 2)
+                    displacement_stats[region_id, 2] += np.float32(1)
+
+                new_matrix[j, i] = 1
+                new_matrix[new_j, new_i] = 2
+
+    if use_sink_source:
+        if source_on_left:
+            for j in range(ny):
+                for i in range(sink_source_thickness):
+                    if new_matrix[j, i] == 1:
+                        new_matrix[j, i] = 2
+
+            for j in range(ny):
+                for i in range(nx - sink_source_thickness, nx):
+                    new_matrix[j, i] = 1
+        else:
+            for j in range(ny):
+                for i in range(sink_source_thickness):
+                    new_matrix[j, i] = 1
+
+            for j in range(ny):
+                for i in range(nx - sink_source_thickness, nx):
+                    if new_matrix[j, i] == 1:
+                        new_matrix[j, i] = 2
+
+    return new_matrix, rand_index, displacement_stats
+
+
+@njit
+def gcd_int(a, b):
+    while b != 0:
+        temp = b
+        b = a % b
+        a = temp
+    return a
+
+
+@njit
+def simulate_brownian_motion_forced_jump_precomputed(site_states, random_values, hydrogen_site_ids, site_y, site_x,
+                                                     neighbor_site_ids, neighbor_counts, rand_index, random_size,
+                                                     region_map, num_regions):
+    new_site_states = np.copy(site_states)
+    displacement_stats = np.zeros((num_regions, 3), dtype=np.float32)
+    valid_site_ids = np.zeros(neighbor_site_ids.shape[1], dtype=np.int32)
+    hydrogen_count = len(hydrogen_site_ids)
+
+    if hydrogen_count == 0:
+        return new_site_states, rand_index, displacement_stats
+
+    rand_index = (rand_index + 1) % random_size
+    order_offset = int(random_values[rand_index - 1] * hydrogen_count)
+
+    order_stride = 1
+    if hydrogen_count > 1:
+        rand_index = (rand_index + 1) % random_size
+        order_stride = int(random_values[rand_index - 1] * (hydrogen_count - 1)) + 1
+        while gcd_int(order_stride, hydrogen_count) != 1:
+            order_stride += 1
+            if order_stride >= hydrogen_count:
+                order_stride = 1
+
+    for order_index in range(hydrogen_count):
+        hydrogen_index = (order_offset + order_index * order_stride) % hydrogen_count
+        current_site_id = hydrogen_site_ids[hydrogen_index]
+        j = site_y[current_site_id]
+        i = site_x[current_site_id]
+
+        if site_states[current_site_id] != 2:
+            continue
+
+        valid_count = 0
+        for neighbor_index in range(neighbor_counts[current_site_id]):
+            target_site_id = neighbor_site_ids[current_site_id, neighbor_index]
+
+            if site_states[target_site_id] == 1 and new_site_states[target_site_id] == 1:
+                valid_site_ids[valid_count] = target_site_id
+                valid_count += 1
+
+        if valid_count > 0:
+            rand_index = (rand_index + 1) % random_size
+            chosen_index = int(random_values[rand_index - 1] * valid_count)
+            if chosen_index >= valid_count:
+                chosen_index = valid_count - 1
+
+            target_site_id = valid_site_ids[chosen_index]
+            new_j = site_y[target_site_id]
+            new_i = site_x[target_site_id]
+            move_x = new_i - i
+
+            region_id = region_map[i]
+            if region_id >= 0:
+                displacement_stats[region_id, 0] += np.float32(abs(move_x))
+                displacement_stats[region_id, 1] += np.float32(move_x ** 2)
+                displacement_stats[region_id, 2] += np.float32(1)
+
+            new_site_states[current_site_id] = 1
+            new_site_states[target_site_id] = 2
+            hydrogen_site_ids[hydrogen_index] = target_site_id
+
+    return new_site_states, rand_index, displacement_stats
+
+
+@njit
+def simulate_brownian_motion_forced_jump(matrix, random_values, active_y, active_x, nx, ny, rand_index, random_size,
+                                         max_radius_to_jump, sink_source_thickness, use_sink_source, source_on_left,
+                                         region_map, num_regions):
+    new_matrix = np.copy(matrix)
+    displacement_stats = np.zeros((num_regions, 3), dtype=np.float32)
+    max_target_count = (2 * max_radius_to_jump + 1) ** 2 - 1
+    valid_move_x = np.zeros(max_target_count, dtype=np.int32)
+    valid_move_y = np.zeros(max_target_count, dtype=np.int32)
+
+    for active_index in range(len(active_y)):
+        j = active_y[active_index]
+        i = active_x[active_index]
+
+        if matrix[j, i] == 2:
+            valid_count = 0
+
+            y_start = max(0, j - max_radius_to_jump)
+            y_end = min(ny, j + max_radius_to_jump + 1)
+            x_start = max(0, i - max_radius_to_jump)
+            x_end = min(nx, i + max_radius_to_jump + 1)
+
+            for target_y in range(y_start, y_end):
+                for target_x in range(x_start, x_end):
+                    if target_y == j and target_x == i:
+                        continue
+
+                    if matrix[target_y, target_x] == 1 and new_matrix[target_y, target_x] == 1:
+                        valid_move_x[valid_count] = target_x - i
+                        valid_move_y[valid_count] = target_y - j
+                        valid_count += 1
+
+            if valid_count > 0:
+                rand_index = (rand_index + 1) % random_size
+                chosen_index = int(random_values[rand_index - 1] * valid_count)
+                if chosen_index >= valid_count:
+                    chosen_index = valid_count - 1
+
+                move_x = valid_move_x[chosen_index]
+                move_y = valid_move_y[chosen_index]
+                new_i = i + move_x
+                new_j = j + move_y
+
                 region_id = region_map[i]
                 if region_id >= 0:
                     displacement_stats[region_id, 0] += np.float32(abs(move_x))

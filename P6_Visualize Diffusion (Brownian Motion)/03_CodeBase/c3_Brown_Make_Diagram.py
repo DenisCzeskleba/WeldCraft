@@ -27,7 +27,7 @@ with contextlib.redirect_stdout(io.StringIO()):
 
 
 # ---------------------- Input Snapshot ---------------------- #
-INPUT_H5_FILENAME = "random_motion.h5"  # Set to a sparse H5 name such as "random_motion_sparse.h5" when needed.
+INPUT_H5_FILENAME = "Diss Case 2 test 1.h5"  # Set to a sparse H5 name such as "random_motion_sparse.h5" when needed.
 SNAPSHOT_INDEX = -1  # HDF5 saved-frame index to plot; -1 means the last saved frame, 0 means first saved frame.
 
 
@@ -313,7 +313,7 @@ def rectangle_mask(shape, x_start, x_end, y_start=None, y_end=None):
 def circle_mask(shape, center_x, center_y, diameter):
     rows, cols = shape
     yy, xx = np.ogrid[:rows, :cols]
-    radius = diameter / 2
+    radius = diameter // 2
     return (xx - center_x) ** 2 + (yy - center_y) ** 2 < radius ** 2
 
 
@@ -541,7 +541,7 @@ def draw_concentration_profile(axis, matrix, metadata):
 
     spot_settings = get_spot_settings(metadata)
     if PROFILE_AXIS == "x" and SHOW_PROFILE_SPOT_SHADE and spot_settings is not None:
-        radius = spot_settings["diameter"] / 2
+        radius = spot_settings["diameter"] // 2
         shade_start = spot_settings["center_x"] - radius
         shade_end = spot_settings["center_x"] + radius
         axis.axvspan(
@@ -561,7 +561,7 @@ def draw_concentration_profile(axis, matrix, metadata):
             color=PROFILE_SPOT_SHADE_LABEL_COLOR,
         )
     elif PROFILE_AXIS == "y" and SHOW_PROFILE_SPOT_SHADE and spot_settings is not None:
-        radius = spot_settings["diameter"] / 2
+        radius = spot_settings["diameter"] // 2
         shade_start = spot_settings["center_y"] - radius
         shade_end = spot_settings["center_y"] + radius
         axis.axvspan(

@@ -10,6 +10,8 @@ if cfg.SOURCE_SIDE not in ("left", "right"):
     raise ValueError("SOURCE_SIDE must be 'left' or 'right'")
 if cfg.MATRIX_SOURCE not in ("random", "image", "lattice"):
     raise ValueError("MATRIX_SOURCE must be 'random', 'image', or 'lattice'")
+if cfg.simulation_mode not in ("molecular_wiggle", "forced_jump"):
+    raise ValueError("simulation_mode must be 'molecular_wiggle' or 'forced_jump'")
 
 
 # Make the initial Matrix
@@ -17,13 +19,17 @@ y = cfg.y
 x = cfg.x
 steps = cfg.steps
 max_radius_to_jump = cfg.max_radius_to_jump
+print(f"Simulation mode: {cfg.simulation_mode}")
 
 # Precompute random numbers
 random_size = cfg.random_size
 random_values = np.random.rand(random_size).astype(np.float32)
 rand_index = 0
-sigma = max_radius_to_jump / 3
-jump_probability_table = create_jump_probability_table(max_radius_to_jump, sigma)
+if cfg.simulation_mode == "molecular_wiggle":
+    sigma = max_radius_to_jump / 3
+    jump_probability_table = create_jump_probability_table(max_radius_to_jump, sigma)
+else:
+    jump_probability_table = np.empty((0, 0), dtype=np.float32)
 
 h5_filename = results_dir() / cfg.h5_filename
 saved_steps = np.arange(0, steps, cfg.save_every_steps, dtype=np.int64)
@@ -102,11 +108,35 @@ if cfg.delete_old_h5 and h5_filename.exists():
 
 height, width = h_spots_matrix.shape
 active_y, active_x = create_active_site_arrays(h_spots_matrix)
+use_forced_jump_precomputed_lane = cfg.simulation_mode == "forced_jump" and not cfg.USE_SINK_SOURCE
+if use_forced_jump_precomputed_lane:
+    site_y, site_x, neighbor_site_ids, neighbor_counts, site_states, hydrogen_site_ids = create_forced_jump_lookup(
+        h_spots_matrix,
+        max_radius_to_jump,
+    )
+    average_forced_jump_target_count = float(np.mean(neighbor_counts)) if len(neighbor_counts) else 0.0
+else:
+    site_y = np.empty(0, dtype=np.int32)
+    site_x = np.empty(0, dtype=np.int32)
+    neighbor_site_ids = np.empty((0, 4), dtype=np.int32)
+    neighbor_counts = np.empty(0, dtype=np.int32)
+    site_states = np.empty(0, dtype=np.int8)
+    hydrogen_site_ids = np.empty(0, dtype=np.int32)
+    average_forced_jump_target_count = None
 snapshot_size_mb = (height * width * np.dtype(np.int8).itemsize) / (1024 ** 2)
 optimal_batch_size = max(1, int(cfg.max_ram_mb / snapshot_size_mb))
 
 print(f"Matrix size: {height}x{width}, Snapshot size: {snapshot_size_mb:.2f} MB")
 print(f"Active sites scanned per step: {len(active_y)} of {height * width}")
+if cfg.simulation_mode == "forced_jump":
+    if use_forced_jump_precomputed_lane:
+        print(
+            "Forced jump compact precomputed lane: "
+            f"{len(hydrogen_site_ids)} hydrogen atoms, {len(site_y)} possible sites, "
+            f"{average_forced_jump_target_count:.1f} average targets/site"
+        )
+    else:
+        print("Forced jump safe lane: scanning active sites because USE_SINK_SOURCE changes hydrogen count")
 print(f"Using batch size of {optimal_batch_size} frames (max {cfg.max_ram_mb}MB RAM usage)")
 print(f"Initial matrix unique values: {np.unique(h_spots_matrix)}")
 
@@ -126,7 +156,11 @@ with h5py.File(h5_filename, "w") as hf:
             "sink_source_thickness_used": sink_source_thickness,
             "num_regions": num_regions,
             "active_site_count": len(active_y),
+            "hydrogen_site_count": len(hydrogen_site_ids) if use_forced_jump_precomputed_lane else None,
+            "forced_jump_precomputed_lane_used": use_forced_jump_precomputed_lane,
+            "forced_jump_average_target_count": average_forced_jump_target_count,
             "lattice_spacing_used": lattice_spacing_used,
+            "simulation_mode_used": cfg.simulation_mode,
         },
     )
 
@@ -155,27 +189,67 @@ with h5py.File(h5_filename, "w") as hf:
     disp_buffer_index = 0
 
     for step in tqdm(range(steps)):
-        h_spots_matrix, rand_index, disp_stats = simulate_brownian_motion(
-            h_spots_matrix,
-            random_values,
-            active_y,
-            active_x,
-            x,
-            y,
-            rand_index,
-            random_size,
-            max_radius_to_jump,
-            cfg.base_movement_probability,
-            jump_probability_table,
-            sink_source_thickness,
-            cfg.USE_SINK_SOURCE,
-            cfg.SOURCE_SIDE == "left",
-            region_map,
-            num_regions,
-        )
+        if cfg.simulation_mode == "molecular_wiggle":
+            h_spots_matrix, rand_index, disp_stats = simulate_brownian_motion(
+                h_spots_matrix,
+                random_values,
+                active_y,
+                active_x,
+                x,
+                y,
+                rand_index,
+                random_size,
+                max_radius_to_jump,
+                cfg.base_movement_probability,
+                jump_probability_table,
+                sink_source_thickness,
+                cfg.USE_SINK_SOURCE,
+                cfg.SOURCE_SIDE == "left",
+                region_map,
+                num_regions,
+            )
+        elif use_forced_jump_precomputed_lane:
+            site_states, rand_index, disp_stats = simulate_brownian_motion_forced_jump_precomputed(
+                site_states,
+                random_values,
+                hydrogen_site_ids,
+                site_y,
+                site_x,
+                neighbor_site_ids,
+                neighbor_counts,
+                rand_index,
+                random_size,
+                region_map,
+                num_regions,
+            )
+        else:
+            h_spots_matrix, rand_index, disp_stats = simulate_brownian_motion_forced_jump(
+                h_spots_matrix,
+                random_values,
+                active_y,
+                active_x,
+                x,
+                y,
+                rand_index,
+                random_size,
+                max_radius_to_jump,
+                sink_source_thickness,
+                cfg.USE_SINK_SOURCE,
+                cfg.SOURCE_SIDE == "left",
+                region_map,
+                num_regions,
+            )
 
         if should_save_frame(step, cfg.save_every_steps):
-            buffer[buffer_index] = h_spots_matrix
+            if use_forced_jump_precomputed_lane:
+                buffer[buffer_index] = create_matrix_from_site_states(
+                    (height, width),
+                    site_y,
+                    site_x,
+                    site_states,
+                )
+            else:
+                buffer[buffer_index] = h_spots_matrix
             disp_buffer[disp_buffer_index] = disp_stats
 
             buffer_index += 1

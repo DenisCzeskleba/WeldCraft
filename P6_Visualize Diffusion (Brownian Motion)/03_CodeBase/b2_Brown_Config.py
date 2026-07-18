@@ -9,11 +9,11 @@ from fractions import Fraction
 
 
 # ---------------------- Main Simulation Settings ---------------------- #
-simulation_mode = "molecular_wiggle"  # Options: "molecular_wiggle", "forced_jump"
+simulation_mode = "forced_jump"  # Options: "molecular_wiggle", "forced_jump"
 y = 650  # Height (y)
 x = 1300  # Width (x)
 
-steps = 10_000_000  # use 10_000_000 notation, or 10000000. DO NOT use 100.000.000
+steps = 1_000  # use 10_000_000 notation, or 10000000. DO NOT use 100.000.000
 max_radius_to_jump = 10
 
 # ---------------------- Matrix Source ---------------------- #
@@ -36,13 +36,13 @@ max_sol_black = Fraction(2, 100)
 show_image_matrix_plot = True
 
 # ---------------------- Initial Concentration ---------------------- #
-concentration_a = 50
-concentration_b = 50
+concentration_a = 25
+concentration_b = 25
 
 
 # ---------------------- Layer / Boundary Options ---------------------- #
 USE_SPOT = True
-SPOT_DIAMETER = 75
+SPOT_DIAMETER = 80
 SPOT_CENTER_X = 1 * x // 2  # Column position of the spot center
 SPOT_CENTER_Y = y // 2  # Row position of the spot center
 
@@ -62,7 +62,7 @@ base_movement_probability = 1.0
 
 random_size = 10 ** 7  # Number of precomputed random numbers
 max_ram_mb = 1000  # Adjustable memory target for HDF5 frame buffering
-save_every_steps = 25000
+save_every_steps = 10
 delete_old_h5 = True
 
 
@@ -102,9 +102,13 @@ animation_filename = "brownian_motion_animation.mp4"
 # ---------------------- Video Output ---------------------- #
 render_every_nth_frame = 1  # Render every Nth saved HDF5 frame; use larger values for huge runs to keep videos and memory smaller.
 animation_fps = 12
-animation_dpi = 300
+animation_main_pixel_scale = 2  # Integer video pixels per matrix cell; 2 preserves sparse one-cell sites clearly.
+animation_side_panel_width_px = 480
+animation_title_font_size = 28
+animation_axis_label_font_size = 20
+animation_tick_font_size = 18
+animation_legend_font_size = 16
 animation_artist = "Denis Czeskleba"
-animation_bitrate = 3000
 ffmpeg_path = (
     r"C:\Users\DCzes\AppData\Local\Microsoft\WinGet\Packages"
     r"\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe"
