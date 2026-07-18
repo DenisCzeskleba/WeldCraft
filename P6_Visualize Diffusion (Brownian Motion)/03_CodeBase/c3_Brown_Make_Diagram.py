@@ -7,6 +7,7 @@ the HDF5 metadata when present, so old config edits do not change old diagrams.
 
 from pathlib import Path
 import contextlib
+import importlib.util
 import io
 
 import h5py
@@ -20,12 +21,13 @@ with contextlib.redirect_stdout(io.StringIO()):
         in_results,
         load_brown_config_json,
         read_saved_steps,
+        resources_dir,
         results_dir,
     )
 
 
 # ---------------------- Input Snapshot ---------------------- #
-INPUT_H5_FILENAME = "random_motion.h5"  # Set to a sparse H5 name such as "random_motion_sparse.h5" when needed.
+INPUT_H5_FILENAME = "Initial New Simulation.h5"  # Set to a sparse H5 name such as "random_motion_sparse.h5" when needed.
 SNAPSHOT_INDEX = -1  # HDF5 saved-frame index to plot; -1 means the last saved frame.
 
 
@@ -38,68 +40,88 @@ OUTPUT_BASENAME = "brownian_diagram"
 SAVE_DPI = 300
 
 
-# ---------------------- Main Diagram ---------------------- #
-RENDER_MODE = "pixels"  # Options: "pixels", "dots"
-FIGURE_SIZE = (12, 6)
-MATCH_SIDE_PANEL_HEIGHT_TO_MAIN = True
-TITLE = "Diffusion as a Result of Random Motion"
-X_LABEL = "Width"
-Y_LABEL = "Height"
+# ---------------------- Diagram Profile ---------------------- #
+DIAGRAM_PRESET = "default"  # File stem in 01_Resources/Diagram_Presets, for example "two_regions_w_solubility".
 
-COLOR_EMPTY = "#440154"  # "#440154" 
-COLOR_AVAILABLE_SPOT = "#0000FF"
-COLOR_HYDROGEN = "#FF0000"
-COLOR_CONCENTRATION_LINE = "#0000FF"
-DIFFUSION_SPEED_COLORS = [
-    "#FF0000",
-    "#FFA500",
-    "#008000",
-    "#800080",
-    "#A52A2A",
-    "#00FFFF",
-    "#000000",
+REQUIRED_DIAGRAM_PRESET_KEYS = [
+    "PRESET_NAME",
+    "RENDER_MODE",
+    "FIGURE_SIZE",
+    "MATCH_SIDE_PANEL_HEIGHT_TO_MAIN",
+    "TITLE",
+    "X_LABEL",
+    "Y_LABEL",
+    "COLOR_EMPTY",
+    "COLOR_AVAILABLE_SPOT",
+    "COLOR_HYDROGEN",
+    "COLOR_CONCENTRATION_LINE",
+    "DIFFUSION_SPEED_COLORS",
+    "DOT_SIZE_AVAILABLE",
+    "DOT_SIZE_HYDROGEN",
+    "DOT_ALPHA_AVAILABLE",
+    "DOT_ALPHA_HYDROGEN",
+    "SHOW_MAIN_PANEL",
+    "SHOW_CONCENTRATION_PROFILE_PANEL",
+    "SHOW_DIFFUSION_SPEED_PANEL",
+    "PROFILE_AXIS",
+    "PROFILE_X_RANGE",
+    "PROFILE_Y_RANGE",
+    "PROFILE_BIN_SIZE",
+    "PROFILE_SMOOTHING_WINDOW",
+    "PROFILE_GAUSSIAN_SIGMA",
+    "SHOW_PROFILE_HALF_TRANSITION",
+    "PROFILE_HALF_TRANSITION_COLOR",
+    "PROFILE_AREA_1_LABEL",
+    "PROFILE_AREA_2_LABEL",
+    "SHOW_PROFILE_SPOT_SHADE",
+    "PROFILE_SPOT_SHADE_COLOR",
+    "PROFILE_SPOT_SHADE_ALPHA",
+    "PROFILE_SPOT_SHADE_LABEL",
+    "PROFILE_SPOT_SHADE_LABEL_COLOR",
+    "SHOW_REGION_ANNOTATIONS",
+    "SHOW_LEFT_RIGHT_ANNOTATIONS",
+    "SHOW_LEFT_RIGHT_WITHOUT_SINK_SOURCE_ANNOTATIONS",
+    "SHOW_SOURCE_SINK_ANNOTATIONS",
+    "SHOW_SPOT_ANNOTATION",
+    "ANNOTATION_FONT_SIZE",
+    "ANNOTATION_COLOR",
+    "CUSTOM_RECT_REGIONS",
 ]
 
-DOT_SIZE_AVAILABLE = 8
-DOT_SIZE_HYDROGEN = 8
-DOT_ALPHA_AVAILABLE = 0.8
-DOT_ALPHA_HYDROGEN = 0.95
+
+def diagram_presets_dir():
+    return resources_dir() / "Diagram_Presets"
 
 
-# ---------------------- Panels ---------------------- #
-SHOW_MAIN_PANEL = True
-SHOW_CONCENTRATION_PROFILE_PANEL = True
-SHOW_DIFFUSION_SPEED_PANEL = False
-PROFILE_AXIS = "x"  # Options: "x" for column-wise profile, "y" for row-wise profile.
-PROFILE_X_RANGE = None  # Optional tuple: (x_start, x_end). Use None for full width.
-PROFILE_Y_RANGE = None  # Optional tuple: (y_start, y_end). Use None for full height.
-PROFILE_BIN_SIZE = 3  # Average every N rows/columns before plotting; 1 keeps the original resolution.
-PROFILE_SMOOTHING_WINDOW = 5  # Moving-average window applied after binning; 1 disables this smoothing.
-PROFILE_GAUSSIAN_SIGMA = 1.5  # Gaussian smoothing applied after binning; 0 disables this smoothing.
-SHOW_PROFILE_HALF_TRANSITION = True
-PROFILE_HALF_TRANSITION_COLOR = "#808080"
-PROFILE_AREA_1_LABEL = "Area 1"
-PROFILE_AREA_2_LABEL = "Area 2"
-SHOW_PROFILE_SPOT_SHADE = True
-PROFILE_SPOT_SHADE_COLOR = "#B0B0B0"
-PROFILE_SPOT_SHADE_ALPHA = 0.25
-PROFILE_SPOT_SHADE_LABEL = "Spot Region"
-PROFILE_SPOT_SHADE_LABEL_COLOR = "#606060"
+def load_diagram_preset(preset_file_stem):
+    preset_path = diagram_presets_dir() / f"{preset_file_stem}.py"
+    if not preset_path.exists():
+        available = sorted(path.stem for path in diagram_presets_dir().glob("*.py"))
+        raise FileNotFoundError(
+            f"Diagram preset not found: {preset_path}. Available presets: {', '.join(available)}"
+        )
+
+    spec = importlib.util.spec_from_file_location(f"brown_diagram_preset_{preset_file_stem}", preset_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"Could not load diagram preset: {preset_path}")
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    missing = [key for key in REQUIRED_DIAGRAM_PRESET_KEYS if not hasattr(module, key)]
+    if missing:
+        raise RuntimeError(f"Diagram preset {preset_path} is missing required settings: {', '.join(missing)}")
+
+    return {key: getattr(module, key) for key in REQUIRED_DIAGRAM_PRESET_KEYS}
 
 
-# ---------------------- Annotations ---------------------- #
-SHOW_REGION_ANNOTATIONS = True
-SHOW_LEFT_RIGHT_ANNOTATIONS = True
-SHOW_LEFT_RIGHT_WITHOUT_SINK_SOURCE_ANNOTATIONS = False
-SHOW_SOURCE_SINK_ANNOTATIONS = False
-SHOW_SPOT_ANNOTATION = True
-ANNOTATION_FONT_SIZE = 11
-ANNOTATION_COLOR = "#FFFFFF"
+def apply_diagram_preset(preset_file_stem):
+    preset = load_diagram_preset(preset_file_stem)
+    for key, value in preset.items():
+        globals()[key] = value
 
-# Optional custom rectangular annotations in matrix coordinates.
-CUSTOM_RECT_REGIONS = [
-    # {"name": "Custom Region", "x_start": 0, "x_end": 100, "y_start": 0, "y_end": 100},
-]
+
+apply_diagram_preset(DIAGRAM_PRESET)
 
 
 def resolve_h5_path():
