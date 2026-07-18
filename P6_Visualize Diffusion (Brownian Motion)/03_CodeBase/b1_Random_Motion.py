@@ -21,15 +21,29 @@ steps = cfg.steps
 max_radius_to_jump = cfg.max_radius_to_jump
 print(f"Simulation mode: {cfg.simulation_mode}")
 
-# Precompute random numbers
+# Initialize reproducible random state. None selects a fresh seed that is saved in the HDF5 metadata.
+configured_random_seed = getattr(cfg, "random_seed", None)
+if configured_random_seed is None:
+    random_seed_used = int(np.random.SeedSequence().generate_state(1, dtype=np.uint64)[0])
+else:
+    random_seed_used = int(configured_random_seed) & ((1 << 64) - 1)
+
+np.random.seed(random_seed_used & 0xFFFFFFFF)
 random_size = cfg.random_size
-random_values = np.random.rand(random_size).astype(np.float32)
 rand_index = 0
 if cfg.simulation_mode == "molecular_wiggle":
+    random_values = np.empty(0, dtype=np.float32)
+    molecular_rng_state = create_xoshiro256ss_state(random_seed_used)
     sigma = max_radius_to_jump / 3
     jump_probability_table = create_jump_probability_table(max_radius_to_jump, sigma)
+    random_algorithm_used = "xoshiro256**"
 else:
+    random_values = np.random.default_rng(random_seed_used).random(random_size, dtype=np.float32)
+    molecular_rng_state = np.empty(0, dtype=np.uint64)
     jump_probability_table = np.empty((0, 0), dtype=np.float32)
+    random_algorithm_used = "precomputed PCG64 float32 buffer"
+
+print(f"Random algorithm: {random_algorithm_used}, seed: {random_seed_used}")
 
 h5_filename = results_dir() / cfg.h5_filename
 saved_steps = np.arange(0, steps, cfg.save_every_steps, dtype=np.int64)
@@ -63,10 +77,11 @@ else:
         )
         print(f"Lattice style: {cfg.LATTICE_STYLE}, spacing used: {lattice_spacing_used}")
 
+height, width = h_spots_matrix.shape
 sink_source_thickness = cfg.SINK_SOURCE_THICKNESS if cfg.USE_SINK_SOURCE else 0
 region_map, num_regions = create_region_mapping(
-    x,
-    y,
+    width,
+    height,
     sink_source_thickness,
     cfg.TRAP_LAYER_WIDTH,
     cfg.num_subregions,
@@ -85,8 +100,8 @@ if cfg.USE_SINK_SOURCE:
         source_side=cfg.SOURCE_SIDE,
     )
 
-print("Adding Specials")
 if cfg.USE_SPOT:
+    print("Adding spot")
     h_spots_matrix = apply_spot(
         h_spots_matrix,
         diameter=cfg.SPOT_DIAMETER,
@@ -95,6 +110,7 @@ if cfg.USE_SPOT:
     )
 
 if cfg.USE_TRAP_LAYER:
+    print("Adding trap layer")
     h_spots_matrix = apply_layer(
         h_spots_matrix,
         width=cfg.TRAP_LAYER_WIDTH,
@@ -106,8 +122,17 @@ clean_loners(h_spots_matrix, max_radius_to_jump)
 if cfg.delete_old_h5 and h5_filename.exists():
     h5_filename.unlink()
 
-height, width = h_spots_matrix.shape
 active_y, active_x = create_active_site_arrays(h_spots_matrix)
+if cfg.simulation_mode == "molecular_wiggle":
+    winner_source = np.empty(height * width, dtype=np.int32)
+    winner_priority = np.empty(height * width, dtype=np.uint64)
+    claim_epoch = np.zeros(height * width, dtype=np.int32)
+    touched_targets = np.empty(len(active_y), dtype=np.int32)
+else:
+    winner_source = np.empty(0, dtype=np.int32)
+    winner_priority = np.empty(0, dtype=np.uint64)
+    claim_epoch = np.empty(0, dtype=np.int32)
+    touched_targets = np.empty(0, dtype=np.int32)
 use_forced_jump_precomputed_lane = cfg.simulation_mode == "forced_jump" and not cfg.USE_SINK_SOURCE
 if use_forced_jump_precomputed_lane:
     site_y, site_x, neighbor_site_ids, neighbor_counts, site_states, hydrogen_site_ids = create_forced_jump_lookup(
@@ -161,8 +186,14 @@ with h5py.File(h5_filename, "w") as hf:
             "forced_jump_average_target_count": average_forced_jump_target_count,
             "lattice_spacing_used": lattice_spacing_used,
             "simulation_mode_used": cfg.simulation_mode,
+            "random_algorithm_used": random_algorithm_used,
+            "random_seed_used": random_seed_used,
+            "initialization_random_algorithm_used": "NumPy legacy MT19937",
+            "molecular_seed_expander_used": "SplitMix64" if cfg.simulation_mode == "molecular_wiggle" else None,
+            "molecular_sampler_used": "20/20/24-bit rejection sampler v1" if cfg.simulation_mode == "molecular_wiggle" else None,
         },
     )
+    hf["meta"].attrs["random_seed_used_uint64"] = np.uint64(random_seed_used)
 
     dset = hf.create_dataset("snapshots", shape=(num_saved_frames, height, width), dtype=np.int8, chunks=True)
     hf.create_dataset("saved_steps", data=saved_steps, dtype=np.int64)
@@ -190,15 +221,13 @@ with h5py.File(h5_filename, "w") as hf:
 
     for step in tqdm(range(steps)):
         if cfg.simulation_mode == "molecular_wiggle":
-            h_spots_matrix, rand_index, disp_stats = simulate_brownian_motion(
+            h_spots_matrix, disp_stats = simulate_brownian_motion(
                 h_spots_matrix,
-                random_values,
+                molecular_rng_state,
                 active_y,
                 active_x,
-                x,
-                y,
-                rand_index,
-                random_size,
+                width,
+                height,
                 max_radius_to_jump,
                 cfg.base_movement_probability,
                 jump_probability_table,
@@ -207,6 +236,11 @@ with h5py.File(h5_filename, "w") as hf:
                 cfg.SOURCE_SIDE == "left",
                 region_map,
                 num_regions,
+                winner_source,
+                winner_priority,
+                claim_epoch,
+                touched_targets,
+                step + 1,
             )
         elif use_forced_jump_precomputed_lane:
             site_states, rand_index, disp_stats = simulate_brownian_motion_forced_jump_precomputed(
@@ -228,8 +262,8 @@ with h5py.File(h5_filename, "w") as hf:
                 random_values,
                 active_y,
                 active_x,
-                x,
-                y,
+                width,
+                height,
                 rand_index,
                 random_size,
                 max_radius_to_jump,
@@ -293,3 +327,5 @@ with h5py.File(h5_filename, "w") as hf:
     hf.attrs["max_radius_to_jump"] = max_radius_to_jump
     hf.attrs["matrix_shape"] = h_spots_matrix.shape
     hf.attrs["sink_source_thickness"] = sink_source_thickness
+    if cfg.simulation_mode == "molecular_wiggle":
+        hf["meta"].attrs["molecular_rng_state_after_run"] = molecular_rng_state

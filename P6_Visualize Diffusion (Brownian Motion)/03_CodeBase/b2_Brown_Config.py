@@ -60,7 +60,8 @@ base_movement_probability = 1.0
 
 # --------------------- Numerics stuff --------------------- #
 
-random_size = 10 ** 7  # Number of precomputed random numbers
+random_seed = None  # None selects a fresh seed per run; set an integer to reproduce a run exactly.
+random_size = 10 ** 7  # Forced-jump modes only: number of precomputed random values.
 max_ram_mb = 1000  # Adjustable memory target for HDF5 frame buffering
 save_every_steps = 25000
 delete_old_h5 = True

@@ -408,24 +408,92 @@ def create_matrix_from_site_states(matrix_shape, site_y, site_x, site_states):
 
 
 @njit
-def simulate_brownian_motion(matrix, random_values, active_y, active_x, nx, ny, rand_index, random_size, max_radius_to_jump,
+def unit_interval_index(random_value, size):
+    """Map a nominal [0, 1) value to a valid index, including rounded 1.0 inputs."""
+    index = int(random_value * size)
+    if index < 0:
+        return 0
+    if index >= size:
+        return size - 1
+    return index
+
+
+def create_xoshiro256ss_state(seed):
+    """Expand one integer seed into the nonzero 256-bit state used by xoshiro256**."""
+    mask = (1 << 64) - 1
+    value = int(seed) & mask
+    state = np.empty(4, dtype=np.uint64)
+
+    for index in range(4):
+        value = (value + 0x9E3779B97F4A7C15) & mask
+        mixed = value
+        mixed = ((mixed ^ (mixed >> 30)) * 0xBF58476D1CE4E5B9) & mask
+        mixed = ((mixed ^ (mixed >> 27)) * 0x94D049BB133111EB) & mask
+        state[index] = mixed ^ (mixed >> 31)
+
+    return state
+
+
+@njit
+def rotate_left_uint64(value, shift):
+    return (value << shift) | (value >> (64 - shift))
+
+
+@njit
+def xoshiro256ss_next(rng_state):
+    """Return the next xoshiro256** uint64 and advance rng_state in place."""
+    result = rotate_left_uint64(rng_state[1] * np.uint64(5), 7) * np.uint64(9)
+    shifted = rng_state[1] << 17
+
+    rng_state[2] ^= rng_state[0]
+    rng_state[3] ^= rng_state[1]
+    rng_state[1] ^= rng_state[2]
+    rng_state[0] ^= rng_state[3]
+    rng_state[2] ^= shifted
+    rng_state[3] = rotate_left_uint64(rng_state[3], 45)
+
+    return result
+
+
+@njit
+def sample_molecular_move(rng_state, move_range):
+    """Draw exact-uniform x/y move indices plus a 24-bit acceptance variate from one word."""
+    if move_range < 1 or move_range > (1 << 20):
+        raise ValueError("move_range must be between 1 and 2**20")
+
+    component_bits = np.uint64((1 << 20) - 1)
+    component_limit = ((1 << 20) // move_range) * move_range
+
+    while True:
+        random_word = xoshiro256ss_next(rng_state)
+        raw_x = random_word & component_bits
+        raw_y = (random_word >> 20) & component_bits
+
+        if raw_x < component_limit and raw_y < component_limit:
+            move_x_index = int(raw_x % move_range)
+            move_y_index = int(raw_y % move_range)
+            random_probability = float(random_word >> 40) * (1.0 / (1 << 24))
+            return move_x_index, move_y_index, random_probability
+
+
+@njit
+def simulate_brownian_motion(matrix, rng_state, active_y, active_x, nx, ny, max_radius_to_jump,
                              base_movement_probability, jump_probability_table, sink_source_thickness,
-                             use_sink_source, source_on_left, region_map, num_regions):
+                             use_sink_source, source_on_left, region_map, num_regions, winner_source,
+                             winner_priority, claim_epoch, touched_targets, epoch_id):
     new_matrix = np.copy(matrix)
     displacement_stats = np.zeros((num_regions, 3), dtype=np.float32)
+    touched_count = 0
+    move_range = 2 * max_radius_to_jump + 1
 
     for active_index in range(len(active_y)):
         j = active_y[active_index]
         i = active_x[active_index]
 
         if matrix[j, i] == 2:
-            rand_index = (rand_index + 3) % random_size
-            rand_val_x = random_values[rand_index - 3]
-            rand_val_y = random_values[rand_index - 2]
-            rand_prob = random_values[rand_index - 1]
-
-            move_x = int(rand_val_x * (2 * max_radius_to_jump + 1)) - max_radius_to_jump
-            move_y = int(rand_val_y * (2 * max_radius_to_jump + 1)) - max_radius_to_jump
+            move_x_index, move_y_index, rand_prob = sample_molecular_move(rng_state, move_range)
+            move_x = move_x_index - max_radius_to_jump
+            move_y = move_y_index - max_radius_to_jump
 
             new_j = j + move_y
             new_i = i + move_x
@@ -439,15 +507,37 @@ def simulate_brownian_motion(matrix, random_values, active_y, active_x, nx, ny, 
             jump_probability = jump_probability_table[move_y + max_radius_to_jump, move_x + max_radius_to_jump]
             adjusted_probability = base_movement_probability * jump_probability
 
-            if matrix[new_j, new_i] == 1 and new_matrix[new_j, new_i] == 1 and rand_prob < adjusted_probability:
-                region_id = region_map[i]
-                if region_id >= 0:
-                    displacement_stats[region_id, 0] += np.float32(abs(move_x))
-                    displacement_stats[region_id, 1] += np.float32(move_x ** 2)
-                    displacement_stats[region_id, 2] += np.float32(1)
+            if matrix[new_j, new_i] == 1 and rand_prob < adjusted_probability:
+                target_flat = new_j * nx + new_i
+                priority = xoshiro256ss_next(rng_state)
 
-                new_matrix[j, i] = 1
-                new_matrix[new_j, new_i] = 2
+                if claim_epoch[target_flat] != epoch_id:
+                    claim_epoch[target_flat] = epoch_id
+                    winner_source[target_flat] = j * nx + i
+                    winner_priority[target_flat] = priority
+                    touched_targets[touched_count] = target_flat
+                    touched_count += 1
+                elif priority > winner_priority[target_flat]:
+                    winner_source[target_flat] = j * nx + i
+                    winner_priority[target_flat] = priority
+
+    for touched_index in range(touched_count):
+        target_flat = touched_targets[touched_index]
+        source_flat = winner_source[target_flat]
+        source_j = source_flat // nx
+        source_i = source_flat % nx
+        target_j = target_flat // nx
+        target_i = target_flat % nx
+        move_x = target_i - source_i
+
+        region_id = region_map[source_i]
+        if region_id >= 0:
+            displacement_stats[region_id, 0] += np.float32(abs(move_x))
+            displacement_stats[region_id, 1] += np.float32(move_x ** 2)
+            displacement_stats[region_id, 2] += np.float32(1)
+
+        new_matrix[source_j, source_i] = 1
+        new_matrix[target_j, target_i] = 2
 
     if use_sink_source:
         if source_on_left:
@@ -469,7 +559,7 @@ def simulate_brownian_motion(matrix, random_values, active_y, active_x, nx, ny, 
                     if new_matrix[j, i] == 1:
                         new_matrix[j, i] = 2
 
-    return new_matrix, rand_index, displacement_stats
+    return new_matrix, displacement_stats
 
 
 @njit
@@ -494,12 +584,12 @@ def simulate_brownian_motion_forced_jump_precomputed(site_states, random_values,
         return new_site_states, rand_index, displacement_stats
 
     rand_index = (rand_index + 1) % random_size
-    order_offset = int(random_values[rand_index - 1] * hydrogen_count)
+    order_offset = unit_interval_index(random_values[rand_index - 1], hydrogen_count)
 
     order_stride = 1
     if hydrogen_count > 1:
         rand_index = (rand_index + 1) % random_size
-        order_stride = int(random_values[rand_index - 1] * (hydrogen_count - 1)) + 1
+        order_stride = unit_interval_index(random_values[rand_index - 1], hydrogen_count - 1) + 1
         while gcd_int(order_stride, hydrogen_count) != 1:
             order_stride += 1
             if order_stride >= hydrogen_count:
@@ -524,9 +614,7 @@ def simulate_brownian_motion_forced_jump_precomputed(site_states, random_values,
 
         if valid_count > 0:
             rand_index = (rand_index + 1) % random_size
-            chosen_index = int(random_values[rand_index - 1] * valid_count)
-            if chosen_index >= valid_count:
-                chosen_index = valid_count - 1
+            chosen_index = unit_interval_index(random_values[rand_index - 1], valid_count)
 
             target_site_id = valid_site_ids[chosen_index]
             new_j = site_y[target_site_id]
@@ -580,9 +668,7 @@ def simulate_brownian_motion_forced_jump(matrix, random_values, active_y, active
 
             if valid_count > 0:
                 rand_index = (rand_index + 1) % random_size
-                chosen_index = int(random_values[rand_index - 1] * valid_count)
-                if chosen_index >= valid_count:
-                    chosen_index = valid_count - 1
+                chosen_index = unit_interval_index(random_values[rand_index - 1], valid_count)
 
                 move_x = valid_move_x[chosen_index]
                 move_y = valid_move_y[chosen_index]
