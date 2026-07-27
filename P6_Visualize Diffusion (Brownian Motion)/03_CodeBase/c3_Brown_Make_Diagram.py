@@ -18,6 +18,7 @@ from matplotlib.colors import BoundaryNorm, ListedColormap
 
 with contextlib.redirect_stdout(io.StringIO()):
     from b3_Brown_Functions import (
+        create_spot_mask,
         in_results,
         load_brown_config_json,
         read_saved_steps,
@@ -27,7 +28,7 @@ with contextlib.redirect_stdout(io.StringIO()):
 
 
 # ---------------------- Input Snapshot ---------------------- #
-INPUT_H5_FILENAME = "random_motion_test.h5"  # Set to a sparse H5 name such as "random_motion_sparse.h5" when needed.
+INPUT_H5_FILENAME = "random_motion.h5"  # Set to a sparse H5 name such as "random_motion_sparse.h5" when needed.
 SNAPSHOT_INDEX = -1  # HDF5 saved-frame index to plot; -1 means the last saved frame, 0 means first saved frame.
 
 
@@ -268,20 +269,25 @@ def bin_profile(coordinates, total_spots, filled_spots):
     )
 
 
-def compute_profile(matrix):
+def compute_profile(matrix, metadata):
     rows, cols = matrix.shape
     x_start, x_end = clamp_range(PROFILE_X_RANGE, cols, "PROFILE_X_RANGE")
     y_start, y_end = clamp_range(PROFILE_Y_RANGE, rows, "PROFILE_Y_RANGE")
     cropped = matrix[y_start:y_end, x_start:x_end]
+    included = np.ones(matrix.shape, dtype=bool)
+    spot_mask = get_spot_mask(matrix.shape, metadata)
+    if spot_mask is not None:
+        included &= ~spot_mask
+    cropped_included = included[y_start:y_end, x_start:x_end]
 
     if PROFILE_AXIS == "x":
-        total_spots = np.sum(cropped > 0, axis=0)
-        filled_spots = np.sum(cropped == 2, axis=0)
+        total_spots = np.sum((cropped > 0) & cropped_included, axis=0)
+        filled_spots = np.sum((cropped == 2) & cropped_included, axis=0)
         coordinates = np.arange(x_start, x_end)
         axis_label = "Width"
     elif PROFILE_AXIS == "y":
-        total_spots = np.sum(cropped > 0, axis=1)
-        filled_spots = np.sum(cropped == 2, axis=1)
+        total_spots = np.sum((cropped > 0) & cropped_included, axis=1)
+        filled_spots = np.sum((cropped == 2) & cropped_included, axis=1)
         coordinates = np.arange(y_start, y_end)
         axis_label = "Height"
     else:
@@ -308,13 +314,6 @@ def rectangle_mask(shape, x_start, x_end, y_start=None, y_end=None):
     if x_end > x_start and y_end > y_start:
         mask[y_start:y_end, x_start:x_end] = True
     return mask
-
-
-def circle_mask(shape, center_x, center_y, diameter):
-    rows, cols = shape
-    yy, xx = np.ogrid[:rows, :cols]
-    radius = diameter // 2
-    return (xx - center_x) ** 2 + (yy - center_y) ** 2 < radius ** 2
 
 
 def metadata_bool(metadata, key):
@@ -345,6 +344,18 @@ def get_spot_settings(metadata):
         "center_y": metadata_int(metadata, "SPOT_CENTER_Y"),
         "diameter": metadata_int(metadata, "SPOT_DIAMETER"),
     }
+
+
+def get_spot_mask(matrix_shape, metadata):
+    spot_settings = get_spot_settings(metadata)
+    if spot_settings is None:
+        return None
+    return create_spot_mask(
+        matrix_shape,
+        center_x=spot_settings["center_x"],
+        center_y=spot_settings["center_y"],
+        diameter=spot_settings["diameter"],
+    )
 
 
 def max_solubility_for_x(metadata, x_position, matrix_width):
@@ -413,21 +424,6 @@ def build_annotation_regions(matrix_shape, metadata):
                     "xy": (sum(sink_x) / 2, rows * 0.65),
                 },
             ])
-    spot_settings = get_spot_settings(metadata)
-    if SHOW_SPOT_ANNOTATION and spot_settings is not None:
-        regions.append({
-            "name": "Spot Concentration",
-            "mask": circle_mask(
-                matrix_shape,
-                spot_settings["center_x"],
-                spot_settings["center_y"],
-                spot_settings["diameter"],
-            ),
-            "xy": (
-                spot_settings["center_x"],
-                spot_settings["center_y"] + spot_settings["diameter"] * 0.9,
-            ),
-        })
     for region in CUSTOM_RECT_REGIONS:
         regions.append({
             "name": region["name"],
@@ -441,6 +437,22 @@ def build_annotation_regions(matrix_shape, metadata):
             "xy": (
                 (region["x_start"] + region["x_end"]) / 2,
                 (region.get("y_start", 0) + region.get("y_end", rows)) / 2,
+            ),
+        })
+
+    spot_settings = get_spot_settings(metadata)
+    spot_mask = get_spot_mask(matrix_shape, metadata)
+    if spot_mask is not None:
+        for region in regions:
+            region["mask"] &= ~spot_mask
+
+    if SHOW_SPOT_ANNOTATION and spot_settings is not None:
+        regions.append({
+            "name": "Spot Concentration",
+            "mask": spot_mask,
+            "xy": (
+                spot_settings["center_x"],
+                spot_settings["center_y"] + spot_settings["diameter"] * 0.9,
             ),
         })
 
@@ -509,7 +521,7 @@ def draw_main_panel(axis, matrix, saved_step, metadata):
 
 
 def draw_concentration_profile(axis, matrix, metadata):
-    coordinates, profile, axis_label = compute_profile(matrix)
+    coordinates, profile, axis_label = compute_profile(matrix, metadata)
     rows, cols = matrix.shape
     axis.plot(coordinates, profile * 100, color=COLOR_CONCENTRATION_LINE)
     axis.set_title("Concentration Profile")

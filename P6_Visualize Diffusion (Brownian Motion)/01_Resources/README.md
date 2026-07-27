@@ -3,9 +3,107 @@
 This resource README describes the simulation choices available to P6 users. It is separate from the
 WeldCraft repository README.
 
-P6 provides four movement modes. They share the same matrix initialization, concentration settings,
-spot/layer topology, HDF5 snapshot format, and plotting tools. They differ in how molecular movement is
-executed.
+P6 provides three supported wiggle-derived movement modes plus the deprecated `forced_jump` legacy mode.
+They share the same matrix initialization, concentration settings, spot/layer topology, HDF5 snapshot
+format, and plotting tools. The supported modes differ in how molecular movement is executed.
+
+## Initial concentration and spot accounting
+
+`concentration_a` and `concentration_b` set the initial hydrogen percentage on the ordinary available
+sites in the left and right halves. When `USE_SPOT = True`, `concentration_spot` independently sets the
+initial percentage inside the circular spot:
+
+```python
+concentration_a = 50
+concentration_b = 50
+concentration_spot = 50  # Only used when USE_SPOT = True
+```
+
+Initialization first applies the bulk concentrations, source/sink state, and optional trap geometry.
+The spot is then created last and populated at `concentration_spot`. This gives the spot one unambiguous
+initial concentration even when it lies entirely in one half, crosses the midpoint, overlaps several
+reporting regions, or is clipped by a matrix edge.
+
+The same circular mask is used by initialization and the still-diagram calculations. The spot label
+uses only red and blue sites inside the circle. All other still-diagram concentration regions—including
+left/right, source/sink, and custom rectangular annotations—subtract whatever portion of the circle
+overlaps their own mask. The still-diagram concentration profile also excludes the circular pixels before
+calculating each column or row. Purple pixels and excluded spot pixels are never part of those
+denominators.
+
+Consequently:
+
+```text
+spot concentration = red inside spot / (red + blue inside spot)
+bulk region concentration = red in region outside spot / (red + blue in region outside spot)
+```
+
+No assumption is made about which half or region contains the spot; exclusion is performed by exact mask
+intersection.
+
+## Area characteristics, affinity, and mobility
+
+The user-facing physical model currently has four area characteristics:
+
+```text
+a           left base material
+b           right base material
+trap_layer  optional full-height central layer
+spot        optional circular area
+```
+
+These are configured area-wise, not pixel by pixel. Internally P6 compiles the geometry into a small
+characteristic-ID map so the movement kernels can perform fast lookups. A/B are assigned first, the trap
+layer overrides A/B when enabled, and the spot overrides every area it overlaps.
+
+```python
+AREA_CHARACTERISTICS = {
+    "a": {"affinity": 1.0, "mobility": 1.0},
+    "b": {"affinity": 1.0, "mobility": 1.0},
+    "spot": {"affinity": 1.0, "mobility": 1.0},
+    "trap_layer": {"affinity": 10.0, "mobility": 1.0},
+}
+```
+
+`affinity` controls equilibrium preference; only ratios matter. P6 uses a Metropolis-style directed
+acceptance rule. Moving toward an equal- or higher-affinity area keeps the ordinary distance-dependent
+rate. Moving toward a lower-affinity area reduces that rate by:
+
+```text
+target affinity / source affinity
+```
+
+With the default trap-layer affinity of 10:
+
+```text
+A -> trap       ordinary rate
+trap -> A       ordinary rate / 10
+A -> A          ordinary rate
+trap -> trap    ordinary rate
+```
+
+The trap can therefore retain H without slowing diffusion between points inside the trap.
+
+With single-occupancy exclusion, affinity controls the equilibrium occupancy odds:
+
+```text
+[trap occupancy / (1 - trap occupancy)]
+------------------------------------------------ = trap affinity / A affinity
+[A occupancy / (1 - A occupancy)]
+```
+
+At low occupancy this is approximately the ordinary occupancy ratio. At high occupancy, saturation
+matters. Physical H per matrix area additionally includes each area's available-site density.
+
+`mobility` is a separate symmetric kinetic scale from 0 to 1. An edge uses the geometric mean of its two
+areas' mobilities. Lower mobility slows both directions equally and therefore changes kinetics without
+changing the affinity ratio. `base_movement_probability` remains a global kinetic scale; changing it
+uniformly does not create an equilibrium preference.
+
+The same area transition table is used by `molecular_wiggle`, `random_sequential_wiggle`, and
+`event_driven_wiggle`. The event-driven scheduler uses uniformized steps so that its saved configurations
+retain the residence preference encoded by those directed rates while null waiting is skipped
+computationally.
 
 ## `molecular_wiggle`
 
@@ -51,31 +149,29 @@ When sink/source boundaries are active:
 
 ## `event_driven_wiggle`
 
-This is the rate-weighted proposal-event version of `random_sequential_wiggle`. It uses the same
+This is the uniformized, rate-weighted version of `random_sequential_wiggle`. It uses the same
 precomputed source-to-destination probabilities, compact site states, dynamic hydrogen list, exclusion
-check, and source/sink behavior. The difference is that it does not execute selections whose random
-wiggle would select no destination.
+check, and source/sink behavior.
 
 Each hydrogen carries its total destination-proposal probability. A dynamic partial-sum tree stores
-those weights. For every event, P6 selects a hydrogen in proportion to its total probability and then
-selects one of that hydrogen's destinations in proportion to the individual transition probabilities.
-Consequently, a hydrogen in a low-mobility or trap site appears less often than one in a high-mobility
-site. A selected destination can still be occupied, in which case the proposal event changes no state.
+those weights. P6 mathematically embeds them in a constant-rate sequence of uniformized opportunities.
+Most opportunities would change nothing; instead of executing them one by one, P6 samples their
+geometric waiting length and jumps directly to the next actual proposal. It then selects a hydrogen in
+proportion to its total directed rate and a destination in proportion to that transition's rate.
 
-One step in this mode means one weighted destination-proposal event. `steps = 20_000_000` therefore
-means 20 million proposal events, and `save_every_steps = 25000` saves every 25,000 events. These values
-are deliberately not comparable with the attempt-based steps of `random_sequential_wiggle` or the
-synchronous sweeps of `molecular_wiggle`.
+One step means one uniformized wiggle opportunity. Null opportunities are counted but skipped in one
+operation, so `steps` and `save_every_steps` describe the common uniformized clock rather than the number
+of actual proposals. HDF5 stores `proposal_event_count` separately. A proposed occupied destination
+still changes no state.
 
-This mode preserves the conditional proposal-event law but removes state-dependent waiting between
-events. It is intended for fast qualitative evolution. Event number is not a physical time axis and does
-not preserve quantitative residence times or diffusion rates. If physical rate data becomes available,
-use `random_sequential_wiggle` for its explicit attempt accounting, or extend the event-driven mode with
-a kinetic-time calculation.
+Uniformization preserves the affinity-dependent residence distribution that would be lost if only
+actual proposals were counted. The clock remains dimensionless until an attempt frequency or physical
+rate scale is supplied, but its relative waiting and equilibrium behavior are part of the model.
 
-## `forced_jump`
+## Deprecated: `forced_jump`
 
-This is a heuristic high-mobility mode. It selects from currently valid available destination sites
+This deprecated heuristic is retained only so old comparisons remain runnable. It does not use
+`AREA_CHARACTERISTICS`. It selects from currently valid available destination sites
 within the configured radius. If a valid destination exists, the hydrogen jumps without the Gaussian
 proposal/rejection behavior used by the wiggle-derived modes. Its compact precomputed lane is used when
 sink/source boundaries are disabled; a matrix-scanning safe lane is used when those boundaries can
@@ -110,8 +206,9 @@ This gives two distinct kinds of unchanged state:
 - No destination was proposed because the random value fell outside the transition CDF.
 - A destination was proposed, but it was occupied.
 
-`event_driven_wiggle` removes the first kind. It deliberately retains the second kind and therefore
-preserves hydrogen-exclusion behavior.
+`event_driven_wiggle` skips runs of the first kind computationally but retains their count through
+uniformization. It deliberately retains the second kind directly and therefore preserves
+hydrogen-exclusion behavior.
 
 ### Synchronous and sequential updates
 
@@ -137,7 +234,7 @@ are common, the difference becomes small. Conflicts and multiple consequential s
 higher-order events. In that low-probability or dilute limit, the synchronous and sequential models
 approach the same continuous-time behavior.
 
-### Why weighted event selection reproduces the proposal chain
+### Why weighted event selection plus uniformization preserves the process
 
 Let hydrogen number `i` have total destination-proposal probability `r_i`. With `N` hydrogen atoms,
 `random_sequential_wiggle` first selects an atom uniformly, so the probability that one ordinary attempt
@@ -163,7 +260,7 @@ Conditioned on the fact that a proposal occurred, the probability that atom `i` 
 That is exactly the weighted selection used by `event_driven_wiggle`. After selecting the hydrogen, the
 mode selects its destination in proportion to the individual transition probabilities. It is not
 inventing a different movement preference; it samples directly from the proposals that the sequential
-mode would eventually produce after its no-destination attempts are removed.
+mode would eventually produce.
 
 For example, consider two hydrogen atoms:
 
@@ -171,50 +268,38 @@ For example, consider two hydrogen atoms:
 - Atom B has a proposal probability of 2%.
 
 An ordinary uniform attempt produces an A proposal with probability 0.5%, a B proposal with probability
-1%, and no proposal with probability 98.5%. Among the proposals that remain, A is responsible for one
-third and B for two thirds. The event-driven mode selects them with exactly those weights.
+1%, and no proposal with probability 98.5%. Among actual proposals, A is responsible for one third and B
+for two thirds. The event-driven mode selects them with exactly those weights, while its sampled
+geometric waiting length accounts for the 98.5% null opportunities.
 
-### The missing piece is residence time
-
-Removing no-proposal attempts preserves the conditional proposal sequence, but it does not preserve how
-long the system waits in each configuration when event number is used as the horizontal axis.
+### Why the skipped waiting still matters
 
 Consider one hydrogen moving between two positions:
 
 - A slow or trap position has a 1% proposal probability.
 - A fast position has a 10% proposal probability.
 
-With attempt-based time, the hydrogen waits about 100 attempts in the trap and about 10 attempts in the
-fast position. An observation made at a random attempt therefore finds it in the trap roughly 91% of the
-time. If all waiting is removed, the event sequence can simply alternate between trap and fast position;
-frames saved after every event would show each position about half the time.
+With attempt-based time, the hydrogen waits about 100 opportunities in the trap and about 10 in the fast
+position. An observation made at a random opportunity therefore finds it in the trap roughly 91% of the
+time. If all waiting were removed, the event sequence could simply alternate and show each position
+about half the time.
 
-With many hydrogen atoms the effect is less extreme because other atoms continue to produce events while
-one atom is trapped. The trapped atom is still selected less frequently relative to the others. Even so,
-the total event rate can change as the population moves between microstructures, traps, sources, and
-sinks. Event count is therefore not generally proportional to physical time.
+The current implementation does not remove that waiting from the stochastic model. It draws the number
+of uniformized null opportunities in one operation, advances the step counter by that number, and then
+performs the weighted proposal. This keeps the 91/9 residence behavior without paying for each null
+opportunity individually.
 
-If every configuration had the same total proposal rate, removing the waiting would amount to a constant
-rescaling of time. When the total rate changes with the configuration, it is not a single constant
-rescaling.
+### How modes 3 and 4 relate in time
 
-### When modes 3 and 4 can describe the same time-dependent physics
-
-An event-driven method can retain physical kinetics without executing every rejected attempt. After each
-weighted proposal it can generate a waiting time from the current total rate. A geometric waiting time
-would reproduce the present discrete attempt model; an exponential waiting time would give the usual
-continuous-time kinetic Monte Carlo formulation.
-
-With that waiting-time calculation included, `random_sequential_wiggle` and the event-driven algorithm
-would be two mathematical implementations of essentially the same time-dependent stochastic process.
-The current `event_driven_wiggle` intentionally omits that clock because it is intended for rapid
-qualitative evolution.
+The geometric waiting used here is the discrete uniformized counterpart of kinetic Monte Carlo waiting.
+It gives `random_sequential_wiggle` and `event_driven_wiggle` compatible directed-rate equilibrium and
+relative residence behavior, while their step units remain different. An exponential waiting time would
+be the usual continuous-time kinetic Monte Carlo formulation.
 
 Neither a sweep nor an attempt has physical units until a material- and temperature-dependent attempt
 frequency or comparable rate information is supplied. `random_sequential_wiggle` retains the explicit
-attempt and population accounting needed for such a later calibration. The current event-driven mode
-retains the correct proposal-event ordering but would need kinetic waiting times before event number
-could be interpreted quantitatively.
+per-H attempt and population accounting needed for such a later calibration. The event-driven mode
+retains a dimensionless uniformized clock and separately records how many actual proposals occurred.
 
 ### Practical interpretation
 
@@ -222,8 +307,8 @@ could be interpreted quantitatively.
 |---|---|---|---|
 | `molecular_wiggle` | Explicit displacement proposals and synchronous conflicts | One global sweep | Direct synchronous reference model |
 | `random_sequential_wiggle` | Single-H probabilities, no-move attempts, and asynchronous state changes | One average opportunity per H | Attempt-based kinetics and possible later time calibration |
-| `event_driven_wiggle` | The weighted sequence of destination proposals | One proposal event | Fast qualitative evolution without a physical event clock |
-| `forced_jump` | Only currently valid destination geometry | One forced-jump sweep | Heuristic high-mobility comparison |
+| `event_driven_wiggle` | Directed rates, null residence, and weighted proposals | One uniformized opportunity | Fast area-aware kinetics with a dimensionless clock |
+| `forced_jump` (deprecated) | Only currently valid destination geometry | One forced-jump sweep | Legacy heuristic comparison only |
 
 Equal step counts should not be compared across these modes. Even equal numbers of successful moves are
 not always equal diffusion, because jump-distance distributions, update order, and waiting behavior can
@@ -241,35 +326,23 @@ are an example rather than a guaranteed speed.
 |---|---:|---:|---:|
 | `molecular_wiggle` | 0.4646 ms per sweep | 93.27 | 0.201 million |
 | `random_sequential_wiggle` | 0.0749 ms per sweep | 93.13 | 1.24 million |
-| `event_driven_wiggle` | 246 ns per event | 0.563 | 2.29 million |
-| `forced_jump` | 6.8654 ms per sweep | 19,848 | 2.89 million |
+| `event_driven_wiggle` | Rebenchmark required after uniformization | Depends on current total rate | Rebenchmark required |
+| `forced_jump` (deprecated) | 6.8654 ms per sweep | 19,848 | 2.89 million |
 
 `molecular_wiggle` and `random_sequential_wiggle` produced almost exactly the same number of successful
 moves per sweep in this test. The sequential implementation calculated them about 6.2 times faster;
 repeated benchmarks have placed this gain in the approximate range of 6 to 7 times.
 
-One event-driven proposal became a successful move about 56.3% of the time. Matching the approximately
-93 successful moves in one wiggle sweep therefore requires roughly:
+The 6.2-times molecular-versus-random-sequential comparison remains representative because those two
+step definitions did not change.
 
-```text
-93 / 0.563 = 165 event-driven events
-```
+An earlier raw-proposal version of `event_driven_wiggle` measured 246 ns per actual proposal, with 56.3%
+of proposals becoming successful moves. Those figures are useful as historical kernel measurements, but
+they are not a benchmark for the current uniformized step definition. The current cost and movement per
+step depend on the ratio between the population's total directed rate and the uniformization bound, so
+the area-aware implementation must be benchmarked separately.
 
-Those 165 events took about 0.0406 ms. At equal successful-movement count, the representative comparison
-was therefore:
-
-- `random_sequential_wiggle` was about 6.2 times faster than `molecular_wiggle`.
-- `event_driven_wiggle` was about 11.4 times faster than `molecular_wiggle`.
-- `event_driven_wiggle` was about 1.8 times faster than `random_sequential_wiggle`.
-
-This also explains why 20 million event-driven steps are not comparable with 20 million wiggle sweeps.
-At the measured rates, 20 million event-driven events produce about 11.3 million successful moves,
-equivalent to only about 121,000 wiggle sweeps. Matching the successful-movement count of 20 million
-wiggle sweeps would require approximately 3.3 billion event-driven events. The corresponding pure-kernel
-estimates on the benchmark computer were roughly 155 minutes for `molecular_wiggle`, 25 minutes for
-`random_sequential_wiggle`, and 13 to 14 minutes for an equal-movement event-driven run.
-
-The forced-jump numbers need a different interpretation. One forced sweep moved almost every hydrogen,
+The deprecated forced-jump numbers need a different interpretation. One forced sweep moved almost every hydrogen,
 which is why it produced nearly 20,000 relocations at once. Those relocations ignore Gaussian/no-move
 probabilities and have a different jump-distance distribution. Its high movement throughput is useful
 for a heuristic comparison, but matching only the number of moves does not make it physically equivalent

@@ -10,11 +10,11 @@ from fractions import Fraction
 
 # ---------------------- Main Simulation Settings ---------------------- #
 # See ../01_Resources/README.md for execution and step definitions.
-# Options: "molecular_wiggle", "random_sequential_wiggle", "event_driven_wiggle", "forced_jump"
+# Recommended: "molecular_wiggle", "random_sequential_wiggle", "event_driven_wiggle"
 # "molecular_wiggle": direct synchronous reference model; closest to explicit molecular wiggles, but slowest.
 # "random_sequential_wiggle": compact asynchronous wiggles with exact no-move probabilities and attempt accounting.
-# "event_driven_wiggle": rate-weighted proposal events with no no-proposal waiting; fast, qualitative pysical equivalence.
-# "forced_jump": heuristic sweeps that ignore Gaussian/no-move rates; fast, but not physically equivalent.
+# "event_driven_wiggle": uniformized rate selection; null waiting is preserved but skipped geometrically.
+# DEPRECATED "forced_jump": retained for old comparisons only; ignores the area-characteristic physics below.
 
 simulation_mode = "event_driven_wiggle"
 y = 650  # Height (y)
@@ -45,7 +45,7 @@ show_image_matrix_plot = True
 # ---------------------- Initial Concentration ---------------------- #
 concentration_a = 50
 concentration_b = 50
-
+concentration_spot = 50  # only used if USE_SPOT = True
 
 # ---------------------- Layer / Boundary Options ---------------------- #
 USE_SPOT = True
@@ -63,12 +63,30 @@ num_subregions = 1
 
 
 # ---------------------- Movement Probability ---------------------- #
+# Global probability scale for wiggle-derived movement. A uniform change affects kinetics, not equilibrium preference.
 base_movement_probability = 1.0
+
+# ---------------------- Area Characteristics ---------------------- #
+# Four user-facing area types are supported. A/B are the base halves, the optional trap layer overrides
+# A/B, and the optional spot overrides every area it overlaps.
+#
+# affinity:
+#   Relative equilibrium preference. Only ratios matter. A move toward a higher-affinity area keeps its
+#   ordinary rate; the reverse move is reduced by the affinity ratio.
+# mobility:
+#   Symmetric kinetic scale from 0 to 1. It changes movement speed without changing equilibrium preference.
+#   The mobility of a boundary transition is the geometric mean of the two areas' mobilities.
+AREA_CHARACTERISTICS = {
+    "a": {"affinity": 1.0, "mobility": 1.0},
+    "b": {"affinity": 1.0, "mobility": 1.0},
+    "spot": {"affinity": 1.0, "mobility": 1.0},
+    "trap_layer": {"affinity": 10.0, "mobility": 1.0},
+}
 
 # --------------------- Numerics stuff --------------------- #
 
 random_seed = None  # None selects a fresh seed per run; set an integer to reproduce a run exactly.
-random_size = 10 ** 7  # Forced-jump modes only: number of precomputed random values.
+random_size = 10 ** 7  # Deprecated forced_jump only: number of precomputed random values.
 max_ram_mb = 1000  # Adjustable memory target for HDF5 frame buffering
 save_every_steps = 250000
 delete_old_h5 = True

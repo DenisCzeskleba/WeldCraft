@@ -13,6 +13,13 @@ import scipy.ndimage as ndi
 from scipy.ndimage import gaussian_filter1d
 
 
+AREA_CHARACTERISTIC_NAMES = ("a", "b", "spot", "trap_layer")
+AREA_A = 0
+AREA_B = 1
+AREA_SPOT = 2
+AREA_TRAP_LAYER = 3
+
+
 def load_brown_config():
     return importlib.import_module("b2_Brown_Config")
 
@@ -269,42 +276,144 @@ def clean_loners(clean_me, max_radius_to_jump):
     return clean_me
 
 
-def apply_spot(matrix, diameter=50, center_x=None, center_y=None):
-    rows, cols = matrix.shape
-    mid_y = rows // 2 if center_y is None else center_y
-    mid_x = cols // 4 if center_x is None else center_x
+def create_spot_mask(matrix_shape, diameter=50, center_x=None, center_y=None):
+    """Return the exact circular geometry used to create and measure a spot."""
+    rows, cols = matrix_shape
+    center_y = rows // 2 if center_y is None else int(center_y)
+    center_x = cols // 4 if center_x is None else int(center_x)
+    diameter = int(diameter)
+    if diameter < 1:
+        raise ValueError("SPOT_DIAMETER must be 1 or greater")
+
     radius = diameter // 2
+    yy, xx = np.ogrid[:rows, :cols]
+    return (xx - center_x) ** 2 + (yy - center_y) ** 2 < radius ** 2
 
-    y_start = max(0, mid_y - radius)
-    y_end = min(rows, mid_y + radius)
-    x_start = max(0, mid_x - radius)
-    x_end = min(cols, mid_x + radius)
 
-    for y in range(y_start, y_end):
-        for x in range(x_start, x_end):
-            if (x - mid_x) ** 2 + (y - mid_y) ** 2 < radius ** 2:
-                matrix[y, x] = 1
+def create_trap_layer_bounds(matrix_width, width):
+    """Return centered, right-exclusive bounds containing exactly ``width`` columns."""
+    matrix_width = int(matrix_width)
+    width = int(width)
+    if width < 1 or width > matrix_width:
+        raise ValueError("TRAP_LAYER_WIDTH must be between 1 and the matrix width")
+
+    left_bound = matrix_width // 2 - width // 2
+    return left_bound, left_bound + width
+
+
+def create_trap_layer_mask(matrix_shape, width=10):
+    """Return the exact full-height geometry used for the trap layer."""
+    rows, cols = matrix_shape
+    left_bound, right_bound = create_trap_layer_bounds(cols, width)
+    mask = np.zeros((rows, cols), dtype=bool)
+    mask[:, left_bound:right_bound] = True
+    return mask
+
+
+def create_area_characteristic_map(matrix_shape, use_spot=False, spot_diameter=50,
+                                   spot_center_x=None, spot_center_y=None,
+                                   use_trap_layer=False, trap_layer_width=10):
+    """Compile the four user-facing areas into a fast per-pixel characteristic map."""
+    rows, cols = matrix_shape
+    characteristic_map = np.full((rows, cols), AREA_B, dtype=np.int8)
+    characteristic_map[:, :cols // 2] = AREA_A
+
+    if use_trap_layer:
+        trap_mask = create_trap_layer_mask(matrix_shape, width=trap_layer_width)
+        characteristic_map[trap_mask] = AREA_TRAP_LAYER
+
+    if use_spot:
+        spot_mask = create_spot_mask(
+            matrix_shape,
+            diameter=spot_diameter,
+            center_x=spot_center_x,
+            center_y=spot_center_y,
+        )
+        characteristic_map[spot_mask] = AREA_SPOT
+
+    return characteristic_map
+
+
+def create_area_transition_model(area_characteristics):
+    """Validate area properties and build directed Metropolis transition multipliers."""
+    affinities = np.empty(len(AREA_CHARACTERISTIC_NAMES), dtype=np.float32)
+    mobilities = np.empty(len(AREA_CHARACTERISTIC_NAMES), dtype=np.float32)
+
+    for area_id, area_name in enumerate(AREA_CHARACTERISTIC_NAMES):
+        if area_name not in area_characteristics:
+            raise ValueError(f"AREA_CHARACTERISTICS is missing '{area_name}'")
+        settings = area_characteristics[area_name]
+        if not isinstance(settings, dict):
+            raise ValueError(f"AREA_CHARACTERISTICS['{area_name}'] must be a dictionary")
+
+        affinity = float(settings.get("affinity", np.nan))
+        mobility = float(settings.get("mobility", np.nan))
+        if not np.isfinite(affinity) or affinity <= 0:
+            raise ValueError(f"Affinity for area '{area_name}' must be finite and greater than 0")
+        if not np.isfinite(mobility) or mobility < 0 or mobility > 1:
+            raise ValueError(f"Mobility for area '{area_name}' must be between 0 and 1")
+
+        affinities[area_id] = affinity
+        mobilities[area_id] = mobility
+
+    transition_multipliers = np.empty(
+        (len(AREA_CHARACTERISTIC_NAMES), len(AREA_CHARACTERISTIC_NAMES)),
+        dtype=np.float32,
+    )
+    for source_id in range(len(AREA_CHARACTERISTIC_NAMES)):
+        for target_id in range(len(AREA_CHARACTERISTIC_NAMES)):
+            symmetric_mobility = np.sqrt(
+                float(mobilities[source_id]) * float(mobilities[target_id])
+            )
+            affinity_acceptance = min(
+                1.0,
+                float(affinities[target_id]) / float(affinities[source_id]),
+            )
+            transition_multipliers[source_id, target_id] = (
+                symmetric_mobility * affinity_acceptance
+            )
+
+    return affinities, mobilities, transition_multipliers
+
+
+def apply_spot(matrix, diameter=50, center_x=None, center_y=None, concentration=0):
+    """Create a circular site region and assign its independent initial concentration."""
+    concentration = float(concentration)
+    if concentration < 0 or concentration > 100:
+        raise ValueError("concentration_spot must be between 0 and 100")
+
+    spot_mask = create_spot_mask(
+        matrix.shape,
+        diameter=diameter,
+        center_x=center_x,
+        center_y=center_y,
+    )
+    spot_indices = np.flatnonzero(spot_mask)
+    matrix.flat[spot_indices] = 1
+
+    hydrogen_count = int(concentration / 100 * len(spot_indices))
+    if hydrogen_count == len(spot_indices):
+        matrix.flat[spot_indices] = 2
+    elif hydrogen_count > 0:
+        hydrogen_indices = np.random.choice(
+            spot_indices,
+            hydrogen_count,
+            replace=False,
+        )
+        matrix.flat[hydrogen_indices] = 2
 
     return matrix
 
 
 def apply_layer(matrix, width=10):
-    rows, cols = matrix.shape
-    mid_x = cols // 2
-
-    left_bound = max(0, mid_x - width // 2)
-    right_bound = min(cols, mid_x + width // 2)
-
-    matrix[:, left_bound:right_bound] = 1
+    matrix[create_trap_layer_mask(matrix.shape, width=width)] = 1
 
     return matrix
 
 
 def create_region_mapping(nx, ny, sink_source_thickness, layer_width, num_subregions=3):
-    mid_x = nx // 2
     left_start = sink_source_thickness
-    left_end = mid_x - (layer_width // 2) - 1
-    right_start = mid_x + (layer_width // 2)
+    left_end, right_start = create_trap_layer_bounds(nx, layer_width)
     right_end = nx - sink_source_thickness
 
     left_sub_width = (left_end - left_start) // num_subregions
@@ -343,6 +452,19 @@ def create_jump_probability_table(max_radius_to_jump, sigma):
             )
 
     return jump_probability_table
+
+
+def create_wiggle_uniformization_bound(max_radius_to_jump, jump_probability_table):
+    """Return the per-H baseline rate bound before global, mobility, or affinity scaling."""
+    move_range = 2 * max_radius_to_jump + 1
+    if jump_probability_table.shape != (move_range, move_range):
+        raise ValueError("jump_probability_table shape does not match max_radius_to_jump")
+    proposal_count = move_range ** 2
+    center_probability = jump_probability_table[max_radius_to_jump, max_radius_to_jump]
+    return float(
+        (np.sum(jump_probability_table, dtype=np.float64) - center_probability)
+        / proposal_count
+    )
 
 
 def create_active_site_arrays(matrix):
@@ -438,7 +560,8 @@ def count_random_sequential_targets(site_y, site_x, site_lookup, max_radius_to_j
 def fill_random_sequential_transitions(site_y, site_x, site_lookup, transition_offsets,
                                        transition_targets, transition_cdf, transition_totals,
                                        max_radius_to_jump, base_movement_probability,
-                                       jump_probability_table):
+                                       jump_probability_table, site_characteristics,
+                                       characteristic_transition_multipliers):
     if base_movement_probability <= 0:
         return
 
@@ -467,6 +590,10 @@ def fill_random_sequential_transitions(site_y, site_x, site_lookup, transition_o
                     move_y + max_radius_to_jump,
                     move_x + max_radius_to_jump,
                 ]
+                acceptance_probability *= characteristic_transition_multipliers[
+                    site_characteristics[site_id],
+                    site_characteristics[target_site_id],
+                ]
                 if acceptance_probability > 1.0:
                     acceptance_probability = 1.0
 
@@ -480,11 +607,24 @@ def fill_random_sequential_transitions(site_y, site_x, site_lookup, transition_o
 
 def create_random_sequential_wiggle_lookup(matrix, max_radius_to_jump, base_movement_probability,
                                            jump_probability_table, sink_source_thickness=0,
-                                           use_sink_source=False, source_on_left=True):
+                                           use_sink_source=False, source_on_left=True,
+                                           characteristic_map=None,
+                                           characteristic_transition_multipliers=None):
     """Build compact site states and the exact marginal wiggle kernel for sequential updates."""
     site_y, site_x = create_active_site_arrays(matrix)
     site_lookup = np.full(matrix.shape, -1, dtype=np.int32)
     site_lookup[site_y, site_x] = np.arange(len(site_y), dtype=np.int32)
+    if characteristic_map is None:
+        characteristic_map = np.zeros(matrix.shape, dtype=np.int8)
+    if characteristic_map.shape != matrix.shape:
+        raise ValueError("characteristic_map must have the same shape as matrix")
+    if characteristic_transition_multipliers is None:
+        characteristic_transition_multipliers = np.ones((1, 1), dtype=np.float32)
+    site_characteristics = characteristic_map[site_y, site_x].astype(np.int8)
+    if len(site_characteristics):
+        largest_characteristic = int(np.max(site_characteristics))
+        if largest_characteristic >= characteristic_transition_multipliers.shape[0]:
+            raise ValueError("characteristic_transition_multipliers does not cover characteristic_map")
 
     target_counts = count_random_sequential_targets(
         site_y,
@@ -512,6 +652,8 @@ def create_random_sequential_wiggle_lookup(matrix, max_radius_to_jump, base_move
         max_radius_to_jump,
         base_movement_probability,
         jump_probability_table,
+        site_characteristics,
+        characteristic_transition_multipliers,
     )
 
     site_states = matrix[site_y, site_x].astype(np.int8)
@@ -769,12 +911,15 @@ def simulate_event_driven_wiggle_events(site_states, hydrogen_site_ids, hydrogen
                                         total_transition_weight, transition_offsets,
                                         transition_targets, transition_cdf, transition_totals,
                                         source_site_flags, sink_site_flags, site_x, region_map,
-                                        num_regions, rng_state, num_events):
-    """Run weighted destination-proposal events without no-proposal self-loops."""
+                                        num_regions, rng_state, uniformization_site_bound,
+                                        num_uniformized_steps):
+    """Skip uniformized null waiting while preserving the directed-rate equilibrium."""
     displacement_stats = np.zeros((num_regions, 3), dtype=np.float64)
-    completed_events = 0
+    completed_steps = 0
+    proposal_event_count = 0
     random_mask = np.uint64((1 << 32) - 1)
     unit_scale = 1.0 / (1 << 32)
+    unit_scale_53 = 1.0 / (1 << 53)
 
     search_bit = 1
     capacity = len(hydrogen_transition_totals)
@@ -784,9 +929,37 @@ def simulate_event_driven_wiggle_events(site_states, hydrogen_site_ids, hydrogen
     # Re-synchronize the scalar total with the tree at every saved-frame batch.
     total_transition_weight = fenwick_prefix_sum(fenwick_tree, hydrogen_count)
 
-    for _ in range(num_events):
-        if hydrogen_count == 0 or total_transition_weight <= 0.0:
+    while completed_steps < num_uniformized_steps:
+        if (
+            hydrogen_count == 0
+            or total_transition_weight <= 0.0
+            or uniformization_site_bound <= 0.0
+        ):
+            completed_steps = num_uniformized_steps
             break
+
+        uniformization_weight = hydrogen_count * uniformization_site_bound
+        proposal_probability = total_transition_weight / uniformization_weight
+        if proposal_probability >= 1.0:
+            waiting_steps = 1
+        else:
+            waiting_word = xoshiro256ss_next(rng_state)
+            waiting_random = (float(waiting_word >> 11) + 0.5) * unit_scale_53
+            waiting_steps_float = (
+                np.floor(
+                    np.log1p(-waiting_random)
+                    / np.log1p(-proposal_probability)
+                )
+                + 1.0
+            )
+            remaining_steps = num_uniformized_steps - completed_steps
+            if waiting_steps_float > remaining_steps:
+                completed_steps = num_uniformized_steps
+                break
+            waiting_steps = int(waiting_steps_float)
+
+        completed_steps += waiting_steps
+        proposal_event_count += 1
 
         random_word = xoshiro256ss_next(rng_state)
         hydrogen_random_weight = (
@@ -816,7 +989,6 @@ def simulate_event_driven_wiggle_events(site_states, hydrogen_site_ids, hydrogen
         if transition_index >= transition_end:
             continue
 
-        completed_events += 1
         target_site_id = transition_targets[transition_index]
         if site_states[target_site_id] != 1:
             continue
@@ -885,7 +1057,8 @@ def simulate_event_driven_wiggle_events(site_states, hydrogen_site_ids, hydrogen
         hydrogen_count,
         total_transition_weight,
         displacement_stats,
-        completed_events,
+        completed_steps,
+        proposal_event_count,
     )
 
 
@@ -912,9 +1085,10 @@ def sample_molecular_move(rng_state, move_range):
 
 @njit
 def simulate_brownian_motion(matrix, rng_state, active_y, active_x, nx, ny, max_radius_to_jump,
-                             base_movement_probability, jump_probability_table, sink_source_thickness,
-                             use_sink_source, source_on_left, region_map, num_regions, winner_source,
-                             winner_priority, claim_epoch, touched_targets, epoch_id):
+                             base_movement_probability, jump_probability_table, characteristic_map,
+                             characteristic_transition_multipliers, sink_source_thickness,
+                             use_sink_source, source_on_left, region_map, num_regions,
+                             winner_source, winner_priority, claim_epoch, touched_targets, epoch_id):
     new_matrix = np.copy(matrix)
     displacement_stats = np.zeros((num_regions, 3), dtype=np.float32)
     touched_count = 0
@@ -940,6 +1114,10 @@ def simulate_brownian_motion(matrix, rng_state, active_y, active_x, nx, ny, max_
 
             jump_probability = jump_probability_table[move_y + max_radius_to_jump, move_x + max_radius_to_jump]
             adjusted_probability = base_movement_probability * jump_probability
+            adjusted_probability *= characteristic_transition_multipliers[
+                characteristic_map[j, i],
+                characteristic_map[new_j, new_i],
+            ]
 
             if matrix[new_j, new_i] == 1 and rand_prob < adjusted_probability:
                 target_flat = new_j * nx + new_i
