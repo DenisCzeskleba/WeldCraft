@@ -6,14 +6,16 @@ from b3_Brown_Functions import *
 
 
 cfg = load_brown_config()
-wiggle_modes = ("molecular_wiggle", "random_sequential_wiggle")
+compact_wiggle_modes = ("random_sequential_wiggle", "event_driven_wiggle")
+wiggle_modes = ("molecular_wiggle", *compact_wiggle_modes)
 if cfg.SOURCE_SIDE not in ("left", "right"):
     raise ValueError("SOURCE_SIDE must be 'left' or 'right'")
 if cfg.MATRIX_SOURCE not in ("random", "image", "lattice"):
     raise ValueError("MATRIX_SOURCE must be 'random', 'image', or 'lattice'")
 if cfg.simulation_mode not in (*wiggle_modes, "forced_jump"):
     raise ValueError(
-        "simulation_mode must be 'molecular_wiggle', 'random_sequential_wiggle', or 'forced_jump'"
+        "simulation_mode must be 'molecular_wiggle', 'random_sequential_wiggle', "
+        "'event_driven_wiggle', or 'forced_jump'"
     )
 
 
@@ -138,23 +140,29 @@ else:
     touched_targets = np.empty(0, dtype=np.int32)
 use_forced_jump_precomputed_lane = cfg.simulation_mode == "forced_jump" and not cfg.USE_SINK_SOURCE
 use_random_sequential_lane = cfg.simulation_mode == "random_sequential_wiggle"
-random_sequential_hydrogen_count = 0
-random_sequential_transition_count = 0
-random_sequential_lookup_mb = 0.0
+use_event_driven_lane = cfg.simulation_mode == "event_driven_wiggle"
+use_compact_wiggle_lane = cfg.simulation_mode in compact_wiggle_modes
+compact_hydrogen_count = 0
+compact_transition_count = 0
+compact_lookup_mb = 0.0
 transition_offsets = np.empty(0, dtype=np.int64)
 transition_targets = np.empty(0, dtype=np.int32)
 transition_cdf = np.empty(0, dtype=np.float32)
 transition_totals = np.empty(0, dtype=np.float32)
+hydrogen_transition_totals = np.empty(0, dtype=np.float32)
+hydrogen_probability_tree = np.empty(0, dtype=np.float64)
+total_transition_weight = 0.0
 source_site_flags = np.empty(0, dtype=np.uint8)
 sink_site_flags = np.empty(0, dtype=np.uint8)
 
-if use_random_sequential_lane:
+if use_compact_wiggle_lane:
     (
         site_y,
         site_x,
         site_states,
         hydrogen_site_ids,
-        random_sequential_hydrogen_count,
+        hydrogen_transition_totals,
+        compact_hydrogen_count,
         transition_offsets,
         transition_targets,
         transition_cdf,
@@ -172,19 +180,28 @@ if use_random_sequential_lane:
     )
     neighbor_site_ids = np.empty((0, 4), dtype=np.int32)
     neighbor_counts = np.empty(0, dtype=np.int32)
-    random_sequential_transition_count = len(transition_targets)
-    random_sequential_lookup_mb = sum(
+    if use_event_driven_lane:
+        hydrogen_probability_tree, total_transition_weight = (
+            create_hydrogen_probability_fenwick_tree(
+                hydrogen_transition_totals,
+                compact_hydrogen_count,
+            )
+        )
+    compact_transition_count = len(transition_targets)
+    compact_lookup_mb = sum(
         array.nbytes for array in (
             site_y,
             site_x,
             site_states,
             hydrogen_site_ids,
+            hydrogen_transition_totals,
             transition_offsets,
             transition_targets,
             transition_cdf,
             transition_totals,
             source_site_flags,
             sink_site_flags,
+            hydrogen_probability_tree,
         )
     ) / (1024 ** 2)
     average_forced_jump_target_count = None
@@ -209,11 +226,18 @@ print(f"Matrix size: {height}x{width}, Snapshot size: {snapshot_size_mb:.2f} MB"
 if cfg.simulation_mode == "molecular_wiggle":
     print(f"Active sites scanned per step: {len(active_y)} of {height * width}")
 elif use_random_sequential_lane:
-    average_targets = random_sequential_transition_count / max(len(site_y), 1)
+    average_targets = compact_transition_count / max(len(site_y), 1)
     print(
         "Random sequential compact lane: "
-        f"{random_sequential_hydrogen_count} hydrogen atoms, {len(site_y)} possible sites, "
-        f"{average_targets:.1f} average targets/site, {random_sequential_lookup_mb:.1f} MB lookup"
+        f"{compact_hydrogen_count} hydrogen atoms, {len(site_y)} possible sites, "
+        f"{average_targets:.1f} average targets/site, {compact_lookup_mb:.1f} MB lookup"
+    )
+elif use_event_driven_lane:
+    average_targets = compact_transition_count / max(len(site_y), 1)
+    print(
+        "Event-driven compact lane: "
+        f"{compact_hydrogen_count} hydrogen atoms, {len(site_y)} possible sites, "
+        f"{average_targets:.1f} average targets/site, {compact_lookup_mb:.1f} MB lookup"
     )
 if cfg.simulation_mode == "forced_jump":
     if use_forced_jump_precomputed_lane:
@@ -224,7 +248,7 @@ if cfg.simulation_mode == "forced_jump":
         )
     else:
         print("Forced jump safe lane: scanning active sites because USE_SINK_SOURCE changes hydrogen count")
-if not use_random_sequential_lane:
+if not use_compact_wiggle_lane:
     print(f"Using batch size of {optimal_batch_size} frames (max {cfg.max_ram_mb}MB RAM usage)")
 print(f"Initial matrix unique values: {np.unique(h_spots_matrix)}")
 
@@ -232,6 +256,66 @@ print("Region Map Summary:")
 unique_regions, counts = np.unique(region_map, return_counts=True)
 for region, count in zip(unique_regions, counts):
     print(f"Region {region}: {count} columns assigned")
+
+if use_random_sequential_lane:
+    step_definition = "hydrogen_count_at_step_start random selections with replacement"
+    molecular_sampler_used = "precomputed exact marginal CDF with 32-bit selection"
+elif use_event_driven_lane:
+    step_definition = "one weighted destination-proposal event"
+    molecular_sampler_used = (
+        "Fenwick rate-weighted proposal selection with conditional marginal CDF"
+    )
+elif cfg.simulation_mode == "molecular_wiggle":
+    step_definition = "one synchronous global molecular update sweep"
+    molecular_sampler_used = "20/20/24-bit rejection sampler v1"
+else:
+    step_definition = "one forced-jump update sweep"
+    molecular_sampler_used = None
+
+
+def run_compact_wiggle_work(hydrogen_count, transition_weight, work_count):
+    if use_random_sequential_lane:
+        hydrogen_count, displacement_stats, completed_work = (
+            simulate_random_sequential_wiggle_steps(
+                site_states,
+                hydrogen_site_ids,
+                hydrogen_count,
+                hydrogen_transition_totals,
+                transition_offsets,
+                transition_targets,
+                transition_cdf,
+                transition_totals,
+                source_site_flags,
+                sink_site_flags,
+                site_x,
+                region_map,
+                num_regions,
+                molecular_rng_state,
+                work_count,
+            )
+        )
+        return hydrogen_count, transition_weight, displacement_stats, completed_work
+
+    return simulate_event_driven_wiggle_events(
+        site_states,
+        hydrogen_site_ids,
+        hydrogen_count,
+        hydrogen_transition_totals,
+        hydrogen_probability_tree,
+        transition_weight,
+        transition_offsets,
+        transition_targets,
+        transition_cdf,
+        transition_totals,
+        source_site_flags,
+        sink_site_flags,
+        site_x,
+        region_map,
+        num_regions,
+        molecular_rng_state,
+        work_count,
+    )
+
 
 with h5py.File(h5_filename, "w") as hf:
     write_brown_h5_metadata(
@@ -245,31 +329,24 @@ with h5py.File(h5_filename, "w") as hf:
             "num_regions": num_regions,
             "active_site_count": len(active_y),
             "hydrogen_site_count": (
-                random_sequential_hydrogen_count
-                if use_random_sequential_lane
+                compact_hydrogen_count
+                if use_compact_wiggle_lane
                 else len(hydrogen_site_ids) if use_forced_jump_precomputed_lane else None
             ),
             "forced_jump_precomputed_lane_used": use_forced_jump_precomputed_lane,
             "forced_jump_average_target_count": average_forced_jump_target_count,
             "random_sequential_compact_lane_used": use_random_sequential_lane,
-            "random_sequential_transition_count": random_sequential_transition_count,
-            "random_sequential_lookup_mb": random_sequential_lookup_mb,
-            "step_definition": (
-                "hydrogen_count_at_step_start random selections with replacement"
-                if use_random_sequential_lane
-                else "one global molecular update sweep"
-            ),
+            "event_driven_compact_lane_used": use_event_driven_lane,
+            "compact_wiggle_transition_count": compact_transition_count,
+            "compact_wiggle_lookup_mb": compact_lookup_mb,
+            "step_definition": step_definition,
             "lattice_spacing_used": lattice_spacing_used,
             "simulation_mode_used": cfg.simulation_mode,
             "random_algorithm_used": random_algorithm_used,
             "random_seed_used": random_seed_used,
             "initialization_random_algorithm_used": "NumPy legacy MT19937",
             "molecular_seed_expander_used": "SplitMix64" if cfg.simulation_mode in wiggle_modes else None,
-            "molecular_sampler_used": (
-                "precomputed exact marginal CDF with 32-bit selection"
-                if use_random_sequential_lane
-                else "20/20/24-bit rejection sampler v1" if cfg.simulation_mode == "molecular_wiggle" else None
-            ),
+            "molecular_sampler_used": molecular_sampler_used,
         },
     )
     hf["meta"].attrs["random_seed_used_uint64"] = np.uint64(random_seed_used)
@@ -291,45 +368,49 @@ with h5py.File(h5_filename, "w") as hf:
             dtype=np.float32,
         )
 
-    if use_random_sequential_lane:
+    if use_compact_wiggle_lane:
         hydrogen_count_dset = hf.create_dataset(
             "hydrogen_count",
             shape=(num_saved_frames,),
             dtype=np.int64,
         )
-        wiggle_attempt_count_dset = hf.create_dataset(
-            "wiggle_attempt_count",
+        progress_count_name = (
+            "wiggle_attempt_count"
+            if use_random_sequential_lane
+            else "proposal_event_count"
+        )
+        progress_count_dset = hf.create_dataset(
+            progress_count_name,
             shape=(num_saved_frames,),
             dtype=np.int64,
         )
         previous_saved_step = 0
-        random_sequential_attempt_count = 0
+        compact_progress_count = 0
+        progress_description = (
+            "Random sequential wiggle steps"
+            if use_random_sequential_lane
+            else "Event-driven wiggle proposals"
+        )
 
-        with tqdm(total=steps, desc="Random sequential wiggle steps") as progress:
+        with tqdm(total=steps, desc=progress_description) as progress:
             for frame_index, saved_step in enumerate(saved_steps):
                 steps_to_run = 0 if frame_index == 0 else int(saved_step - previous_saved_step)
                 if steps_to_run > 0:
                     (
-                        random_sequential_hydrogen_count,
+                        compact_hydrogen_count,
+                        total_transition_weight,
                         disp_stats,
-                        completed_attempts,
-                    ) = simulate_random_sequential_wiggle_steps(
-                        site_states,
-                        hydrogen_site_ids,
-                        random_sequential_hydrogen_count,
-                        transition_offsets,
-                        transition_targets,
-                        transition_cdf,
-                        transition_totals,
-                        source_site_flags,
-                        sink_site_flags,
-                        site_x,
-                        region_map,
-                        num_regions,
-                        molecular_rng_state,
+                        completed_work,
+                    ) = run_compact_wiggle_work(
+                        compact_hydrogen_count,
+                        total_transition_weight,
                         steps_to_run,
                     )
-                    random_sequential_attempt_count += completed_attempts
+                    if use_event_driven_lane and completed_work != steps_to_run:
+                        raise RuntimeError(
+                            "event_driven_wiggle has no positive-probability proposal events left"
+                        )
+                    compact_progress_count += completed_work
                     progress.update(steps_to_run)
                 else:
                     disp_stats = np.zeros((num_regions, 3), dtype=np.float64)
@@ -340,8 +421,8 @@ with h5py.File(h5_filename, "w") as hf:
                     site_x,
                     site_states,
                 )
-                hydrogen_count_dset[frame_index] = random_sequential_hydrogen_count
-                wiggle_attempt_count_dset[frame_index] = random_sequential_attempt_count
+                hydrogen_count_dset[frame_index] = compact_hydrogen_count
+                progress_count_dset[frame_index] = compact_progress_count
 
                 for i in range(num_regions):
                     movement_count = max(disp_stats[i, 2], 1)
@@ -357,26 +438,20 @@ with h5py.File(h5_filename, "w") as hf:
             remaining_steps = steps - previous_saved_step
             if remaining_steps > 0:
                 (
-                    random_sequential_hydrogen_count,
+                    compact_hydrogen_count,
+                    total_transition_weight,
                     _,
-                    completed_attempts,
-                ) = simulate_random_sequential_wiggle_steps(
-                    site_states,
-                    hydrogen_site_ids,
-                    random_sequential_hydrogen_count,
-                    transition_offsets,
-                    transition_targets,
-                    transition_cdf,
-                    transition_totals,
-                    source_site_flags,
-                    sink_site_flags,
-                    site_x,
-                    region_map,
-                    num_regions,
-                    molecular_rng_state,
+                    completed_work,
+                ) = run_compact_wiggle_work(
+                    compact_hydrogen_count,
+                    total_transition_weight,
                     remaining_steps,
                 )
-                random_sequential_attempt_count += completed_attempts
+                if use_event_driven_lane and completed_work != remaining_steps:
+                    raise RuntimeError(
+                        "event_driven_wiggle has no positive-probability proposal events left"
+                    )
+                compact_progress_count += completed_work
                 progress.update(remaining_steps)
     else:
         save_counter = 0
@@ -496,6 +571,10 @@ with h5py.File(h5_filename, "w") as hf:
     hf.attrs["sink_source_thickness"] = sink_source_thickness
     if cfg.simulation_mode in wiggle_modes:
         hf["meta"].attrs["molecular_rng_state_after_run"] = molecular_rng_state
-    if use_random_sequential_lane:
-        hf["meta"].attrs["hydrogen_count_after_run"] = random_sequential_hydrogen_count
-        hf["meta"].attrs["wiggle_attempt_count_after_run"] = random_sequential_attempt_count
+    if use_compact_wiggle_lane:
+        hf["meta"].attrs["hydrogen_count_after_run"] = compact_hydrogen_count
+        if use_random_sequential_lane:
+            hf["meta"].attrs["wiggle_attempt_count_after_run"] = compact_progress_count
+        else:
+            hf["meta"].attrs["proposal_event_count_after_run"] = compact_progress_count
+            hf["meta"].attrs["total_transition_weight_after_run"] = total_transition_weight

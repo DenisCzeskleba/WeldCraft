@@ -10,12 +10,17 @@ from fractions import Fraction
 
 # ---------------------- Main Simulation Settings ---------------------- #
 # See ../01_Resources/README.md for execution and step definitions.
-# Options: "molecular_wiggle", "random_sequential_wiggle", "forced_jump"
-simulation_mode = "molecular_wiggle"
+# Options: "molecular_wiggle", "random_sequential_wiggle", "event_driven_wiggle", "forced_jump"
+# "molecular_wiggle": direct synchronous reference model; closest to explicit molecular wiggles, but slowest.
+# "random_sequential_wiggle": compact asynchronous wiggles with exact no-move probabilities and attempt accounting.
+# "event_driven_wiggle": rate-weighted proposal events with no no-proposal waiting; fast, qualitative pysical equivalence.
+# "forced_jump": heuristic sweeps that ignore Gaussian/no-move rates; fast, but not physically equivalent.
+
+simulation_mode = "event_driven_wiggle"
 y = 650  # Height (y)
 x = 1300  # Width (x)
 
-steps = 20_000_000  # use 10_000_000 notation, or 10000000. DO NOT use 100.000.000
+steps = 400_000_000  # use 10_000_000 notation, or 10000000. DO NOT use 100.000.000
 max_radius_to_jump = 10
 
 # ---------------------- Matrix Source ---------------------- #
@@ -65,7 +70,7 @@ base_movement_probability = 1.0
 random_seed = None  # None selects a fresh seed per run; set an integer to reproduce a run exactly.
 random_size = 10 ** 7  # Forced-jump modes only: number of precomputed random values.
 max_ram_mb = 1000  # Adjustable memory target for HDF5 frame buffering
-save_every_steps = 25000
+save_every_steps = 250000
 delete_old_h5 = True
 
 
@@ -103,7 +108,7 @@ animation_output_folder = "Saved Animations"
 animation_filename = "brownian_motion_animation.mp4"
 
 # ---------------------- Video Output ---------------------- #
-render_every_nth_frame = 1  # Render every Nth saved HDF5 frame; use larger values for huge runs to keep videos and memory smaller.
+render_every_nth_frame = 10  # Render every Nth saved HDF5 frame; use larger values for huge runs to keep videos and memory smaller.
 animation_fps = 12
 animation_main_pixel_scale = 2  # Integer video pixels per matrix cell; 2 preserves sparse one-cell sites clearly.
 animation_side_panel_width_px = 480

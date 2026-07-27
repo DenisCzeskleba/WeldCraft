@@ -518,6 +518,10 @@ def create_random_sequential_wiggle_lookup(matrix, max_radius_to_jump, base_move
     initial_hydrogen_site_ids = np.flatnonzero(site_states == 2).astype(np.int32)
     hydrogen_site_ids = np.empty(len(site_states), dtype=np.int32)
     hydrogen_site_ids[:len(initial_hydrogen_site_ids)] = initial_hydrogen_site_ids
+    hydrogen_transition_totals = np.empty(len(site_states), dtype=np.float32)
+    hydrogen_transition_totals[:len(initial_hydrogen_site_ids)] = transition_totals[
+        initial_hydrogen_site_ids
+    ]
     hydrogen_count = len(initial_hydrogen_site_ids)
 
     source_site_flags = np.zeros(len(site_y), dtype=np.uint8)
@@ -536,6 +540,7 @@ def create_random_sequential_wiggle_lookup(matrix, max_radius_to_jump, base_move
         site_x,
         site_states,
         hydrogen_site_ids,
+        hydrogen_transition_totals,
         hydrogen_count,
         transition_offsets,
         transition_targets,
@@ -632,10 +637,11 @@ def find_transition_from_cdf(transition_cdf, start, end, random_value):
 
 @njit
 def simulate_random_sequential_wiggle_steps(site_states, hydrogen_site_ids, hydrogen_count,
+                                            hydrogen_transition_totals,
                                             transition_offsets, transition_targets, transition_cdf,
                                             transition_totals, source_site_flags, sink_site_flags,
                                             site_x, region_map, num_regions, rng_state, num_steps):
-    """Run sequential wiggles; one step is H-at-start random selections with replacement."""
+    """Run H-at-start selections; the probability cache mirrors the active H-list prefix."""
     displacement_stats = np.zeros((num_regions, 3), dtype=np.float64)
     wiggle_attempt_count = 0
     selection_rejection_threshold = (
@@ -655,11 +661,10 @@ def simulate_random_sequential_wiggle_steps(site_states, hydrogen_site_ids, hydr
                 hydrogen_count,
                 selection_rejection_threshold,
             )
-            source_site_id = hydrogen_site_ids[hydrogen_index]
-            total_transition_probability = transition_totals[source_site_id]
-            if random_value >= total_transition_probability:
+            if random_value >= hydrogen_transition_totals[hydrogen_index]:
                 continue
 
+            source_site_id = hydrogen_site_ids[hydrogen_index]
             transition_start = transition_offsets[source_site_id]
             transition_end = transition_offsets[source_site_id + 1]
             transition_index = find_transition_from_cdf(
@@ -690,19 +695,198 @@ def simulate_random_sequential_wiggle_steps(site_states, hydrogen_site_ids, hydr
                     site_states[source_site_id] = 1
                     hydrogen_count -= 1
                     hydrogen_site_ids[hydrogen_index] = hydrogen_site_ids[hydrogen_count]
+                    hydrogen_transition_totals[hydrogen_index] = hydrogen_transition_totals[
+                        hydrogen_count
+                    ]
                     if hydrogen_count > 0:
                         selection_rejection_threshold = bounded_index_rejection_threshold(hydrogen_count)
             elif source_is_reservoir:
                 site_states[target_site_id] = 2
                 hydrogen_site_ids[hydrogen_count] = target_site_id
+                hydrogen_transition_totals[hydrogen_count] = transition_totals[target_site_id]
                 hydrogen_count += 1
                 selection_rejection_threshold = bounded_index_rejection_threshold(hydrogen_count)
             else:
                 site_states[source_site_id] = 1
                 site_states[target_site_id] = 2
                 hydrogen_site_ids[hydrogen_index] = target_site_id
+                hydrogen_transition_totals[hydrogen_index] = transition_totals[target_site_id]
 
     return hydrogen_count, displacement_stats, wiggle_attempt_count
+
+
+@njit
+def fenwick_add(fenwick_tree, zero_based_index, delta):
+    """Add a weight delta to one zero-based leaf in a Fenwick sum tree."""
+    tree_index = zero_based_index + 1
+    while tree_index < len(fenwick_tree):
+        fenwick_tree[tree_index] += delta
+        tree_index += tree_index & -tree_index
+
+
+@njit
+def fenwick_prefix_sum(fenwick_tree, item_count):
+    total = 0.0
+    tree_index = item_count
+    while tree_index > 0:
+        total += fenwick_tree[tree_index]
+        tree_index -= tree_index & -tree_index
+    return total
+
+
+@njit
+def find_fenwick_weighted_index(fenwick_tree, search_bit, random_weight):
+    """Find the zero-based leaf containing random_weight in [0, total_weight)."""
+    tree_index = 0
+    bit = search_bit
+
+    while bit > 0:
+        next_index = tree_index + bit
+        if next_index < len(fenwick_tree) and fenwick_tree[next_index] <= random_weight:
+            tree_index = next_index
+            random_weight -= fenwick_tree[next_index]
+        bit >>= 1
+
+    return tree_index
+
+
+@njit
+def create_hydrogen_probability_fenwick_tree(hydrogen_transition_totals, hydrogen_count):
+    """Build the dynamic weighted-selection tree for the active H-list prefix."""
+    fenwick_tree = np.zeros(len(hydrogen_transition_totals) + 1, dtype=np.float64)
+    for hydrogen_index in range(hydrogen_count):
+        fenwick_add(
+            fenwick_tree,
+            hydrogen_index,
+            float(hydrogen_transition_totals[hydrogen_index]),
+        )
+    return fenwick_tree, fenwick_prefix_sum(fenwick_tree, hydrogen_count)
+
+
+@njit
+def simulate_event_driven_wiggle_events(site_states, hydrogen_site_ids, hydrogen_count,
+                                        hydrogen_transition_totals, fenwick_tree,
+                                        total_transition_weight, transition_offsets,
+                                        transition_targets, transition_cdf, transition_totals,
+                                        source_site_flags, sink_site_flags, site_x, region_map,
+                                        num_regions, rng_state, num_events):
+    """Run weighted destination-proposal events without no-proposal self-loops."""
+    displacement_stats = np.zeros((num_regions, 3), dtype=np.float64)
+    completed_events = 0
+    random_mask = np.uint64((1 << 32) - 1)
+    unit_scale = 1.0 / (1 << 32)
+
+    search_bit = 1
+    capacity = len(hydrogen_transition_totals)
+    while (search_bit << 1) <= capacity:
+        search_bit <<= 1
+
+    # Re-synchronize the scalar total with the tree at every saved-frame batch.
+    total_transition_weight = fenwick_prefix_sum(fenwick_tree, hydrogen_count)
+
+    for _ in range(num_events):
+        if hydrogen_count == 0 or total_transition_weight <= 0.0:
+            break
+
+        random_word = xoshiro256ss_next(rng_state)
+        hydrogen_random_weight = (
+            float(random_word & random_mask) * unit_scale * total_transition_weight
+        )
+        hydrogen_index = find_fenwick_weighted_index(
+            fenwick_tree,
+            search_bit,
+            hydrogen_random_weight,
+        )
+        if hydrogen_index >= hydrogen_count:
+            hydrogen_index = hydrogen_count - 1
+
+        source_site_id = hydrogen_site_ids[hydrogen_index]
+        source_transition_total = hydrogen_transition_totals[hydrogen_index]
+        transition_start = transition_offsets[source_site_id]
+        transition_end = transition_offsets[source_site_id + 1]
+        destination_random_value = (
+            float(random_word >> 32) * unit_scale * source_transition_total
+        )
+        transition_index = find_transition_from_cdf(
+            transition_cdf,
+            transition_start,
+            transition_end,
+            destination_random_value,
+        )
+        if transition_index >= transition_end:
+            continue
+
+        completed_events += 1
+        target_site_id = transition_targets[transition_index]
+        if site_states[target_site_id] != 1:
+            continue
+
+        move_x = site_x[target_site_id] - site_x[source_site_id]
+        region_id = region_map[site_x[source_site_id]]
+        if region_id >= 0:
+            displacement_stats[region_id, 0] += abs(move_x)
+            displacement_stats[region_id, 1] += move_x ** 2
+            displacement_stats[region_id, 2] += 1
+
+        source_is_reservoir = source_site_flags[source_site_id] == 1
+        target_is_sink = sink_site_flags[target_site_id] == 1
+
+        if target_is_sink:
+            if not source_is_reservoir:
+                site_states[source_site_id] = 1
+                removed_weight = float(hydrogen_transition_totals[hydrogen_index])
+                last_hydrogen_index = hydrogen_count - 1
+
+                if hydrogen_index != last_hydrogen_index:
+                    replacement_weight = float(
+                        hydrogen_transition_totals[last_hydrogen_index]
+                    )
+                    hydrogen_site_ids[hydrogen_index] = hydrogen_site_ids[
+                        last_hydrogen_index
+                    ]
+                    hydrogen_transition_totals[hydrogen_index] = (
+                        hydrogen_transition_totals[last_hydrogen_index]
+                    )
+                    fenwick_add(
+                        fenwick_tree,
+                        hydrogen_index,
+                        replacement_weight - removed_weight,
+                    )
+                    fenwick_add(
+                        fenwick_tree,
+                        last_hydrogen_index,
+                        -replacement_weight,
+                    )
+                else:
+                    fenwick_add(fenwick_tree, hydrogen_index, -removed_weight)
+
+                hydrogen_count -= 1
+                total_transition_weight -= removed_weight
+        elif source_is_reservoir:
+            site_states[target_site_id] = 2
+            new_weight = float(transition_totals[target_site_id])
+            hydrogen_site_ids[hydrogen_count] = target_site_id
+            hydrogen_transition_totals[hydrogen_count] = transition_totals[target_site_id]
+            fenwick_add(fenwick_tree, hydrogen_count, new_weight)
+            hydrogen_count += 1
+            total_transition_weight += new_weight
+        else:
+            site_states[source_site_id] = 1
+            site_states[target_site_id] = 2
+            old_weight = float(hydrogen_transition_totals[hydrogen_index])
+            new_weight = float(transition_totals[target_site_id])
+            hydrogen_site_ids[hydrogen_index] = target_site_id
+            hydrogen_transition_totals[hydrogen_index] = transition_totals[target_site_id]
+            fenwick_add(fenwick_tree, hydrogen_index, new_weight - old_weight)
+            total_transition_weight += new_weight - old_weight
+
+    total_transition_weight = fenwick_prefix_sum(fenwick_tree, hydrogen_count)
+    return (
+        hydrogen_count,
+        total_transition_weight,
+        displacement_stats,
+        completed_events,
+    )
 
 
 @njit
