@@ -462,10 +462,14 @@ def create_area_transition_model(area_characteristics):
     return affinities, mobilities, transition_multipliers
 
 
-def apply_spot(matrix, diameter=50, center_x=None, center_y=None, concentration=0):
-    """Create a circular site region and assign its independent initial concentration."""
+def apply_spot(matrix, diameter=50, center_x=None, center_y=None, concentration=0,
+               max_solubility=1):
+    """Replace a circular region with its own site density and initial concentration."""
+    max_solubility = float(max_solubility)
     concentration = float(concentration)
-    if concentration < 0 or concentration > 100:
+    if not np.isfinite(max_solubility) or max_solubility < 0 or max_solubility > 1:
+        raise ValueError("max_sol_spot must be between 0 and 1")
+    if not np.isfinite(concentration) or concentration < 0 or concentration > 100:
         raise ValueError("concentration_spot must be between 0 and 100")
 
     spot_mask = create_spot_mask(
@@ -475,14 +479,27 @@ def apply_spot(matrix, diameter=50, center_x=None, center_y=None, concentration=
         center_y=center_y,
     )
     spot_indices = np.flatnonzero(spot_mask)
-    matrix.flat[spot_indices] = 1
+    matrix.flat[spot_indices] = 0
 
-    hydrogen_count = int(concentration / 100 * len(spot_indices))
-    if hydrogen_count == len(spot_indices):
-        matrix.flat[spot_indices] = 2
+    available_count = int(max_solubility * len(spot_indices))
+    if available_count == len(spot_indices):
+        available_indices = spot_indices
+    elif available_count > 0:
+        available_indices = np.random.choice(
+            spot_indices,
+            available_count,
+            replace=False,
+        )
+    else:
+        available_indices = np.empty(0, dtype=np.int64)
+    matrix.flat[available_indices] = 1
+
+    hydrogen_count = int(concentration / 100 * len(available_indices))
+    if hydrogen_count == len(available_indices):
+        matrix.flat[available_indices] = 2
     elif hydrogen_count > 0:
         hydrogen_indices = np.random.choice(
-            spot_indices,
+            available_indices,
             hydrogen_count,
             replace=False,
         )

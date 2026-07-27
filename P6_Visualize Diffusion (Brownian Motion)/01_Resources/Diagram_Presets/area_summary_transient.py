@@ -1,6 +1,6 @@
-"""Matrix-shaped reconstruction using area averages and clean synthetic dots."""
+"""Transient-profile reconstruction using clean synthetic dots."""
 
-PRESET_NAME = "Stylized Hydrogen Dot Field"
+PRESET_NAME = "Stylized Transient Hydrogen Dot Field"
 
 RENDER_MODE = "area_summary_dots"
 FIGURE_SIZE = (13, 6)
@@ -65,9 +65,7 @@ AREA_SUMMARY_TOTAL_DOTS = 5000
 AREA_SUMMARY_DENSITY_MODE = "available_sites"
 AREA_SUMMARY_MIN_DOTS_PER_AREA = 30
 AREA_SUMMARY_RANDOM_SEED = 104724
-# "area_average": one measured red fraction per owned area.
-# "saved_x_profile": red probability follows the selected snapshot from left to right.
-# "linear_x": configured illustrative line from left to right.
+# The transient preset preserves the measured concentration gradient by column.
 AREA_SUMMARY_CONCENTRATION_MODE = "saved_x_profile"
 AREA_SUMMARY_LINEAR_CONCENTRATION = (100, 0)
 AREA_SUMMARY_X_PROFILE_SIGMA = 20.0
@@ -94,11 +92,14 @@ AREA_SUMMARY_DOT_ALPHA = 0.96
 AREA_SUMMARY_DOT_EDGE_COLOR = "#FFFFFF"
 AREA_SUMMARY_DOT_EDGE_WIDTH = 0.25
 AREA_SUMMARY_BACKGROUND_COLOR = "#FAFAFA"
-AREA_SUMMARY_SHOW_AREA_LABELS = True
+# A/B averages hide the transient gradient and are intentionally omitted here.
+AREA_SUMMARY_SHOW_AREA_LABELS = False
 AREA_SUMMARY_SHOW_EXPLANATION = False
 
 AREA_SUMMARY_SHOW_SOURCE_SINK_BANDS = True
 AREA_SUMMARY_SHOW_SOURCE_SINK_LABELS = False
+# Make the red source and blue sink bands three times their saved physical width.
+AREA_SUMMARY_SOURCE_SINK_BAND_WIDTH_SCALE = 3.0
 AREA_SUMMARY_SOURCE_SINK_EDGE_COLOR = "#303030"
 AREA_SUMMARY_SOURCE_SINK_EDGE_WIDTH = 0.8
 AREA_SUMMARY_SHOW_HALF_DIVIDER = False

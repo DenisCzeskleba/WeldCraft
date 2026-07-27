@@ -18,9 +18,9 @@ from fractions import Fraction
 
 simulation_mode = "event_driven_wiggle"
 y = 650  # Height (y)
-x = 1300  # Width (x)
+x = 650  # Width (x)
 
-steps = 10_000_000_000  # use 10_000_000 notation, or 10000000. DO NOT use 100.000.000 10_000_000_000
+steps = 5_000_000_000  # use 10_000_000 notation, or 10000000. DO NOT use 100.000.000 10_000_000_000
 max_radius_to_jump = 10
 
 # ---------------------- Matrix Source ---------------------- #
@@ -30,6 +30,9 @@ MATRIX_SOURCE = "random"  # Options: "random", "image", "lattice"
 # Used when MATRIX_SOURCE = "random" or "lattice"
 max_sol_a = Fraction(5, 100)
 max_sol_b = Fraction(5, 100)
+
+# Independent possible-site densities for the optional special areas
+max_sol_spot = Fraction(0, 100)
 max_sol_trap_layer = Fraction(10, 100)
 
 # Used when MATRIX_SOURCE = "lattice"
@@ -52,15 +55,15 @@ concentration_trap_layer = 75  # only used if USE_TRAP_LAYER = True
 # Optional left-to-right linear starting profiles for the two base areas.
 # When enabled, concentration_a and concentration_b above are replaced by these profiles.
 # Each pair is: (concentration at the area's left edge, concentration at its right edge).
-USE_INITIAL_CONCENTRATION_PROFILE = False
+USE_INITIAL_CONCENTRATION_PROFILE = True
 concentration_profile_a = (100, 50)
 concentration_profile_b = (50, 0)
 
 # ---------------------- Layer / Boundary Options ---------------------- #
-USE_SPOT = False
-SPOT_DIAMETER = 80
-SPOT_CENTER_X = 3 * x // 4  # Column position of the spot center
-SPOT_CENTER_Y = y // 2  # Row position of the spot center
+USE_SPOT = True
+SPOT_DIAMETER = 120
+SPOT_CENTER_X = 1 * x // 4  # Column position of the spot center
+SPOT_CENTER_Y = 2 * y // 5  # Row position of the spot center
 
 USE_TRAP_LAYER = False
 TRAP_LAYER_CENTER_X = 1 * x // 4

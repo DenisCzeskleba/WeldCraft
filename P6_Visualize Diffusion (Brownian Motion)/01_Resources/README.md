@@ -19,6 +19,7 @@ concentration_b = 50
 concentration_spot = 50  # Only used when USE_SPOT = True
 concentration_trap_layer = 0  # Only used when USE_TRAP_LAYER = True
 
+max_sol_spot = Fraction(100, 100)
 TRAP_LAYER_CENTER_X = x // 2
 TRAP_LAYER_WIDTH = 20
 max_sol_trap_layer = Fraction(100, 100)
@@ -39,16 +40,21 @@ line approximately rather than exactly. A flat profile such as `(40, 40)` is als
 `USE_INITIAL_CONCENTRATION_PROFILE = False`, the original uniform `concentration_a` and
 `concentration_b` settings are used.
 
+`max_sol_spot` determines what fraction of pixels inside the circular spot become possible H sites;
+`concentration_spot` determines what fraction of those sites initially contain H. For example,
+`max_sol_spot = Fraction(20, 100)` and `concentration_spot = 50` creates possible sites on approximately
+20% of the spot geometry and initially fills half of those sites.
+
 `TRAP_LAYER_CENTER_X` moves the full-height vertical layer horizontally. The configured width is centred
-on that column and is clipped if it reaches a matrix edge. `max_sol_trap_layer` determines what fraction
-of layer pixels become possible H sites; `concentration_trap_layer` determines what fraction of those
-sites initially contain H.
+on that column and is clipped if it reaches a matrix edge. `max_sol_trap_layer` likewise determines what
+fraction of layer pixels become possible H sites; `concentration_trap_layer` determines what fraction of
+those sites initially contain H.
 
 Initialization first applies either the uniform bulk concentrations or these optional profiles. The
 source/sink state is applied next. The trap layer then replaces its exact rectangle with its own
-solubility and concentration. The spot is created last and populated at `concentration_spot`, so the
-spot owns every pixel where the two special areas overlap. If a movable trap or spot overlaps a
-source/sink band, that later special area likewise owns the overlap.
+solubility and concentration. The spot is created last with `max_sol_spot` and
+`concentration_spot`, so the spot owns every pixel where the two special areas overlap. If a movable
+trap or spot overlaps a source/sink band, that later special area likewise owns the overlap.
 
 The same exact masks are used by initialization, movement characteristics, movement-statistics regions,
 and still-diagram calculations. The spot and trap labels use only their owned red and blue sites.
@@ -78,10 +84,15 @@ DIAGRAM_PRESET = "default"
 DIAGRAM_PRESET = "depletion_heatmap"
 DIAGRAM_PRESET = "printer_friendly"
 DIAGRAM_PRESET = "area_summary"
+DIAGRAM_PRESET = "area_summary_transient"
 ```
 
 Changing this setting does not alter or rerun the simulation. It only changes how one saved HDF5 frame
 is drawn.
+
+`area_summary` preserves the general stylized-dot configuration, including its A/B average labels.
+`area_summary_transient` follows the saved concentration profile across x, omits those regional-average
+labels, and draws the source/sink side bands three times wider for emphasis.
 
 The ordinary `pixels` and `dots` render modes retain individual matrix locations. `pixels` gives every
 matrix cell one image pixel. `dots` draws every available site and H atom at its exact coordinate. A
@@ -160,9 +171,9 @@ Instead, it measures each area's average occupancy from the selected snapshot, p
 number of large dots on a synthetic staggered lattice inside that area's real shape, and colours the
 same fraction red.
 
-For example, if Area A is 40% occupied, 40% of its displayed dots are red and 60% are blue. Their
-colours are randomly mixed across the even positions rather than copied from the simulation. The
-percentage still comes from the real result:
+In the default `area_average` concentration mode, if Area A is 40% occupied, 40% of its displayed dots
+are red and 60% are blue. Their colours are randomly mixed across the even positions rather than copied
+from the simulation. The percentage still comes from the real result:
 
 ```text
 area occupancy = H in owned area / all available sites in owned area
@@ -174,8 +185,10 @@ dots assigned to each area is proportional to its measured number of available s
 area therefore appears about twice as densely dotted as an equally large 5%-solubility area, while the
 red/blue ratio independently shows occupancy.
 
-`even_hex` position mode fits a separate staggered lattice to every area. A configurable minimum
-centre-to-centre spacing prevents marker overlap, while the position inset keeps circles away from
+`even_hex` position mode fits a staggered lattice to every area. Areas A and B share the same lattice
+phase and outer inset, so their synthetic dots continue naturally across x=L/2 without an artificial
+empty separator. They still retain separate ownership and concentrations. A configurable minimum
+centre-to-centre spacing prevents marker overlap, while the position inset keeps circles away from real
 material outlines and the outside frame. Very dense or small areas, such as a 100%-solubility spot, may
 not physically fit their proportional target number of print-sized dots. In that case the renderer caps
 the area at its non-overlapping visual capacity but keeps the measured red/blue ratio exact. Dot density
@@ -190,7 +203,7 @@ bringing back marker overlap. Four profiles are available:
 ```text
 none       untouched staggered lattice
 gentle     very small one-pass disturbance
-organic    moderate irregularity without deliberate attraction; default
+organic    moderate irregularity without deliberate attraction
 clustered  stronger disturbance plus attraction toward random local centres
 ```
 
@@ -198,9 +211,67 @@ clustered  stronger disturbance plus attraction toward random local centres
 not claim that the simulation measured physical clustering. Use `none` when the most neutral encoding is
 required and `organic` when a less mechanical presentation is preferred.
 
-Source and sink strips are drawn as solid red and blue boundary bands. The A/B red fractions retain the
-full measured regional averages used by the ordinary diagram, including those boundary conditions, so
-the printed values agree between views.
+By default, one invocation renders both `organic` and `clustered`. When saving is enabled, the filenames
+receive `_organic` and `_clustered` suffixes so neither output overwrites the other. The output list can
+be reduced or replaced in the preset:
+
+```python
+AREA_SUMMARY_SHAKE_OUTPUT_MODES = ("organic", "clustered")  # Default: render both
+AREA_SUMMARY_SHAKE_OUTPUT_MODES = ("organic",)              # Render only organic
+AREA_SUMMARY_SHAKE_OUTPUT_MODES = ("none", "gentle")        # Any desired combination
+
+# Single-output form: no style suffix is added to the filename.
+AREA_SUMMARY_SHAKE_OUTPUT_MODES = None
+AREA_SUMMARY_SHAKE_MODE = "organic"
+```
+
+The clustered layout also has two geometry scopes. `combined_a_b` creates one set of attraction centres,
+combines all A+B dots, and shakes them in one pass inside the union of the two base geometries. The
+placement algorithm therefore has no boundary at x=L/2, and a dot may cross that bookkeeping boundary
+during the decorative shake. Its final side and x-slice determine how it is subsequently coloured.
+The total number of base dots is preserved, although clustering intentionally allows their local density
+to shift. The spot and trap layer remain separate because they have independent concentrations and site
+densities. Use `per_area` when preserving strict A/B positional ownership is more important than making
+one continuous clustered field; it gives A and B unrelated movement passes and cluster centres:
+
+```python
+AREA_SUMMARY_CLUSTER_SCOPE = "combined_a_b"  # Default
+AREA_SUMMARY_CLUSTER_SCOPE = "per_area"
+```
+
+For transient states, the red/blue assignment can vary from left to right while keeping the same clean
+dot layout. Every displayed position remains a discrete state: it is either red (occupied) or blue
+(empty). The profile determines the exact rounded number of red dots in each narrow vertical slice, and
+those red dots are randomly mixed within the slice so the result does not become a rigid striped chart.
+
+`saved_x_profile` measures the selected HDF5 snapshot column-wise, excludes the independently owned spot
+and trap from the A/B profile, smooths H counts and available-site counts, and uses that result for the
+slice totals:
+
+```python
+AREA_SUMMARY_CONCENTRATION_MODE = "saved_x_profile"
+AREA_SUMMARY_X_PROFILE_SIGMA = 20.0
+AREA_SUMMARY_CONCENTRATION_BIN_WIDTH = 40
+```
+
+`linear_x` supplies an illustrative profile directly. For example, this produces 100% red at the left
+edge, 0% red at the right edge, and the appropriate discrete mixture between them:
+
+```python
+AREA_SUMMARY_CONCENTRATION_MODE = "linear_x"
+AREA_SUMMARY_LINEAR_CONCENTRATION = (100, 0)
+AREA_SUMMARY_CONCENTRATION_BIN_WIDTH = 40
+```
+
+The spot and trap always keep their own measured area-average concentrations in these transient modes.
+Use a smaller bin width for closer local agreement and more visible statistical texture, or a larger
+width for a smoother-looking illustration. Set `AREA_SUMMARY_CONCENTRATION_MODE = "area_average"` to
+restore the steady-state A/B summary.
+
+Source and sink strips are drawn as solid red and blue boundary bands. `area_average` retains the full
+measured regional averages used by the ordinary diagram, including those boundary conditions.
+`saved_x_profile` likewise measures them in their real x positions; `linear_x` instead follows the
+explicitly configured illustrative endpoints.
 
 The reconstruction is deterministic: the configured seed produces the same lattice phase and random
 colour arrangement each time, making a result reproducible. Changing the seed changes only the
@@ -217,14 +288,21 @@ The main controls in `area_summary.py` are:
 AREA_SUMMARY_TOTAL_DOTS = 5000
 AREA_SUMMARY_DENSITY_MODE = "available_sites"  # Or "uniform_area"
 AREA_SUMMARY_RANDOM_SEED = 104729
+AREA_SUMMARY_CONCENTRATION_MODE = "area_average"  # area_average/saved_x_profile/linear_x
+AREA_SUMMARY_LINEAR_CONCENTRATION = (100, 0)
+AREA_SUMMARY_X_PROFILE_SIGMA = 20.0
+AREA_SUMMARY_CONCENTRATION_BIN_WIDTH = 40
 AREA_SUMMARY_POSITION_MODE = "even_hex"         # Or "random"
 AREA_SUMMARY_MIN_DOT_SPACING = 8.0
-AREA_SUMMARY_SHAKE_MODE = "organic"             # none/gentle/organic/clustered
+AREA_SUMMARY_SHAKE_OUTPUT_MODES = ("organic", "clustered")
+AREA_SUMMARY_SHAKE_MODE = "organic"             # Fallback when output modes is None
 AREA_SUMMARY_SHAKE_STRENGTH = None              # None uses the selected profile
 AREA_SUMMARY_SHAKE_PASSES = None
+AREA_SUMMARY_CLUSTER_SCOPE = "combined_a_b"      # Or "per_area"
 AREA_SUMMARY_POSITION_INSET = 5
 AREA_SUMMARY_DOT_SIZE = 18
 AREA_SUMMARY_SHOW_SOURCE_SINK_BANDS = True
+AREA_SUMMARY_SOURCE_SINK_BAND_WIDTH_SCALE = 1.0
 ```
 
 ## Area characteristics, affinity, and mobility

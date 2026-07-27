@@ -153,13 +153,17 @@ if cfg.USE_TRAP_LAYER:
     )
 
 if cfg.USE_SPOT:
-    print(f"Adding spot at {cfg.concentration_spot}% initial concentration")
+    print(
+        f"Adding spot with {float(cfg.max_sol_spot) * 100:g}% max. solubility "
+        f"and {cfg.concentration_spot}% initial concentration"
+    )
     h_spots_matrix = apply_spot(
         h_spots_matrix,
         diameter=cfg.SPOT_DIAMETER,
         center_x=cfg.SPOT_CENTER_X,
         center_y=cfg.SPOT_CENTER_Y,
         concentration=cfg.concentration_spot,
+        max_solubility=cfg.max_sol_spot,
     )
 
 print("Cleaning Loners")
