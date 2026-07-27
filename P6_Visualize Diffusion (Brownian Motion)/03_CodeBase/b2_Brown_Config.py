@@ -20,7 +20,7 @@ simulation_mode = "event_driven_wiggle"
 y = 650  # Height (y)
 x = 1300  # Width (x)
 
-steps = 10_000_000  # use 10_000_000 notation, or 10000000. DO NOT use 100.000.000 10_000_000_000
+steps = 10_000_000_000  # use 10_000_000 notation, or 10000000. DO NOT use 100.000.000 10_000_000_000
 max_radius_to_jump = 10
 
 # ---------------------- Matrix Source ---------------------- #
@@ -44,10 +44,17 @@ max_sol_black = Fraction(2, 100)
 show_image_matrix_plot = True
 
 # ---------------------- Initial Concentration ---------------------- #
-concentration_a = 75
-concentration_b = 25
+concentration_a = 0
+concentration_b = 0
 concentration_spot = 25  # only used if USE_SPOT = True
 concentration_trap_layer = 75  # only used if USE_TRAP_LAYER = True
+
+# Optional left-to-right linear starting profiles for the two base areas.
+# When enabled, concentration_a and concentration_b above are replaced by these profiles.
+# Each pair is: (concentration at the area's left edge, concentration at its right edge).
+USE_INITIAL_CONCENTRATION_PROFILE = False
+concentration_profile_a = (100, 50)
+concentration_profile_b = (50, 0)
 
 # ---------------------- Layer / Boundary Options ---------------------- #
 USE_SPOT = False

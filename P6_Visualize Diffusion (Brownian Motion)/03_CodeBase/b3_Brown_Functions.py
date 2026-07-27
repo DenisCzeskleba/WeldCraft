@@ -250,6 +250,82 @@ def define_concentration_to_halves(h_spots_matrix, concentration_a, concentratio
     return h_spots_matrix
 
 
+def validate_concentration_profile(profile, setting_name):
+    """Return a validated ``(left_percent, right_percent)`` profile pair."""
+    if not isinstance(profile, (tuple, list, np.ndarray)) or len(profile) != 2:
+        raise ValueError(
+            f"{setting_name} must contain exactly two percentages: "
+            "(left edge, right edge)"
+        )
+
+    start_percent = float(profile[0])
+    end_percent = float(profile[1])
+    if (
+        not np.isfinite(start_percent)
+        or not np.isfinite(end_percent)
+        or start_percent < 0
+        or start_percent > 100
+        or end_percent < 0
+        or end_percent > 100
+    ):
+        raise ValueError(f"{setting_name} percentages must be between 0 and 100")
+
+    return start_percent, end_percent
+
+
+def apply_linear_concentration_profile(matrix, start_x, end_x, profile):
+    """Populate possible sites column by column along a left-to-right linear profile."""
+    start_x = int(start_x)
+    end_x = int(end_x)
+    if end_x <= start_x:
+        return matrix
+
+    start_percent, end_percent = profile
+    target_percentages = np.linspace(
+        start_percent,
+        end_percent,
+        end_x - start_x,
+        dtype=np.float64,
+    )
+
+    for column, target_percent in zip(range(start_x, end_x), target_percentages):
+        site_rows = np.flatnonzero(matrix[:, column] > 0)
+        if len(site_rows) == 0:
+            continue
+
+        # Reset the area's possible sites so this function also behaves predictably
+        # if it is applied to a matrix that already contains hydrogen.
+        matrix[site_rows, column] = 1
+        hydrogen_count = int(np.rint((target_percent / 100.0) * len(site_rows)))
+        if hydrogen_count == len(site_rows):
+            matrix[site_rows, column] = 2
+        elif hydrogen_count > 0:
+            hydrogen_rows = np.random.choice(
+                site_rows,
+                hydrogen_count,
+                replace=False,
+            )
+            matrix[hydrogen_rows, column] = 2
+
+    return matrix
+
+
+def define_linear_concentration_profiles_to_halves(h_spots_matrix, profile_a, profile_b):
+    """Apply independent left-to-right linear concentration profiles to areas A and B."""
+    profile_a = validate_concentration_profile(profile_a, "concentration_profile_a")
+    profile_b = validate_concentration_profile(profile_b, "concentration_profile_b")
+    half_x = h_spots_matrix.shape[1] // 2
+
+    apply_linear_concentration_profile(h_spots_matrix, 0, half_x, profile_a)
+    apply_linear_concentration_profile(
+        h_spots_matrix,
+        half_x,
+        h_spots_matrix.shape[1],
+        profile_b,
+    )
+    return h_spots_matrix
+
+
 def define_concentration_sink_source(h_spots_matrix, pixel_thickness=1, source_side="left"):
     if source_side == "left":
         h_spots_matrix[:, :pixel_thickness] = 2

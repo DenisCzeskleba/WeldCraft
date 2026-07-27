@@ -106,11 +106,31 @@ region_map, num_regions = create_region_mapping(
 )
 
 print("Applying concentration")
-h_spots_matrix = define_concentration_to_halves(
-    h_spots_matrix,
-    cfg.concentration_a,
-    cfg.concentration_b,
-)
+if cfg.USE_INITIAL_CONCENTRATION_PROFILE:
+    concentration_profile_a = validate_concentration_profile(
+        cfg.concentration_profile_a,
+        "concentration_profile_a",
+    )
+    concentration_profile_b = validate_concentration_profile(
+        cfg.concentration_profile_b,
+        "concentration_profile_b",
+    )
+    print(
+        "Applying left-to-right initial concentration profiles: "
+        f"A {concentration_profile_a[0]:g}% -> {concentration_profile_a[1]:g}%, "
+        f"B {concentration_profile_b[0]:g}% -> {concentration_profile_b[1]:g}%"
+    )
+    h_spots_matrix = define_linear_concentration_profiles_to_halves(
+        h_spots_matrix,
+        concentration_profile_a,
+        concentration_profile_b,
+    )
+else:
+    h_spots_matrix = define_concentration_to_halves(
+        h_spots_matrix,
+        cfg.concentration_a,
+        cfg.concentration_b,
+    )
 if cfg.USE_SINK_SOURCE:
     h_spots_matrix = define_concentration_sink_source(
         h_spots_matrix,

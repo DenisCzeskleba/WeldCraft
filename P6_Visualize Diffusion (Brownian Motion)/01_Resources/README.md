@@ -24,14 +24,31 @@ TRAP_LAYER_WIDTH = 20
 max_sol_trap_layer = Fraction(100, 100)
 ```
 
+For a simulation whose approximate steady-state shape is already known, the two ordinary areas can
+instead start with independent left-to-right linear concentration profiles:
+
+```python
+USE_INITIAL_CONCENTRATION_PROFILE = True
+concentration_profile_a = (100, 50)  # Area A: 100% at x=0 to 50% at x=L/2
+concentration_profile_b = (50, 0)    # Area B: 50% at x=L/2 to 0% at x=L
+```
+
+Each percentage describes the fraction of that column's available sites that initially contain H. The
+assignment is rounded to a whole number of H atoms per column, so a sparse lattice follows the requested
+line approximately rather than exactly. A flat profile such as `(40, 40)` is also valid. When
+`USE_INITIAL_CONCENTRATION_PROFILE = False`, the original uniform `concentration_a` and
+`concentration_b` settings are used.
+
 `TRAP_LAYER_CENTER_X` moves the full-height vertical layer horizontally. The configured width is centred
 on that column and is clipped if it reaches a matrix edge. `max_sol_trap_layer` determines what fraction
 of layer pixels become possible H sites; `concentration_trap_layer` determines what fraction of those
 sites initially contain H.
 
-Initialization first applies the bulk concentrations and source/sink state. The trap layer then replaces
-its exact rectangle with its own solubility and concentration. The spot is created last and populated at
-`concentration_spot`, so the spot owns every pixel where the two special areas overlap.
+Initialization first applies either the uniform bulk concentrations or these optional profiles. The
+source/sink state is applied next. The trap layer then replaces its exact rectangle with its own
+solubility and concentration. The spot is created last and populated at `concentration_spot`, so the
+spot owns every pixel where the two special areas overlap. If a movable trap or spot overlaps a
+source/sink band, that later special area likewise owns the overlap.
 
 The same exact masks are used by initialization, movement characteristics, movement-statistics regions,
 and still-diagram calculations. The spot and trap labels use only their owned red and blue sites.
