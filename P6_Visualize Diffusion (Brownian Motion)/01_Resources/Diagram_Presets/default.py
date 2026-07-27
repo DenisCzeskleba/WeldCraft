@@ -6,7 +6,7 @@ Copy this file to a new preset name when a look is ready to lock in.
 
 PRESET_NAME = "default"
 
-RENDER_MODE = "pixels"  # Options: "pixels", "dots"
+RENDER_MODE = "pixels"  # Options: "pixels", "dots", "concentration_heatmap", "printer_glyphs", "area_summary_dots"
 FIGURE_SIZE = (12, 6)
 MATCH_SIDE_PANEL_HEIGHT_TO_MAIN = True
 TITLE = "Diffusion as a Result of Random Motion"

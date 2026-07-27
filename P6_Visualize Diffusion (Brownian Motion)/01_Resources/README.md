@@ -51,6 +51,165 @@ bulk region concentration = red outside spot and trap / (red + blue outside spot
 No assumption is made about which half contains the spot or trap layer; ownership and exclusion are
 performed by exact mask intersection.
 
+## Still-diagram visualization modes
+
+`c3_Brown_Make_Diagram.py` can show an exact snapshot or derive a more legible abstraction from that
+same snapshot. Choose a preset near the top of that file:
+
+```python
+DIAGRAM_PRESET = "default"
+DIAGRAM_PRESET = "depletion_heatmap"
+DIAGRAM_PRESET = "printer_friendly"
+DIAGRAM_PRESET = "area_summary"
+```
+
+Changing this setting does not alter or rerun the simulation. It only changes how one saved HDF5 frame
+is drawn.
+
+The ordinary `pixels` and `dots` render modes retain individual matrix locations. `pixels` gives every
+matrix cell one image pixel. `dots` draws every available site and H atom at its exact coordinate. A
+large dot size can help individual points survive downscaling, but neighbouring markers then overlap.
+Because H markers are drawn over available-site markers, a dense patch can look almost solid red even
+when its occupancy is far below 100%. The `dots` mode is therefore useful for exact-coordinate views,
+but increasing its marker size is not a reliable print abstraction.
+
+### `depletion_heatmap`
+
+The `depletion_heatmap` preset is intended to make the spot's depletion or accumulation halo visible.
+It separately smooths the local H count and the local available-site count and then divides them:
+
+```text
+smoothed local occupancy = smoothed H count / smoothed available-site count
+displayed deviation = smoothed local occupancy - bulk reference occupancy
+```
+
+This order matters when the spot and bulk have different solubilities. Smoothing the red/blue matrix
+values directly would mix site density with H occupancy and create a misleading edge.
+
+By default, blue means fewer occupied available sites than the corresponding bulk reference, white
+means approximately the bulk value, and red means more. The A and B bulk references are calculated
+after excluding the exact spot and trap masks, so a movable or partly overlapping spot cannot
+contaminate either reference. Smoothing is also performed independently across special-area boundaries;
+an empty high-solubility spot therefore does not manufacture a blue halo merely by being averaged into
+the surrounding bulk. A halo outside the dashed spot outline comes from the saved simulation result.
+
+The main controls in `depletion_heatmap.py` are:
+
+```python
+HEATMAP_SIGMA = 28.0                 # Spatial smoothing radius in matrix cells
+HEATMAP_DEVIATION_LIMIT = 20.0       # Symmetric colour range in percentage points
+HEATMAP_MODE = "deviation"           # Or "occupancy" for absolute local occupancy
+HEATMAP_REFERENCE_MODE = "regional_bulk"  # Or "global_bulk"
+```
+
+The heatmap is a derived view, not an additional physical field and not a change to the movement
+model. Fine spatial detail below the smoothing scale is deliberately suppressed.
+
+### `printer_friendly`
+
+The `printer_friendly` preset replaces overlapping particle markers with non-overlapping spatial-bin
+glyphs. Each circle summarizes one local block of matrix cells:
+
+```text
+red sector of circle = H / (H + unoccupied available sites)
+circle size          = density of available sites in that block
+blue remainder       = unoccupied fraction of the available sites
+```
+
+Thus a half-red circle means 50% occupancy regardless of how densely that area provides sites. A larger
+circle means the area has more possible H sites. This keeps concentration and solubility visually
+separate, and a low-occupancy high-solubility spot can no longer look solid red because thousands of
+large particle markers were painted on top of each other.
+
+The glyphs keep approximate location at the bin scale, while intentionally discarding exact within-bin
+coordinates. This makes them suitable for print and for qualitative communication, not for inspecting
+individual jumps. Dashed outlines retain the spot and trap-layer geometry, and the legend reports their
+exact red-over-red-plus-blue concentration from the underlying snapshot.
+
+The main controls in `printer_friendly.py` are:
+
+```python
+GLYPH_BIN_SIZE = 32                  # Larger value = fewer, larger summary circles
+GLYPH_MIN_RADIUS_FRACTION = 0.38
+GLYPH_MAX_RADIUS_FRACTION = 0.90
+GLYPH_CAPACITY_GAMMA = 0.30          # Compresses very large solubility differences
+```
+
+### `area_summary`
+
+The `area_summary` preset keeps the familiar matrix geometry but reconstructs it as a clean illustrative
+dot field. It does not plot the millions of literal matrix pixels or preserve individual H positions.
+Instead, it measures each area's average occupancy from the selected snapshot, places a manageable
+number of large dots on a synthetic staggered lattice inside that area's real shape, and colours the
+same fraction red.
+
+For example, if Area A is 40% occupied, 40% of its displayed dots are red and 60% are blue. Their
+colours are randomly mixed across the even positions rather than copied from the simulation. The
+percentage still comes from the real result:
+
+```text
+area occupancy = H in owned area / all available sites in owned area
+```
+
+The same robust A/B, spot, and trap ownership masks are used as elsewhere: the spot owns its overlap,
+then the trap layer, then A/B. With the default `available_sites` density mode, the number of illustrative
+dots assigned to each area is proportional to its measured number of available sites. A 10%-solubility
+area therefore appears about twice as densely dotted as an equally large 5%-solubility area, while the
+red/blue ratio independently shows occupancy.
+
+`even_hex` position mode fits a separate staggered lattice to every area. A configurable minimum
+centre-to-centre spacing prevents marker overlap, while the position inset keeps circles away from
+material outlines and the outside frame. Very dense or small areas, such as a 100%-solubility spot, may
+not physically fit their proportional target number of print-sized dots. In that case the renderer caps
+the area at its non-overlapping visual capacity but keeps the measured red/blue ratio exact. Dot density
+therefore remains qualitative once this capacity is reached; it never uses overlap to imply extra
+capacity.
+
+An optional constrained shake is applied after the even lattice is fitted. Every proposed movement is
+accepted only if the centre remains inside its owned area and at least
+`AREA_SUMMARY_MIN_DOT_SPACING` from every other displayed centre. This introduces irregular gaps without
+bringing back marker overlap. Four profiles are available:
+
+```text
+none       untouched staggered lattice
+gentle     very small one-pass disturbance
+organic    moderate irregularity without deliberate attraction; default
+clustered  stronger disturbance plus attraction toward random local centres
+```
+
+`clustered` is allowed to create visible bunches and empty patches, but these are illustrative. They do
+not claim that the simulation measured physical clustering. Use `none` when the most neutral encoding is
+required and `organic` when a less mechanical presentation is preferred.
+
+Source and sink strips are drawn as solid red and blue boundary bands. The A/B red fractions retain the
+full measured regional averages used by the ordinary diagram, including those boundary conditions, so
+the printed values agree between views.
+
+The reconstruction is deterministic: the configured seed produces the same lattice phase and random
+colour arrangement each time, making a result reproducible. Changing the seed changes only the
+illustrative arrangement, not any measured percentage. The older uniform-random position style remains
+available as `AREA_SUMMARY_POSITION_MODE = "random"`, but `even_hex` is the print-oriented default.
+
+This is a presentation abstraction. It is well suited to steady-state or final comparison figures, but
+it deliberately hides within-area gradients, diffusion fronts, and depletion halos. Use
+`depletion_heatmap`, `printer_friendly`, or an exact snapshot when those spatial details matter.
+
+The main controls in `area_summary.py` are:
+
+```python
+AREA_SUMMARY_TOTAL_DOTS = 5000
+AREA_SUMMARY_DENSITY_MODE = "available_sites"  # Or "uniform_area"
+AREA_SUMMARY_RANDOM_SEED = 104729
+AREA_SUMMARY_POSITION_MODE = "even_hex"         # Or "random"
+AREA_SUMMARY_MIN_DOT_SPACING = 8.0
+AREA_SUMMARY_SHAKE_MODE = "organic"             # none/gentle/organic/clustered
+AREA_SUMMARY_SHAKE_STRENGTH = None              # None uses the selected profile
+AREA_SUMMARY_SHAKE_PASSES = None
+AREA_SUMMARY_POSITION_INSET = 5
+AREA_SUMMARY_DOT_SIZE = 18
+AREA_SUMMARY_SHOW_SOURCE_SINK_BANDS = True
+```
+
 ## Area characteristics, affinity, and mobility
 
 The user-facing physical model currently has four area characteristics:

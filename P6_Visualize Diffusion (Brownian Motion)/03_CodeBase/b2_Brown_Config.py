@@ -20,7 +20,7 @@ simulation_mode = "event_driven_wiggle"
 y = 650  # Height (y)
 x = 1300  # Width (x)
 
-steps = 5_000_000_000  # use 10_000_000 notation, or 10000000. DO NOT use 100.000.000
+steps = 10_000_000  # use 10_000_000 notation, or 10000000. DO NOT use 100.000.000 10_000_000_000
 max_radius_to_jump = 10
 
 # ---------------------- Matrix Source ---------------------- #
@@ -28,8 +28,9 @@ MATRIX_SOURCE = "random"  # Options: "random", "image", "lattice"
 
 
 # Used when MATRIX_SOURCE = "random" or "lattice"
-max_sol_a = Fraction(10, 100)
+max_sol_a = Fraction(5, 100)
 max_sol_b = Fraction(5, 100)
+max_sol_trap_layer = Fraction(10, 100)
 
 # Used when MATRIX_SOURCE = "lattice"
 LATTICE_STYLE = "prime"
@@ -43,27 +44,25 @@ max_sol_black = Fraction(2, 100)
 show_image_matrix_plot = True
 
 # ---------------------- Initial Concentration ---------------------- #
-concentration_a = 50
-concentration_b = 50
-concentration_spot = 50  # only used if USE_SPOT = True
-concentration_trap_layer = 50  # only used if USE_TRAP_LAYER = True
+concentration_a = 75
+concentration_b = 25
+concentration_spot = 25  # only used if USE_SPOT = True
+concentration_trap_layer = 75  # only used if USE_TRAP_LAYER = True
 
 # ---------------------- Layer / Boundary Options ---------------------- #
-USE_SPOT = True
+USE_SPOT = False
 SPOT_DIAMETER = 80
-SPOT_CENTER_X = 3 * x // 2  # Column position of the spot center
+SPOT_CENTER_X = 3 * x // 4  # Column position of the spot center
 SPOT_CENTER_Y = y // 2  # Row position of the spot center
 
-USE_TRAP_LAYER = True
-TRAP_LAYER_CENTER_X = x // 2
-TRAP_LAYER_WIDTH = 20
-max_sol_trap_layer = Fraction(20, 100)
+USE_TRAP_LAYER = False
+TRAP_LAYER_CENTER_X = 1 * x // 4
+TRAP_LAYER_WIDTH = 40
 
 USE_SINK_SOURCE = True
 SINK_SOURCE_THICKNESS = 10
 SOURCE_SIDE = "left"  # Options: "left" or "right"
 num_subregions = 1
-
 
 # ---------------------- Movement Probability ---------------------- #
 # Global probability scale for wiggle-derived movement. A uniform change affects kinetics, not equilibrium preference.
@@ -91,7 +90,7 @@ AREA_CHARACTERISTICS = {
 random_seed = None  # None selects a fresh seed per run; set an integer to reproduce a run exactly.
 random_size = 10 ** 7  # Deprecated forced_jump only: number of precomputed random values.
 max_ram_mb = 2000  # Adjustable memory target for HDF5 frame buffering
-save_every_steps = 500000
+save_every_steps = 1_000_000
 delete_old_h5 = True
 
 
@@ -129,7 +128,7 @@ animation_output_folder = "Saved Animations"
 animation_filename = "brownian_motion_animation.mp4"
 
 # ---------------------- Video Output ---------------------- #
-render_every_nth_frame = 5  # Render every Nth saved HDF5 frame; use larger values for huge runs to keep videos and memory smaller.
+render_every_nth_frame = 20  # Render every Nth saved HDF5 frame; use larger values for huge runs to keep videos and memory smaller.
 animation_fps = 12
 animation_main_pixel_scale = 2  # Integer video pixels per matrix cell; 2 preserves sparse one-cell sites clearly.
 animation_side_panel_width_px = 480

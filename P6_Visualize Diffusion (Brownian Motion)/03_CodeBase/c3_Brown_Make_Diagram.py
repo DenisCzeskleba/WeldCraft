@@ -15,6 +15,7 @@ import matplotlib.pyplot as plt
 import matplotlib.patheffects as path_effects
 import numpy as np
 from matplotlib.colors import BoundaryNorm, ListedColormap
+from matplotlib.patches import Circle, Rectangle, Wedge
 
 with contextlib.redirect_stdout(io.StringIO()):
     from b3_Brown_Functions import (
@@ -43,7 +44,14 @@ SAVE_DPI = 300
 
 
 # ---------------------- Diagram Profile ---------------------- #
-DIAGRAM_PRESET = "default"  # File stem in 01_Resources/Diagram_Presets, for example "two_regions_w_solubility".
+# Available diagram presets:
+#   "default"                       - Detailed pixel-by-pixel simulation matrix.
+#   "two_regions_w_solubility"      - Pixel matrix emphasizing both regions and solubilities.
+#   "simple_1_region_source_sink"   - Pixel matrix configured for a single-region source/sink view.
+#   "depletion_heatmap"             - Smoothed local enrichment/depletion heatmap.
+#   "printer_friendly"              - Spatially binned, larger occupancy glyphs for print.
+#   "area_summary"                  - Stylized non-overlapping dots using measured area averages.
+DIAGRAM_PRESET = "default"  # File stem in 01_Resources/Diagram_Presets.
 
 REQUIRED_DIAGRAM_PRESET_KEYS = [
     "PRESET_NAME",
@@ -91,6 +99,75 @@ REQUIRED_DIAGRAM_PRESET_KEYS = [
     "CUSTOM_RECT_REGIONS",
 ]
 
+OPTIONAL_DIAGRAM_PRESET_DEFAULTS = {
+    # Smoothed concentration-map settings.
+    "HEATMAP_MODE": "deviation",  # Options: "deviation", "occupancy"
+    "HEATMAP_SIGMA": 18.0,
+    "HEATMAP_COLORMAP": "RdBu_r",
+    "HEATMAP_DEVIATION_LIMIT": 20.0,
+    "HEATMAP_OCCUPANCY_RANGE": (0.0, 100.0),
+    "HEATMAP_REFERENCE_MODE": "regional_bulk",  # Options: "regional_bulk", "global_bulk"
+    "HEATMAP_RESPECT_AREA_BOUNDARIES": True,
+    "HEATMAP_SEPARATE_BASE_AREAS": False,
+    "HEATMAP_SHOW_CONTOURS": True,
+    "HEATMAP_CONTOUR_LEVELS": (-15, -10, -5, 5, 10, 15),
+    "HEATMAP_CONTOUR_COLOR": "#303030",
+    "HEATMAP_CONTOUR_ALPHA": 0.35,
+    "HEATMAP_SHOW_COLORBAR": True,
+    # Printer-friendly, spatially binned occupancy glyphs.
+    "GLYPH_BIN_SIZE": 32,
+    "GLYPH_MIN_RADIUS_FRACTION": 0.38,
+    "GLYPH_MAX_RADIUS_FRACTION": 0.90,
+    "GLYPH_CAPACITY_GAMMA": 0.30,
+    "GLYPH_EDGE_COLOR": "#202020",
+    "GLYPH_EDGE_WIDTH": 0.45,
+    "GLYPH_BACKGROUND_COLOR": "#F5F5F5",
+    "GLYPH_SHOW_GRID": True,
+    "GLYPH_GRID_COLOR": "#D8D8D8",
+    "GLYPH_SHOW_EXPLANATION": True,
+    "GLYPH_SHOW_SPECIAL_REGION_VALUES": True,
+    # Matrix-shaped area-average reconstruction with synthetic dot positions.
+    "AREA_SUMMARY_TOTAL_DOTS": 5000,
+    "AREA_SUMMARY_DENSITY_MODE": "available_sites",  # Options: "available_sites", "uniform_area"
+    "AREA_SUMMARY_MIN_DOTS_PER_AREA": 30,
+    "AREA_SUMMARY_RANDOM_SEED": 104729,
+    "AREA_SUMMARY_POSITION_MODE": "even_hex",  # Options: "even_hex", "random"
+    "AREA_SUMMARY_MIN_DOT_SPACING": 8.0,
+    "AREA_SUMMARY_SHAKE_MODE": "none",  # Options: "none", "gentle", "organic", "clustered"
+    "AREA_SUMMARY_SHAKE_STRENGTH": None,
+    "AREA_SUMMARY_SHAKE_PASSES": None,
+    "AREA_SUMMARY_SHAKE_ATTEMPTS": 8,
+    "AREA_SUMMARY_CLUSTER_COUNT": 8,
+    "AREA_SUMMARY_CLUSTER_ATTRACTION": 0.70,
+    "AREA_SUMMARY_POSITION_JITTER": 0.42,
+    "AREA_SUMMARY_POSITION_INSET": 5,
+    "AREA_SUMMARY_DOT_SIZE": 18,
+    "AREA_SUMMARY_DOT_ALPHA": 0.96,
+    "AREA_SUMMARY_DOT_EDGE_COLOR": "#FFFFFF",
+    "AREA_SUMMARY_DOT_EDGE_WIDTH": 0.25,
+    "AREA_SUMMARY_BACKGROUND_COLOR": "#FAFAFA",
+    "AREA_SUMMARY_SHOW_AREA_LABELS": True,
+    "AREA_SUMMARY_SHOW_EXPLANATION": True,
+    "AREA_SUMMARY_SHOW_SOURCE_SINK_BANDS": True,
+    "AREA_SUMMARY_SHOW_SOURCE_SINK_LABELS": False,
+    "AREA_SUMMARY_SOURCE_SINK_EDGE_COLOR": "#303030",
+    "AREA_SUMMARY_SOURCE_SINK_EDGE_WIDTH": 0.8,
+    "AREA_SUMMARY_SHOW_HALF_DIVIDER": True,
+    "AREA_SUMMARY_HALF_DIVIDER_COLOR": "#A0A0A0",
+    # Shared visual aids.
+    "SHOW_SPECIAL_REGION_OUTLINES": False,
+    "SPECIAL_REGION_OUTLINE_COLOR": "#202020",
+    "SPECIAL_REGION_OUTLINE_WIDTH": 1.2,
+    "SPECIAL_REGION_OUTLINE_STYLE": "--",
+    "ANNOTATION_STROKE_COLOR": "#000000",
+    "ANNOTATION_STROKE_WIDTH": 2.5,
+    "ANNOTATION_BOX_ENABLED": False,
+    "ANNOTATION_BOX_FACE_COLOR": "#FFFFFF",
+    "ANNOTATION_BOX_EDGE_COLOR": "#707070",
+    "ANNOTATION_BOX_ALPHA": 0.88,
+    "SHOW_FRAME_SUPTITLE": True,
+}
+
 
 def diagram_presets_dir():
     return resources_dir() / "Diagram_Presets"
@@ -115,7 +192,12 @@ def load_diagram_preset(preset_file_stem):
     if missing:
         raise RuntimeError(f"Diagram preset {preset_path} is missing required settings: {', '.join(missing)}")
 
-    return {key: getattr(module, key) for key in REQUIRED_DIAGRAM_PRESET_KEYS}
+    preset = dict(OPTIONAL_DIAGRAM_PRESET_DEFAULTS)
+    preset.update({key: getattr(module, key) for key in REQUIRED_DIAGRAM_PRESET_KEYS})
+    for key in OPTIONAL_DIAGRAM_PRESET_DEFAULTS:
+        if hasattr(module, key):
+            preset[key] = getattr(module, key)
+    return preset
 
 
 def apply_diagram_preset(preset_file_stem):
@@ -384,6 +466,923 @@ def get_trap_layer_mask(matrix_shape, metadata):
     )
 
 
+def build_visualization_area_masks(matrix_shape, metadata):
+    """Return non-overlapping A/B/special-area masks using simulation precedence."""
+    rows, cols = matrix_shape
+    mid_x = cols // 2
+    area_a = rectangle_mask(matrix_shape, 0, mid_x)
+    area_b = rectangle_mask(matrix_shape, mid_x, cols)
+    areas = {"Area A": area_a, "Area B": area_b}
+
+    trap_mask = get_trap_layer_mask(matrix_shape, metadata)
+    if trap_mask is not None:
+        areas["Area A"] &= ~trap_mask
+        areas["Area B"] &= ~trap_mask
+        areas["Trap layer"] = trap_mask.copy()
+
+    spot_mask = get_spot_mask(matrix_shape, metadata)
+    if spot_mask is not None:
+        for mask in areas.values():
+            mask &= ~spot_mask
+        areas["Spot"] = spot_mask.copy()
+
+    return {name: mask for name, mask in areas.items() if np.any(mask)}
+
+
+def get_special_region_mask(matrix_shape, metadata):
+    special_mask = np.zeros(matrix_shape, dtype=bool)
+    spot_mask = get_spot_mask(matrix_shape, metadata)
+    trap_mask = get_trap_layer_mask(matrix_shape, metadata)
+    if trap_mask is not None:
+        special_mask |= trap_mask
+    if spot_mask is not None:
+        special_mask |= spot_mask
+    return special_mask
+
+
+def draw_special_region_outlines(axis, matrix_shape, metadata):
+    if not SHOW_SPECIAL_REGION_OUTLINES:
+        return
+
+    spot_settings = get_spot_settings(metadata)
+    if spot_settings is not None:
+        axis.add_patch(Circle(
+            (spot_settings["center_x"], spot_settings["center_y"]),
+            spot_settings["diameter"] / 2,
+            fill=False,
+            edgecolor=SPECIAL_REGION_OUTLINE_COLOR,
+            linewidth=SPECIAL_REGION_OUTLINE_WIDTH,
+            linestyle=SPECIAL_REGION_OUTLINE_STYLE,
+            zorder=8,
+        ))
+
+    trap_settings = get_trap_layer_settings(matrix_shape, metadata)
+    if trap_settings is not None:
+        rows, _ = matrix_shape
+        left = trap_settings["center_x"] - trap_settings["width"] / 2
+        axis.add_patch(Rectangle(
+            (left, -0.5),
+            trap_settings["width"],
+            rows,
+            fill=False,
+            edgecolor=SPECIAL_REGION_OUTLINE_COLOR,
+            linewidth=SPECIAL_REGION_OUTLINE_WIDTH,
+            linestyle=SPECIAL_REGION_OUTLINE_STYLE,
+            zorder=8,
+        ))
+
+
+def compute_smoothed_occupancy_field(matrix, metadata):
+    """Smooth H/site counts, optionally without bleeding across material boundaries."""
+    from scipy.ndimage import gaussian_filter
+
+    sigma = max(0.0, float(HEATMAP_SIGMA))
+    hydrogen = (matrix == 2).astype(np.float32)
+    active = (matrix > 0).astype(np.float32)
+    occupancy = np.full(matrix.shape, np.nan, dtype=np.float32)
+
+    if HEATMAP_RESPECT_AREA_BOUNDARIES:
+        areas = build_visualization_area_masks(matrix.shape, metadata)
+        if HEATMAP_SEPARATE_BASE_AREAS:
+            area_masks = list(areas.values())
+        else:
+            bulk_mask = np.zeros(matrix.shape, dtype=bool)
+            area_masks = []
+            for name, area_mask in areas.items():
+                if name in {"Area A", "Area B"}:
+                    bulk_mask |= area_mask
+                else:
+                    area_masks.append(area_mask)
+            if np.any(bulk_mask):
+                area_masks.insert(0, bulk_mask)
+    else:
+        area_masks = [np.ones(matrix.shape, dtype=bool)]
+
+    for area_mask in area_masks:
+        masked_hydrogen = hydrogen * area_mask
+        masked_active = active * area_mask
+        if sigma > 0:
+            local_hydrogen = gaussian_filter(masked_hydrogen, sigma=sigma, mode="reflect")
+            local_active = gaussian_filter(masked_active, sigma=sigma, mode="reflect")
+        else:
+            local_hydrogen = masked_hydrogen
+            local_active = masked_active
+
+        valid = area_mask & (local_active > 1e-7)
+        occupancy[valid] = local_hydrogen[valid] / local_active[valid]
+
+    return occupancy
+
+
+def compute_bulk_reference_field(matrix, metadata):
+    """Create a per-pixel bulk reference without letting spot/trap values define it."""
+    rows, cols = matrix.shape
+    mid_x = cols // 2
+    special_mask = get_special_region_mask(matrix.shape, metadata)
+    active = matrix > 0
+    hydrogen = matrix == 2
+    bulk_mask = active & ~special_mask
+
+    global_count = int(np.sum(bulk_mask))
+    global_reference = (
+        float(np.sum(hydrogen & bulk_mask)) / global_count
+        if global_count
+        else float(np.sum(hydrogen)) / max(1, int(np.sum(active)))
+    )
+    reference = np.full(matrix.shape, global_reference, dtype=np.float32)
+
+    if HEATMAP_REFERENCE_MODE == "global_bulk":
+        return reference, {"Bulk": global_reference}
+    if HEATMAP_REFERENCE_MODE != "regional_bulk":
+        raise ValueError("HEATMAP_REFERENCE_MODE must be 'regional_bulk' or 'global_bulk'")
+
+    references = {}
+    for name, x_start, x_end in [("Area A", 0, mid_x), ("Area B", mid_x, cols)]:
+        region_mask = bulk_mask[:, x_start:x_end]
+        denominator = int(np.sum(region_mask))
+        value = (
+            float(np.sum(hydrogen[:, x_start:x_end] & region_mask)) / denominator
+            if denominator
+            else global_reference
+        )
+        reference[:, x_start:x_end] = value
+        references[name] = value
+
+    return reference, references
+
+
+def draw_concentration_heatmap(axis, matrix, metadata):
+    occupancy = compute_smoothed_occupancy_field(matrix, metadata)
+    reference, references = compute_bulk_reference_field(matrix, metadata)
+
+    if HEATMAP_MODE == "deviation":
+        displayed = (occupancy - reference) * 100
+        limit = max(0.1, float(HEATMAP_DEVIATION_LIMIT))
+        vmin, vmax = -limit, limit
+        colorbar_label = "Local occupancy minus bulk reference (percentage points)"
+    elif HEATMAP_MODE == "occupancy":
+        displayed = occupancy * 100
+        vmin, vmax = map(float, HEATMAP_OCCUPANCY_RANGE)
+        colorbar_label = "Smoothed local H occupancy (%)"
+    else:
+        raise ValueError("HEATMAP_MODE must be 'deviation' or 'occupancy'")
+
+    colormap = plt.get_cmap(HEATMAP_COLORMAP).copy()
+    colormap.set_bad(COLOR_EMPTY)
+    image = axis.imshow(
+        np.ma.masked_invalid(displayed),
+        origin="lower",
+        interpolation="bilinear",
+        cmap=colormap,
+        vmin=vmin,
+        vmax=vmax,
+    )
+
+    if HEATMAP_SHOW_CONTOURS:
+        levels = [
+            float(level)
+            for level in HEATMAP_CONTOUR_LEVELS
+            if vmin < float(level) < vmax
+        ]
+        if levels:
+            axis.contour(
+                displayed,
+                levels=levels,
+                colors=HEATMAP_CONTOUR_COLOR,
+                alpha=HEATMAP_CONTOUR_ALPHA,
+                linewidths=0.55,
+                origin="lower",
+            )
+
+    if HEATMAP_SHOW_COLORBAR:
+        colorbar = axis.figure.colorbar(image, ax=axis, pad=0.02, fraction=0.046)
+        colorbar.set_label(colorbar_label)
+
+    reference_text = ", ".join(
+        f"{name}: {value * 100:.1f}%"
+        for name, value in references.items()
+    )
+    axis.text(
+        0.01,
+        0.02,
+        f"Reference occupancy — {reference_text}",
+        transform=axis.transAxes,
+        ha="left",
+        va="bottom",
+        fontsize=8.5,
+        color="#202020",
+        bbox={"facecolor": "#FFFFFF", "edgecolor": "#707070", "alpha": 0.88, "pad": 3},
+        zorder=9,
+    )
+
+
+def draw_printer_glyphs(axis, matrix, metadata):
+    """Draw non-overlapping binned circles: sector=occupancy, size=site capacity."""
+    rows, cols = matrix.shape
+    bin_size = max(2, int(GLYPH_BIN_SIZE))
+    radius_floor = float(np.clip(GLYPH_MIN_RADIUS_FRACTION, 0.0, 1.0))
+    radius_ceiling = float(np.clip(GLYPH_MAX_RADIUS_FRACTION, radius_floor, 1.0))
+    capacity_gamma = max(0.01, float(GLYPH_CAPACITY_GAMMA))
+    axis.set_facecolor(GLYPH_BACKGROUND_COLOR)
+
+    # Distribute remainder cells over all bins instead of creating tiny edge bins.
+    x_bin_count = max(1, int(round(cols / bin_size)))
+    y_bin_count = max(1, int(round(rows / bin_size)))
+    x_edges = np.rint(np.linspace(0, cols, x_bin_count + 1)).astype(int)
+    y_edges = np.rint(np.linspace(0, rows, y_bin_count + 1)).astype(int)
+
+    for y_start, y_end in zip(y_edges[:-1], y_edges[1:]):
+        for x_start, x_end in zip(x_edges[:-1], x_edges[1:]):
+            block = matrix[y_start:y_end, x_start:x_end]
+            active_count = int(np.sum(block > 0))
+            if active_count == 0:
+                continue
+
+            area = block.size
+            capacity = active_count / area
+            occupancy = float(np.sum(block == 2)) / active_count
+            compressed_capacity = capacity ** capacity_gamma
+            radius_scale = radius_floor + (
+                radius_ceiling - radius_floor
+            ) * compressed_capacity
+            radius = 0.5 * min(x_end - x_start, y_end - y_start) * radius_scale
+            center = ((x_start + x_end - 1) / 2, (y_start + y_end - 1) / 2)
+
+            axis.add_patch(Circle(
+                center,
+                radius,
+                facecolor=COLOR_AVAILABLE_SPOT,
+                edgecolor="none",
+                alpha=DOT_ALPHA_AVAILABLE,
+                zorder=2,
+            ))
+            if occupancy > 0:
+                axis.add_patch(Wedge(
+                    center,
+                    radius,
+                    90,
+                    90 + 360 * occupancy,
+                    facecolor=COLOR_HYDROGEN,
+                    edgecolor="none",
+                    alpha=DOT_ALPHA_HYDROGEN,
+                    zorder=3,
+                ))
+            axis.add_patch(Circle(
+                center,
+                radius,
+                fill=False,
+                edgecolor=GLYPH_EDGE_COLOR,
+                linewidth=GLYPH_EDGE_WIDTH,
+                zorder=4,
+            ))
+
+    if GLYPH_SHOW_GRID:
+        for x_position in x_edges:
+            axis.axvline(x_position - 0.5, color=GLYPH_GRID_COLOR, linewidth=0.25, zorder=1)
+        for y_position in y_edges:
+            axis.axhline(y_position - 0.5, color=GLYPH_GRID_COLOR, linewidth=0.25, zorder=1)
+
+    if GLYPH_SHOW_EXPLANATION:
+        explanation_lines = [
+            (
+                f"Each circle ≈ one {bin_size}×{bin_size}-cell bin   •   "
+                "red sector = H occupancy"
+            ),
+            "circle size = relative available-site density",
+        ]
+        if GLYPH_SHOW_SPECIAL_REGION_VALUES:
+            region_values = []
+            spot_mask = get_spot_mask(matrix.shape, metadata)
+            if spot_mask is not None:
+                spot_concentration = concentration_percent(matrix, spot_mask)
+                if spot_concentration is not None:
+                    region_values.append(
+                        f"dashed spot = {spot_concentration:.1f}% H"
+                    )
+
+            trap_mask = get_trap_layer_mask(matrix.shape, metadata)
+            if trap_mask is not None:
+                if spot_mask is not None:
+                    trap_mask = trap_mask & ~spot_mask
+                trap_concentration = concentration_percent(matrix, trap_mask)
+                if trap_concentration is not None:
+                    region_values.append(
+                        f"dashed trap layer = {trap_concentration:.1f}% H"
+                    )
+            if region_values:
+                explanation_lines[-1] += "   •   " + "   •   ".join(region_values)
+
+        axis.text(
+            0.01,
+            0.02,
+            "\n".join(explanation_lines),
+            transform=axis.transAxes,
+            ha="left",
+            va="bottom",
+            fontsize=8.5,
+            color="#202020",
+            bbox={"facecolor": "#FFFFFF", "edgecolor": "#707070", "alpha": 0.92, "pad": 3},
+            zorder=9,
+        )
+
+
+def get_source_sink_ranges(matrix_shape, metadata):
+    """Return source and sink x ranges, or None when the boundary mode is off."""
+    if not metadata_bool(metadata, "USE_SINK_SOURCE"):
+        return None
+
+    _, cols = matrix_shape
+    thickness = int(np.clip(
+        metadata_int(metadata, "SINK_SOURCE_THICKNESS"),
+        0,
+        cols,
+    ))
+    if thickness == 0:
+        return None
+
+    left_range = (0, thickness)
+    right_range = (cols - thickness, cols)
+    if metadata_str(metadata, "SOURCE_SIDE") == "left":
+        return {"Source": left_range, "Sink": right_range}
+    return {"Source": right_range, "Sink": left_range}
+
+
+def build_stylized_area_masks(matrix_shape, metadata):
+    """Return display masks, excluding solid source/sink bands when requested."""
+    masks = build_visualization_area_masks(matrix_shape, metadata)
+    source_sink_ranges = (
+        get_source_sink_ranges(matrix_shape, metadata)
+        if AREA_SUMMARY_SHOW_SOURCE_SINK_BANDS
+        else None
+    )
+    if source_sink_ranges is None:
+        return masks, None
+
+    boundary_mask = np.zeros(matrix_shape, dtype=bool)
+    for x_start, x_end in source_sink_ranges.values():
+        boundary_mask |= rectangle_mask(matrix_shape, x_start, x_end)
+    for mask in masks.values():
+        mask &= ~boundary_mask
+
+    return {
+        name: mask
+        for name, mask in masks.items()
+        if np.any(mask)
+    }, source_sink_ranges
+
+
+def allocate_stylized_dot_counts(weights):
+    """Allocate a fixed visual dot budget while retaining small visible areas."""
+    weights = np.asarray(weights, dtype=np.float64)
+    positive = weights > 0
+    allocation = np.zeros(len(weights), dtype=np.int64)
+    if not np.any(positive):
+        return allocation
+
+    minimum = max(0, int(AREA_SUMMARY_MIN_DOTS_PER_AREA))
+    total = max(
+        int(AREA_SUMMARY_TOTAL_DOTS),
+        minimum * int(np.sum(positive)),
+    )
+    allocation[positive] = minimum
+    remaining = total - int(np.sum(allocation))
+    if remaining <= 0:
+        return allocation
+
+    normalized = weights[positive] / np.sum(weights[positive])
+    raw_extra = normalized * remaining
+    extra = np.floor(raw_extra).astype(np.int64)
+    allocation[positive] += extra
+    unassigned = remaining - int(np.sum(extra))
+    if unassigned:
+        positive_indices = np.flatnonzero(positive)
+        order = np.argsort(-(raw_extra - extra))
+        allocation[positive_indices[order[:unassigned]]] += 1
+    return allocation
+
+
+def generate_hex_candidates(mask, spacing, phase_x, phase_y):
+    """Generate one staggered lattice and retain points whose centres lie in mask."""
+    row_indices = np.flatnonzero(np.any(mask, axis=1))
+    column_indices = np.flatnonzero(np.any(mask, axis=0))
+    if not len(row_indices) or not len(column_indices):
+        return np.empty(0), np.empty(0)
+
+    y_min, y_max = row_indices[[0, -1]]
+    x_min, x_max = column_indices[[0, -1]]
+    vertical_spacing = spacing * np.sqrt(3) / 2
+    y_start = y_min - vertical_spacing + phase_y * vertical_spacing
+    y_values = np.arange(
+        y_start,
+        y_max + vertical_spacing,
+        vertical_spacing,
+    )
+
+    x_parts = []
+    y_parts = []
+    for row_number, y_position in enumerate(y_values):
+        stagger = (row_number % 2) * spacing / 2
+        x_start = x_min - spacing + phase_x * spacing + stagger
+        x_values = np.arange(x_start, x_max + spacing, spacing)
+        rounded_x = np.rint(x_values).astype(int)
+        rounded_y = np.full(len(x_values), int(round(y_position)), dtype=int)
+        in_bounds = (
+            (rounded_x >= 0)
+            & (rounded_x < mask.shape[1])
+            & (rounded_y >= 0)
+            & (rounded_y < mask.shape[0])
+        )
+        if not np.any(in_bounds):
+            continue
+        rounded_x = rounded_x[in_bounds]
+        rounded_y = rounded_y[in_bounds]
+        inside = mask[rounded_y, rounded_x]
+        if np.any(inside):
+            x_parts.append(x_values[in_bounds][inside])
+            y_parts.append(np.full(np.sum(inside), y_position))
+
+    if not x_parts:
+        return np.empty(0), np.empty(0)
+    return np.concatenate(x_parts), np.concatenate(y_parts)
+
+
+def generate_even_hex_positions(mask, requested_count, rng):
+    """Fit an even staggered lattice, capping only when print spacing requires it."""
+    requested_count = max(0, int(requested_count))
+    if requested_count == 0 or not np.any(mask):
+        return np.empty(0), np.empty(0)
+
+    minimum_spacing = max(0.5, float(AREA_SUMMARY_MIN_DOT_SPACING))
+    mask_area = int(np.sum(mask))
+    ideal_spacing = np.sqrt(
+        2 * mask_area / (np.sqrt(3) * requested_count)
+    )
+    phase_x, phase_y = rng.random(2)
+
+    def candidates(spacing):
+        return generate_hex_candidates(
+            mask,
+            spacing,
+            phase_x,
+            phase_y,
+        )
+
+    minimum_candidates = candidates(minimum_spacing)
+    minimum_count = len(minimum_candidates[0])
+    if minimum_count <= requested_count:
+        # This is the area's non-overlapping visual capacity at print size.
+        return minimum_candidates
+
+    low_spacing = max(minimum_spacing, ideal_spacing)
+    low_candidates = candidates(low_spacing)
+    if len(low_candidates[0]) < requested_count:
+        high_spacing = low_spacing
+        low_spacing = minimum_spacing
+        best_candidates = minimum_candidates
+    else:
+        best_candidates = low_candidates
+        high_spacing = low_spacing * 1.25
+        high_candidates = candidates(high_spacing)
+        while len(high_candidates[0]) >= requested_count:
+            low_spacing = high_spacing
+            best_candidates = high_candidates
+            high_spacing *= 1.25
+            high_candidates = candidates(high_spacing)
+
+    # Find the sparsest lattice that still supplies the requested count.
+    for _ in range(18):
+        middle_spacing = (low_spacing + high_spacing) / 2
+        middle_candidates = candidates(middle_spacing)
+        if len(middle_candidates[0]) >= requested_count:
+            low_spacing = middle_spacing
+            best_candidates = middle_candidates
+        else:
+            high_spacing = middle_spacing
+
+    candidate_count = len(best_candidates[0])
+    if candidate_count == requested_count:
+        return best_candidates
+
+    # Remove the small excess evenly across the row-major lattice.
+    selected = np.floor(
+        (np.arange(requested_count) + 0.5)
+        * candidate_count
+        / requested_count
+    ).astype(int)
+    return best_candidates[0][selected], best_candidates[1][selected]
+
+
+def shake_profile_settings():
+    profiles = {
+        "none": (0.0, 0, 0.0),
+        "gentle": (1.4, 1, 0.0),
+        "organic": (2.8, 2, 0.0),
+        "clustered": (4.2, 4, float(AREA_SUMMARY_CLUSTER_ATTRACTION)),
+    }
+    mode = str(AREA_SUMMARY_SHAKE_MODE)
+    if mode not in profiles:
+        raise ValueError(
+            "AREA_SUMMARY_SHAKE_MODE must be 'none', 'gentle', "
+            "'organic', or 'clustered'"
+        )
+
+    strength, passes, attraction = profiles[mode]
+    if AREA_SUMMARY_SHAKE_STRENGTH is not None:
+        strength = max(0.0, float(AREA_SUMMARY_SHAKE_STRENGTH))
+    if AREA_SUMMARY_SHAKE_PASSES is not None:
+        passes = max(0, int(AREA_SUMMARY_SHAKE_PASSES))
+    return mode, strength, passes, attraction
+
+
+def shake_even_positions(x_coordinates, y_coordinates, mask, rng):
+    """Disturb an even layout while preserving area ownership and hard spacing."""
+    mode, strength, pass_count, attraction = shake_profile_settings()
+    if mode == "none" or strength == 0 or pass_count == 0:
+        return x_coordinates, y_coordinates
+
+    positions = np.column_stack([
+        np.asarray(x_coordinates, dtype=np.float64),
+        np.asarray(y_coordinates, dtype=np.float64),
+    ])
+    point_count = len(positions)
+    if point_count < 2:
+        return positions[:, 0], positions[:, 1]
+
+    minimum_spacing = max(0.5, float(AREA_SUMMARY_MIN_DOT_SPACING))
+    minimum_distance_squared = minimum_spacing ** 2
+    cell_size = minimum_spacing
+    attempt_count = max(1, int(AREA_SUMMARY_SHAKE_ATTEMPTS))
+
+    def cell_for(position):
+        return (
+            int(np.floor(position[0] / cell_size)),
+            int(np.floor(position[1] / cell_size)),
+        )
+
+    spatial_buckets = {}
+    for point_index, position in enumerate(positions):
+        spatial_buckets.setdefault(cell_for(position), set()).add(point_index)
+
+    cluster_centers = None
+    if attraction > 0:
+        cluster_count = int(np.clip(
+            AREA_SUMMARY_CLUSTER_COUNT,
+            1,
+            point_count,
+        ))
+        center_indices = rng.choice(
+            point_count,
+            size=cluster_count,
+            replace=False,
+        )
+        cluster_centers = positions[center_indices].copy()
+
+    for _ in range(pass_count):
+        for point_index in rng.permutation(point_count):
+            current = positions[point_index]
+            current_cell = cell_for(current)
+
+            for _ in range(attempt_count):
+                angle = rng.uniform(0, 2 * np.pi)
+                radius = strength * np.sqrt(rng.random())
+                displacement = radius * np.array([
+                    np.cos(angle),
+                    np.sin(angle),
+                ])
+
+                if cluster_centers is not None:
+                    differences = cluster_centers - current
+                    nearest_center = differences[
+                        np.argmin(np.sum(differences ** 2, axis=1))
+                    ]
+                    distance = np.linalg.norm(nearest_center)
+                    if distance > 1e-12:
+                        displacement = (
+                            (1 - attraction) * displacement
+                            + attraction
+                            * strength
+                            * rng.random()
+                            * nearest_center
+                            / distance
+                        )
+
+                candidate = current + displacement
+                candidate_x = int(round(candidate[0]))
+                candidate_y = int(round(candidate[1]))
+                if (
+                    candidate_x < 0
+                    or candidate_x >= mask.shape[1]
+                    or candidate_y < 0
+                    or candidate_y >= mask.shape[0]
+                    or not mask[candidate_y, candidate_x]
+                ):
+                    continue
+
+                candidate_cell = cell_for(candidate)
+                is_clear = True
+                for x_offset in (-1, 0, 1):
+                    for y_offset in (-1, 0, 1):
+                        nearby = spatial_buckets.get((
+                            candidate_cell[0] + x_offset,
+                            candidate_cell[1] + y_offset,
+                        ))
+                        if not nearby:
+                            continue
+                        for other_index in nearby:
+                            if other_index == point_index:
+                                continue
+                            difference = positions[other_index] - candidate
+                            if np.dot(difference, difference) < minimum_distance_squared:
+                                is_clear = False
+                                break
+                        if not is_clear:
+                            break
+                    if not is_clear:
+                        break
+                if not is_clear:
+                    continue
+
+                if candidate_cell != current_cell:
+                    spatial_buckets[current_cell].remove(point_index)
+                    if not spatial_buckets[current_cell]:
+                        del spatial_buckets[current_cell]
+                    spatial_buckets.setdefault(candidate_cell, set()).add(
+                        point_index
+                    )
+                positions[point_index] = candidate
+                break
+
+    return positions[:, 0], positions[:, 1]
+
+
+def draw_source_sink_bands(axis, matrix_shape, source_sink_ranges):
+    if source_sink_ranges is None:
+        return
+
+    rows, _ = matrix_shape
+    colors = {
+        "Source": COLOR_HYDROGEN,
+        "Sink": COLOR_AVAILABLE_SPOT,
+    }
+    for name, (x_start, x_end) in source_sink_ranges.items():
+        axis.add_patch(Rectangle(
+            (x_start - 0.5, -0.5),
+            x_end - x_start,
+            rows,
+            facecolor=colors[name],
+            edgecolor=AREA_SUMMARY_SOURCE_SINK_EDGE_COLOR,
+            linewidth=AREA_SUMMARY_SOURCE_SINK_EDGE_WIDTH,
+            zorder=2,
+        ))
+        if AREA_SUMMARY_SHOW_SOURCE_SINK_LABELS:
+            axis.text(
+                (x_start + x_end - 1) / 2,
+                rows / 2,
+                name,
+                ha="center",
+                va="center",
+                rotation=90,
+                fontsize=8,
+                color="#FFFFFF",
+                zorder=8,
+            )
+
+
+def stylized_area_label_position(name, mask, matrix_shape, metadata):
+    rows, _ = matrix_shape
+    columns = np.flatnonzero(np.any(mask, axis=0))
+    center_x = float(np.mean(columns))
+    if name in {"Area A", "Area B"}:
+        return center_x, rows * 0.90
+    if name == "Trap layer":
+        return center_x, rows * 0.13
+    if name == "Spot":
+        spot = get_spot_settings(metadata)
+        if spot is not None:
+            return (
+                spot["center_x"],
+                spot["center_y"] + spot["diameter"] * 0.72,
+            )
+    return center_x, rows * 0.50
+
+
+def draw_stylized_area_label(
+    axis,
+    name,
+    position_mask,
+    concentration_mask,
+    matrix,
+    metadata,
+):
+    concentration = concentration_percent(matrix, concentration_mask)
+    if concentration is None:
+        text = f"{name}: n/a"
+    else:
+        text = f"{name}: {concentration:.1f}% H"
+    position = stylized_area_label_position(
+        name,
+        position_mask,
+        matrix.shape,
+        metadata,
+    )
+    label = axis.text(
+        position[0],
+        position[1],
+        text,
+        ha="center",
+        va="center",
+        fontsize=ANNOTATION_FONT_SIZE,
+        color=ANNOTATION_COLOR,
+        bbox={
+            "facecolor": ANNOTATION_BOX_FACE_COLOR,
+            "edgecolor": ANNOTATION_BOX_EDGE_COLOR,
+            "alpha": ANNOTATION_BOX_ALPHA,
+            "pad": 2.5,
+        },
+        zorder=9,
+    )
+    label.set_path_effects([
+        path_effects.withStroke(
+            linewidth=ANNOTATION_STROKE_WIDTH,
+            foreground=ANNOTATION_STROKE_COLOR,
+        )
+    ])
+
+
+def draw_area_summary_dots(axis, matrix, metadata):
+    """Reconstruct area averages as a clean randomized dot field in matrix space."""
+    from scipy.ndimage import binary_erosion
+
+    rows, cols = matrix.shape
+    axis.set_facecolor(AREA_SUMMARY_BACKGROUND_COLOR)
+    masks, source_sink_ranges = build_stylized_area_masks(matrix.shape, metadata)
+    concentration_masks = build_visualization_area_masks(matrix.shape, metadata)
+    area_names = [
+        name
+        for name in ["Area A", "Area B", "Spot", "Trap layer"]
+        if name in masks
+    ]
+
+    if AREA_SUMMARY_DENSITY_MODE == "available_sites":
+        weights = [
+            int(np.sum((matrix > 0) & masks[name]))
+            for name in area_names
+        ]
+    elif AREA_SUMMARY_DENSITY_MODE == "uniform_area":
+        weights = [int(np.sum(masks[name])) for name in area_names]
+    else:
+        raise ValueError(
+            "AREA_SUMMARY_DENSITY_MODE must be 'available_sites' or 'uniform_area'"
+        )
+    dot_counts = allocate_stylized_dot_counts(weights)
+
+    draw_source_sink_bands(axis, matrix.shape, source_sink_ranges)
+
+    base_seed = int(AREA_SUMMARY_RANDOM_SEED)
+    jitter = float(np.clip(AREA_SUMMARY_POSITION_JITTER, 0.0, 0.49))
+    for area_index, (name, dot_count) in enumerate(zip(area_names, dot_counts)):
+        if dot_count <= 0:
+            continue
+
+        mask = masks[name]
+        position_inset = max(0, int(AREA_SUMMARY_POSITION_INSET))
+        if position_inset:
+            inset_mask = binary_erosion(
+                mask,
+                iterations=position_inset,
+                border_value=0,
+            )
+            position_mask = inset_mask if np.any(inset_mask) else mask
+        else:
+            position_mask = mask
+        candidate_pixels = np.flatnonzero(position_mask)
+        position_rng = np.random.default_rng(np.random.SeedSequence([
+            base_seed,
+            area_index,
+            0,
+        ]))
+        color_rng = np.random.default_rng(np.random.SeedSequence([
+            base_seed,
+            area_index,
+            1,
+        ]))
+        if AREA_SUMMARY_POSITION_MODE == "even_hex":
+            x_coordinates, y_coordinates = generate_even_hex_positions(
+                position_mask,
+                dot_count,
+                position_rng,
+            )
+            x_coordinates, y_coordinates = shake_even_positions(
+                x_coordinates,
+                y_coordinates,
+                position_mask,
+                position_rng,
+            )
+            dot_count = len(x_coordinates)
+        elif AREA_SUMMARY_POSITION_MODE == "random":
+            selected_pixels = position_rng.choice(
+                candidate_pixels,
+                size=int(dot_count),
+                replace=dot_count > len(candidate_pixels),
+            )
+            y_coordinates, x_coordinates = np.divmod(selected_pixels, cols)
+            x_coordinates = x_coordinates + position_rng.uniform(
+                -jitter,
+                jitter,
+                size=dot_count,
+            )
+            y_coordinates = y_coordinates + position_rng.uniform(
+                -jitter,
+                jitter,
+                size=dot_count,
+            )
+        else:
+            raise ValueError(
+                "AREA_SUMMARY_POSITION_MODE must be 'even_hex' or 'random'"
+            )
+
+        if dot_count == 0:
+            continue
+
+        concentration_mask = concentration_masks[name]
+        concentration = concentration_percent(matrix, concentration_mask)
+        occupied_dot_count = (
+            int(np.clip(
+                np.floor(concentration / 100 * dot_count + 0.5),
+                0,
+                dot_count,
+            ))
+            if concentration is not None
+            else 0
+        )
+        colors = np.full(dot_count, COLOR_AVAILABLE_SPOT, dtype=object)
+        if occupied_dot_count:
+            occupied_indices = color_rng.choice(
+                dot_count,
+                size=occupied_dot_count,
+                replace=False,
+            )
+            colors[occupied_indices] = COLOR_HYDROGEN
+        axis.scatter(
+            x_coordinates,
+            y_coordinates,
+            s=AREA_SUMMARY_DOT_SIZE,
+            c=colors,
+            alpha=AREA_SUMMARY_DOT_ALPHA,
+            marker="o",
+            edgecolors=AREA_SUMMARY_DOT_EDGE_COLOR,
+            linewidths=AREA_SUMMARY_DOT_EDGE_WIDTH,
+            zorder=3,
+        )
+
+        if AREA_SUMMARY_SHOW_AREA_LABELS:
+            draw_stylized_area_label(
+                axis,
+                name,
+                mask,
+                concentration_mask,
+                matrix,
+                metadata,
+            )
+
+    if AREA_SUMMARY_SHOW_HALF_DIVIDER:
+        axis.axvline(
+            cols / 2 - 0.5,
+            color=AREA_SUMMARY_HALF_DIVIDER_COLOR,
+            linewidth=0.7,
+            alpha=0.65,
+            zorder=4,
+        )
+
+    if AREA_SUMMARY_SHOW_EXPLANATION:
+        density_text = (
+            "dot density = measured available-site density"
+            if AREA_SUMMARY_DENSITY_MODE == "available_sites"
+            else "dot density = uniform display density"
+        )
+        axis.text(
+            0.01,
+            0.02,
+            (
+                "Synthetic positions for clear printing   •   "
+                "red fraction = measured area-average H occupancy   •   "
+                f"{density_text}"
+            ),
+            transform=axis.transAxes,
+            ha="left",
+            va="bottom",
+            fontsize=8.5,
+            color="#202020",
+            bbox={
+                "facecolor": "#FFFFFF",
+                "edgecolor": "#707070",
+                "alpha": 0.92,
+                "pad": 3,
+            },
+            zorder=9,
+        )
+
+
 def max_solubility_for_x(metadata, x_position, matrix_width):
     key = "max_sol_a" if x_position < matrix_width / 2 else "max_sol_b"
     return value_to_percent(metadata[key])
@@ -538,9 +1537,19 @@ def draw_main_panel(axis, matrix, saved_step, metadata):
             marker="o",
             edgecolors="none",
         )
+    elif RENDER_MODE == "concentration_heatmap":
+        draw_concentration_heatmap(axis, matrix, metadata)
+    elif RENDER_MODE == "printer_glyphs":
+        draw_printer_glyphs(axis, matrix, metadata)
+    elif RENDER_MODE == "area_summary_dots":
+        draw_area_summary_dots(axis, matrix, metadata)
     else:
-        raise ValueError("RENDER_MODE must be 'pixels' or 'dots'")
+        raise ValueError(
+            "RENDER_MODE must be 'pixels', 'dots', 'concentration_heatmap', "
+            "'printer_glyphs', or 'area_summary_dots'"
+        )
 
+    draw_special_region_outlines(axis, matrix.shape, metadata)
     axis.set_xlim(-0.5, cols - 0.5)
     axis.set_ylim(-0.5, rows - 0.5)
     axis.set_aspect("equal")
@@ -566,8 +1575,23 @@ def draw_main_panel(axis, matrix, saved_step, metadata):
                 fontsize=ANNOTATION_FONT_SIZE,
                 ha="center",
                 va="center",
+                bbox=(
+                    {
+                        "facecolor": ANNOTATION_BOX_FACE_COLOR,
+                        "edgecolor": ANNOTATION_BOX_EDGE_COLOR,
+                        "alpha": ANNOTATION_BOX_ALPHA,
+                        "pad": 2.5,
+                    }
+                    if ANNOTATION_BOX_ENABLED
+                    else None
+                ),
             )
-            label.set_path_effects([path_effects.withStroke(linewidth=2.5, foreground="#000000")])
+            label.set_path_effects([
+                path_effects.withStroke(
+                    linewidth=ANNOTATION_STROKE_WIDTH,
+                    foreground=ANNOTATION_STROKE_COLOR,
+                )
+            ])
 
 
 def draw_concentration_profile(axis, matrix, metadata):
@@ -711,8 +1735,11 @@ def create_figure(matrix, saved_step, frame_index, metadata, diffusion_data):
         elif panel_name == "speed":
             draw_diffusion_speed(axis, diffusion_data, saved_step)
 
-    fig.suptitle(f"Saved Frame {frame_index}", fontsize=14)
-    fig.subplots_adjust(top=0.88)
+    if SHOW_FRAME_SUPTITLE:
+        fig.suptitle(f"Saved Frame {frame_index}", fontsize=14)
+        fig.subplots_adjust(top=0.88)
+    else:
+        fig.subplots_adjust(top=0.94)
     match_side_panel_heights_to_main(fig, axes_by_panel)
     return fig
 
