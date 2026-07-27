@@ -7,39 +7,49 @@ P6 provides three supported wiggle-derived movement modes plus the deprecated `f
 They share the same matrix initialization, concentration settings, spot/layer topology, HDF5 snapshot
 format, and plotting tools. The supported modes differ in how molecular movement is executed.
 
-## Initial concentration and spot accounting
+## Initial concentrations and special-area accounting
 
 `concentration_a` and `concentration_b` set the initial hydrogen percentage on the ordinary available
-sites in the left and right halves. When `USE_SPOT = True`, `concentration_spot` independently sets the
-initial percentage inside the circular spot:
+sites in the left and right halves. The spot and trap layer have independent site density and initial
+occupancy settings:
 
 ```python
 concentration_a = 50
 concentration_b = 50
 concentration_spot = 50  # Only used when USE_SPOT = True
+concentration_trap_layer = 0  # Only used when USE_TRAP_LAYER = True
+
+TRAP_LAYER_CENTER_X = x // 2
+TRAP_LAYER_WIDTH = 20
+max_sol_trap_layer = Fraction(100, 100)
 ```
 
-Initialization first applies the bulk concentrations, source/sink state, and optional trap geometry.
-The spot is then created last and populated at `concentration_spot`. This gives the spot one unambiguous
-initial concentration even when it lies entirely in one half, crosses the midpoint, overlaps several
-reporting regions, or is clipped by a matrix edge.
+`TRAP_LAYER_CENTER_X` moves the full-height vertical layer horizontally. The configured width is centred
+on that column and is clipped if it reaches a matrix edge. `max_sol_trap_layer` determines what fraction
+of layer pixels become possible H sites; `concentration_trap_layer` determines what fraction of those
+sites initially contain H.
 
-The same circular mask is used by initialization and the still-diagram calculations. The spot label
-uses only red and blue sites inside the circle. All other still-diagram concentration regions—including
-left/right, source/sink, and custom rectangular annotations—subtract whatever portion of the circle
-overlaps their own mask. The still-diagram concentration profile also excludes the circular pixels before
-calculating each column or row. Purple pixels and excluded spot pixels are never part of those
-denominators.
+Initialization first applies the bulk concentrations and source/sink state. The trap layer then replaces
+its exact rectangle with its own solubility and concentration. The spot is created last and populated at
+`concentration_spot`, so the spot owns every pixel where the two special areas overlap.
+
+The same exact masks are used by initialization, movement characteristics, movement-statistics regions,
+and still-diagram calculations. The spot and trap labels use only their owned red and blue sites.
+Left/right, source/sink, and custom rectangular annotations subtract whichever parts of the spot and trap
+overlap their masks. The still-diagram concentration profile excludes the spot but deliberately retains
+the full-height trap layer so its concentration remains visible in the profile. Purple pixels never enter
+an occupancy denominator.
 
 Consequently:
 
 ```text
 spot concentration = red inside spot / (red + blue inside spot)
-bulk region concentration = red in region outside spot / (red + blue in region outside spot)
+trap concentration = red inside trap but outside spot / (red + blue inside trap but outside spot)
+bulk region concentration = red outside spot and trap / (red + blue outside spot and trap)
 ```
 
-No assumption is made about which half or region contains the spot; exclusion is performed by exact mask
-intersection.
+No assumption is made about which half contains the spot or trap layer; ownership and exclusion are
+performed by exact mask intersection.
 
 ## Area characteristics, affinity, and mobility
 
@@ -48,7 +58,7 @@ The user-facing physical model currently has four area characteristics:
 ```text
 a           left base material
 b           right base material
-trap_layer  optional full-height central layer
+    trap_layer  optional movable full-height vertical layer
 spot        optional circular area
 ```
 

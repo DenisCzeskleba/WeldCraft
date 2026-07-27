@@ -102,6 +102,7 @@ region_map, num_regions = create_region_mapping(
     sink_source_thickness,
     cfg.TRAP_LAYER_WIDTH,
     cfg.num_subregions,
+    layer_center_x=cfg.TRAP_LAYER_CENTER_X,
 )
 
 print("Applying concentration")
@@ -118,10 +119,17 @@ if cfg.USE_SINK_SOURCE:
     )
 
 if cfg.USE_TRAP_LAYER:
-    print("Adding trap layer")
+    print(
+        f"Adding trap layer at x={cfg.TRAP_LAYER_CENTER_X}, "
+        f"{float(cfg.max_sol_trap_layer) * 100:g}% max. solubility, "
+        f"{cfg.concentration_trap_layer}% initial concentration"
+    )
     h_spots_matrix = apply_layer(
         h_spots_matrix,
         width=cfg.TRAP_LAYER_WIDTH,
+        center_x=cfg.TRAP_LAYER_CENTER_X,
+        max_solubility=cfg.max_sol_trap_layer,
+        concentration=cfg.concentration_trap_layer,
     )
 
 if cfg.USE_SPOT:
@@ -145,6 +153,7 @@ characteristic_map = create_area_characteristic_map(
     spot_center_y=cfg.SPOT_CENTER_Y,
     use_trap_layer=cfg.USE_TRAP_LAYER,
     trap_layer_width=cfg.TRAP_LAYER_WIDTH,
+    trap_layer_center_x=cfg.TRAP_LAYER_CENTER_X,
 )
 area_affinities, area_mobilities, characteristic_transition_multipliers = (
     create_area_transition_model(cfg.AREA_CHARACTERISTICS)

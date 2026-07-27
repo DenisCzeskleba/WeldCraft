@@ -290,21 +290,26 @@ def create_spot_mask(matrix_shape, diameter=50, center_x=None, center_y=None):
     return (xx - center_x) ** 2 + (yy - center_y) ** 2 < radius ** 2
 
 
-def create_trap_layer_bounds(matrix_width, width):
-    """Return centered, right-exclusive bounds containing exactly ``width`` columns."""
+def create_trap_layer_bounds(matrix_width, width, center_x=None):
+    """Return clipped, right-exclusive bounds for a vertical layer around ``center_x``."""
     matrix_width = int(matrix_width)
     width = int(width)
     if width < 1 or width > matrix_width:
         raise ValueError("TRAP_LAYER_WIDTH must be between 1 and the matrix width")
 
-    left_bound = matrix_width // 2 - width // 2
-    return left_bound, left_bound + width
+    center_x = matrix_width // 2 if center_x is None else int(center_x)
+    if center_x < 0 or center_x >= matrix_width:
+        raise ValueError("TRAP_LAYER_CENTER_X must be inside the matrix")
+
+    left_bound = center_x - width // 2
+    right_bound = left_bound + width
+    return max(0, left_bound), min(matrix_width, right_bound)
 
 
-def create_trap_layer_mask(matrix_shape, width=10):
+def create_trap_layer_mask(matrix_shape, width=10, center_x=None):
     """Return the exact full-height geometry used for the trap layer."""
     rows, cols = matrix_shape
-    left_bound, right_bound = create_trap_layer_bounds(cols, width)
+    left_bound, right_bound = create_trap_layer_bounds(cols, width, center_x=center_x)
     mask = np.zeros((rows, cols), dtype=bool)
     mask[:, left_bound:right_bound] = True
     return mask
@@ -312,14 +317,19 @@ def create_trap_layer_mask(matrix_shape, width=10):
 
 def create_area_characteristic_map(matrix_shape, use_spot=False, spot_diameter=50,
                                    spot_center_x=None, spot_center_y=None,
-                                   use_trap_layer=False, trap_layer_width=10):
+                                   use_trap_layer=False, trap_layer_width=10,
+                                   trap_layer_center_x=None):
     """Compile the four user-facing areas into a fast per-pixel characteristic map."""
     rows, cols = matrix_shape
     characteristic_map = np.full((rows, cols), AREA_B, dtype=np.int8)
     characteristic_map[:, :cols // 2] = AREA_A
 
     if use_trap_layer:
-        trap_mask = create_trap_layer_mask(matrix_shape, width=trap_layer_width)
+        trap_mask = create_trap_layer_mask(
+            matrix_shape,
+            width=trap_layer_width,
+            center_x=trap_layer_center_x,
+        )
         characteristic_map[trap_mask] = AREA_TRAP_LAYER
 
     if use_spot:
@@ -405,16 +415,65 @@ def apply_spot(matrix, diameter=50, center_x=None, center_y=None, concentration=
     return matrix
 
 
-def apply_layer(matrix, width=10):
-    matrix[create_trap_layer_mask(matrix.shape, width=width)] = 1
+def apply_layer(matrix, width=10, center_x=None, max_solubility=1, concentration=0):
+    """Replace a vertical layer with its own site density and initial concentration."""
+    max_solubility = float(max_solubility)
+    concentration = float(concentration)
+    if max_solubility < 0 or max_solubility > 1:
+        raise ValueError("max_sol_trap_layer must be between 0 and 1")
+    if concentration < 0 or concentration > 100:
+        raise ValueError("concentration_trap_layer must be between 0 and 100")
+
+    layer_mask = create_trap_layer_mask(
+        matrix.shape,
+        width=width,
+        center_x=center_x,
+    )
+    layer_indices = np.flatnonzero(layer_mask)
+    matrix.flat[layer_indices] = 0
+
+    available_count = int(max_solubility * len(layer_indices))
+    if available_count == len(layer_indices):
+        available_indices = layer_indices
+    elif available_count > 0:
+        available_indices = np.random.choice(
+            layer_indices,
+            available_count,
+            replace=False,
+        )
+    else:
+        available_indices = np.empty(0, dtype=np.int64)
+    matrix.flat[available_indices] = 1
+
+    hydrogen_count = int(concentration / 100 * len(available_indices))
+    if hydrogen_count == len(available_indices):
+        matrix.flat[available_indices] = 2
+    elif hydrogen_count > 0:
+        hydrogen_indices = np.random.choice(
+            available_indices,
+            hydrogen_count,
+            replace=False,
+        )
+        matrix.flat[hydrogen_indices] = 2
 
     return matrix
 
 
-def create_region_mapping(nx, ny, sink_source_thickness, layer_width, num_subregions=3):
-    left_start = sink_source_thickness
-    left_end, right_start = create_trap_layer_bounds(nx, layer_width)
-    right_end = nx - sink_source_thickness
+def create_region_mapping(nx, ny, sink_source_thickness, layer_width, num_subregions=3,
+                          layer_center_x=None):
+    domain_start = sink_source_thickness
+    domain_end = nx - sink_source_thickness
+    layer_left, layer_right = create_trap_layer_bounds(
+        nx,
+        layer_width,
+        center_x=layer_center_x,
+    )
+    central_start = min(max(layer_left, domain_start), domain_end)
+    central_end = min(max(layer_right, domain_start), domain_end)
+    left_start = domain_start
+    left_end = central_start
+    right_start = central_end
+    right_end = domain_end
 
     left_sub_width = (left_end - left_start) // num_subregions
     right_sub_width = (right_end - right_start) // num_subregions
@@ -431,7 +490,7 @@ def create_region_mapping(nx, ny, sink_source_thickness, layer_width, num_subreg
         end_x = right_start + (i + 1) * right_sub_width
         region_map[start_x:end_x] = num_subregions + i
 
-    region_map[left_end:right_start] = 2 * num_subregions
+    region_map[central_start:central_end] = 2 * num_subregions
 
     return region_map, 2 * num_subregions + 1
 

@@ -19,6 +19,7 @@ from matplotlib.colors import BoundaryNorm, ListedColormap
 with contextlib.redirect_stdout(io.StringIO()):
     from b3_Brown_Functions import (
         create_spot_mask,
+        create_trap_layer_mask,
         in_results,
         load_brown_config_json,
         read_saved_steps,
@@ -84,6 +85,7 @@ REQUIRED_DIAGRAM_PRESET_KEYS = [
     "SHOW_LEFT_RIGHT_WITHOUT_SINK_SOURCE_ANNOTATIONS",
     "SHOW_SOURCE_SINK_ANNOTATIONS",
     "SHOW_SPOT_ANNOTATION",
+    "SHOW_TRAP_LAYER_ANNOTATION",
     "ANNOTATION_FONT_SIZE",
     "ANNOTATION_COLOR",
     "CUSTOM_RECT_REGIONS",
@@ -358,6 +360,30 @@ def get_spot_mask(matrix_shape, metadata):
     )
 
 
+def get_trap_layer_settings(matrix_shape, metadata):
+    if not metadata_bool(metadata, "USE_TRAP_LAYER"):
+        return None
+    _, cols = matrix_shape
+    return {
+        "center_x": int(metadata.get("TRAP_LAYER_CENTER_X", cols // 2)),
+        "width": metadata_int(metadata, "TRAP_LAYER_WIDTH"),
+        "max_solubility": value_to_percent(
+            metadata.get("max_sol_trap_layer", 1)
+        ),
+    }
+
+
+def get_trap_layer_mask(matrix_shape, metadata):
+    trap_settings = get_trap_layer_settings(matrix_shape, metadata)
+    if trap_settings is None:
+        return None
+    return create_trap_layer_mask(
+        matrix_shape,
+        width=trap_settings["width"],
+        center_x=trap_settings["center_x"],
+    )
+
+
 def max_solubility_for_x(metadata, x_position, matrix_width):
     key = "max_sol_a" if x_position < matrix_width / 2 else "max_sol_b"
     return value_to_percent(metadata[key])
@@ -442,9 +468,33 @@ def build_annotation_regions(matrix_shape, metadata):
 
     spot_settings = get_spot_settings(metadata)
     spot_mask = get_spot_mask(matrix_shape, metadata)
+    trap_settings = get_trap_layer_settings(matrix_shape, metadata)
+    trap_mask = get_trap_layer_mask(matrix_shape, metadata)
+
+    excluded_mask = np.zeros(matrix_shape, dtype=bool)
+    if trap_mask is not None:
+        excluded_mask |= trap_mask
     if spot_mask is not None:
+        excluded_mask |= spot_mask
+    if np.any(excluded_mask):
         for region in regions:
-            region["mask"] &= ~spot_mask
+            region["mask"] &= ~excluded_mask
+
+    if trap_mask is not None and spot_mask is not None:
+        trap_mask = trap_mask & ~spot_mask
+
+    if (
+        SHOW_TRAP_LAYER_ANNOTATION
+        and trap_settings is not None
+        and np.any(trap_mask)
+    ):
+        trap_columns = np.flatnonzero(np.any(trap_mask, axis=0))
+        regions.append({
+            "name": "Trap Layer Concentration",
+            "mask": trap_mask,
+            "xy": (float(np.mean(trap_columns)), rows * 0.15),
+            "max_solubility": trap_settings["max_solubility"],
+        })
 
     if SHOW_SPOT_ANNOTATION and spot_settings is not None:
         regions.append({
