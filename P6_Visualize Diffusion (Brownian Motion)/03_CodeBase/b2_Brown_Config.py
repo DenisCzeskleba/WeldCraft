@@ -18,9 +18,9 @@ from fractions import Fraction
 
 simulation_mode = "event_driven_wiggle"
 y = 650  # Height (y)
-x = 650  # Width (x)
+x = 1300  # Width (x)
 
-steps = 5_000_000_000  # use 10_000_000 notation, or 10000000. DO NOT use 100.000.000 10_000_000_000
+steps = 20_000_000_000  # use 10_000_000 notation, or 10000000. DO NOT use 100.000.000 10_000_000_000
 max_radius_to_jump = 10
 
 # ---------------------- Matrix Source ---------------------- #
@@ -28,11 +28,11 @@ MATRIX_SOURCE = "random"  # Options: "random", "image", "lattice"
 
 
 # Used when MATRIX_SOURCE = "random" or "lattice"
-max_sol_a = Fraction(5, 100)
-max_sol_b = Fraction(5, 100)
+max_sol_a = Fraction(10, 100)
+max_sol_b = Fraction(10, 100)
 
 # Independent possible-site densities for the optional special areas
-max_sol_spot = Fraction(0, 100)
+max_sol_spot = Fraction(100, 100)
 max_sol_trap_layer = Fraction(10, 100)
 
 # Used when MATRIX_SOURCE = "lattice"
@@ -47,29 +47,29 @@ max_sol_black = Fraction(2, 100)
 show_image_matrix_plot = True
 
 # ---------------------- Initial Concentration ---------------------- #
-concentration_a = 0
-concentration_b = 0
-concentration_spot = 25  # only used if USE_SPOT = True
+concentration_a = 50
+concentration_b = 50
+concentration_spot = 0  # only used if USE_SPOT = True
 concentration_trap_layer = 75  # only used if USE_TRAP_LAYER = True
 
 # Optional left-to-right linear starting profiles for the two base areas.
 # When enabled, concentration_a and concentration_b above are replaced by these profiles.
 # Each pair is: (concentration at the area's left edge, concentration at its right edge).
-USE_INITIAL_CONCENTRATION_PROFILE = True
+USE_INITIAL_CONCENTRATION_PROFILE = False
 concentration_profile_a = (100, 50)
 concentration_profile_b = (50, 0)
 
 # ---------------------- Layer / Boundary Options ---------------------- #
 USE_SPOT = True
-SPOT_DIAMETER = 120
-SPOT_CENTER_X = 1 * x // 4  # Column position of the spot center
-SPOT_CENTER_Y = 2 * y // 5  # Row position of the spot center
+SPOT_DIAMETER = 80
+SPOT_CENTER_X = 1 * x // 2  # Column position of the spot center
+SPOT_CENTER_Y = 1 * y // 2  # Row position of the spot center
 
 USE_TRAP_LAYER = False
 TRAP_LAYER_CENTER_X = 1 * x // 4
 TRAP_LAYER_WIDTH = 40
 
-USE_SINK_SOURCE = True
+USE_SINK_SOURCE = False
 SINK_SOURCE_THICKNESS = 10
 SOURCE_SIDE = "left"  # Options: "left" or "right"
 num_subregions = 1
@@ -91,7 +91,7 @@ base_movement_probability = 1.0
 AREA_CHARACTERISTICS = {
     "a": {"affinity": 1.0, "mobility": 1.0},
     "b": {"affinity": 1.0, "mobility": 1.0},
-    "spot": {"affinity": 1.0, "mobility": 1.0},
+    "spot": {"affinity": 2.0, "mobility": 1.0},
     "trap_layer": {"affinity": 3.0, "mobility": 1.0},
 }
 

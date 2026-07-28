@@ -84,15 +84,25 @@ DIAGRAM_PRESET = "default"
 DIAGRAM_PRESET = "depletion_heatmap"
 DIAGRAM_PRESET = "printer_friendly"
 DIAGRAM_PRESET = "area_summary"
-DIAGRAM_PRESET = "area_summary_transient"
+DIAGRAM_PRESET = "chapter_2_3_brown_overview"
 ```
 
 Changing this setting does not alter or rerun the simulation. It only changes how one saved HDF5 frame
 is drawn.
 
+Still diagrams can be saved as PNG, PDF, or editable SVG near the top of
+`c3_Brown_Make_Diagram.py`. SVG is the preferred format for further editing in Inkscape:
+
+```python
+SAVE_PNG = False
+SAVE_PDF = False
+SAVE_SVG = True
+SVG_TEXT_AS_PATHS = False  # Keep titles and axis labels editable in Inkscape
+```
+
 `area_summary` preserves the general stylized-dot configuration, including its A/B average labels.
-`area_summary_transient` follows the saved concentration profile across x, omits those regional-average
-labels, and draws the source/sink side bands three times wider for emphasis.
+`chapter_2_3_brown_overview` follows the saved concentration profile across x, omits those
+regional-average labels, and draws the source/sink side bands three times wider for emphasis.
 
 The ordinary `pixels` and `dots` render modes retain individual matrix locations. `pixels` gives every
 matrix cell one image pixel. `dots` draws every available site and H atom at its exact coordinate. A

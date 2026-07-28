@@ -37,7 +37,10 @@ SNAPSHOT_INDEX = -1  # HDF5 saved-frame index to plot; -1 means the last saved f
 # ---------------------- Output ---------------------- #
 SHOW_PLOT = True
 SAVE_PNG = False
-SAVE_PDF = True
+SAVE_PDF = False
+SAVE_SVG = True
+# False keeps labels as editable text in Inkscape; True converts them to paths.
+SVG_TEXT_AS_PATHS = False
 OUTPUT_FOLDER = ""  # Relative to 02_Results; leave empty to save directly in 02_Results.
 OUTPUT_BASENAME = "brownian_diagram"
 SAVE_DPI = 300
@@ -51,8 +54,9 @@ SAVE_DPI = 300
 #   "depletion_heatmap"             - Smoothed local enrichment/depletion heatmap.
 #   "printer_friendly"              - Spatially binned, larger occupancy glyphs for print.
 #   "area_summary"                  - Stylized non-overlapping dots using measured area averages.
-#   "area_summary_transient"        - Stylized dots following a transient saved x-profile.
-DIAGRAM_PRESET = "area_summary_transient"  # File stem in 01_Resources/Diagram_Presets.
+#   "chapter_2_3_brown_overview"    - Stylized dots following a transient saved x-profile.
+#   "area_summary_transient"        - Stylized non-overlapping dots using measured area averages, with transient x-profile.
+DIAGRAM_PRESET = "default"  # File stem in 01_Resources/Diagram_Presets.
 
 REQUIRED_DIAGRAM_PRESET_KEYS = [
     "PRESET_NAME",
@@ -2188,6 +2192,12 @@ def save_outputs(fig, output_dir, frame_index, saved_step, output_variant=None):
         pdf_path = output_dir / f"{basename}.pdf"
         fig.savefig(pdf_path, bbox_inches="tight")
         print(f"Saved PDF: {pdf_path}")
+    if SAVE_SVG:
+        svg_path = output_dir / f"{basename}.svg"
+        svg_fonttype = "path" if SVG_TEXT_AS_PATHS else "none"
+        with plt.rc_context({"svg.fonttype": svg_fonttype}):
+            fig.savefig(svg_path, format="svg", bbox_inches="tight")
+        print(f"Saved SVG: {svg_path}")
 
 
 def requested_area_summary_outputs():
@@ -2231,7 +2241,7 @@ def main():
 
     matrix, saved_step, frame_index, metadata, diffusion_data = load_snapshot_and_context(h5_path, SNAPSHOT_INDEX)
     figures = []
-    output_dir = resolve_output_dir() if SAVE_PNG or SAVE_PDF else None
+    output_dir = resolve_output_dir() if SAVE_PNG or SAVE_PDF or SAVE_SVG else None
     for shake_mode, output_variant in requested_area_summary_outputs():
         if shake_mode is not None:
             print(f"Rendering area-summary shake style: {shake_mode}")

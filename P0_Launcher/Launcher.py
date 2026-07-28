@@ -204,8 +204,12 @@ class Launcher(QMainWindow):
         self.analysis_default_text = "Choose an analysis tool placeholder or return to the main launcher page."
         self.default_text = self.main_default_text
         self.p2_hydrogen_info = (
-            "P2 Hydrogen Diffusion During Welding is code-only for now. Use the scripts directly; a GUI is planned "
+            "Hydrogen Diffusion During Welding is code-only for now. Use the scripts directly; a GUI is planned "
             "later, but not confirmed yet."
+        )
+        self.p6_diffusion_info = (
+            "Visualize Diffusion (Brownian Motion) visualizes diffusion through Brownian motion. It currently "
+            "needs to be launched separately via code; launcher/GUI support is in development."
         )
 
         self.launcher_info_text = self.findChild(QTextEdit, "textEdit_info_text")
@@ -215,6 +219,11 @@ class Launcher(QMainWindow):
             REPO_ROOT,
             "P1_Simulate_Hydrogen_Diffusion",
             "simulate_hydrogen_diffusion.py",
+        )
+        self.path_lattice_visualizer = os.path.join(
+            REPO_ROOT,
+            "P5_Lattice_Visualizer",
+            "visualize_lattice.py",
         )
 
         self.active_processes = {}
@@ -324,20 +333,17 @@ class Launcher(QMainWindow):
                     ),
                 ),
                 self.build_page_entry(
-                    "Placeholder 3",
-                    "Placeholder 3 (maybe Bead-On-Plate-Weld / ISO3690?): Write this later!",
-                    partial(
-                        self.show_placeholder_message,
-                        "Placeholder 3 (maybe Bead-On-Plate-Weld / ISO3690?): Write this later!",
+                    "Lattice Visualizer",
+                    (
+                        "Visualize SC, BCC, and FCC crystal lattices with configurable dopants, "
+                        "overlays, and large atom counts."
                     ),
+                    self.start_lattice_visualizer,
                 ),
                 self.build_page_entry(
-                    "Placeholder 4",
-                    "Placeholder 4 (maybe 1D Diffusion / 1111 Rule?): Write this later!",
-                    partial(
-                        self.show_placeholder_message,
-                        "Placeholder 4 (maybe 1D Diffusion / 1111 Rule?): Write this later!",
-                    ),
+                    "Visualize Diffusion (Brownian Motion)",
+                    self.p6_diffusion_info,
+                    partial(self.show_placeholder_message, self.p6_diffusion_info),
                 ),
                 self.build_page_entry(
                     "Analysis Tools",
@@ -576,6 +582,9 @@ class Launcher(QMainWindow):
     def start_hydrogen_during_welding(self):
         self.update_info_text(self.p2_hydrogen_info)
         print(self.p2_hydrogen_info)
+
+    def start_lattice_visualizer(self):
+        self.start_program("pushButton_slot_5", [self.path_lattice_visualizer])
 
     def center(self):
         qr = self.frameGeometry()

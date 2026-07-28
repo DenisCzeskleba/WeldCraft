@@ -19,6 +19,11 @@ P1_Simulate_Hydrogen_Diffusion/Results/*
 P1_Simulate_Hydrogen_Diffusion/Standalone_Release/build/
 P1_Simulate_Hydrogen_Diffusion/Standalone_Release/dist/
 P1_Simulate_Hydrogen_Diffusion/Standalone_Release/staging/
+P5_Lattice_Visualizer/02_Results/*
+!P5_Lattice_Visualizer/02_Results/.gitkeep
+P5_Lattice_Visualizer/Standalone_Release/build/
+P5_Lattice_Visualizer/Standalone_Release/dist/
+P5_Lattice_Visualizer/Standalone_Release/staging/
 P2_Hydrogen Diffusion During Welding/01_Resources/*
 !P2_Hydrogen Diffusion During Welding/01_Resources/.gitkeep
 P2_Hydrogen Diffusion During Welding/02_Results/*

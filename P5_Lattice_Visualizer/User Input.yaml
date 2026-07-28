@@ -1,0 +1,69 @@
+# Physical sizing (only knobs you really need)
+lattice: "BCC"     # SC (Simple Cubic) | BCC | FCC   # Lattice type: 'Simple Cubic' | 'BCC' | 'FCC'
+target_atoms: 900000   # 1_000_000 for ppm visualization / DEMO-MODE: SC: <=8, BCC: <=9, FCC: <=14   # Approximate total atoms, determines cell counts (Nx,Ny,Nz)
+r: 0.124                    # nm  (Fe atomic radius @ RT; adjust if desired)   # Atomic radius of Fe (nm); sets lattice constant 'a'
+base_radius_scale: 0.5     # Atom visually smaller than its radius good default: 0.4
+base_color: "#555555"       # Color of the base atoms #555555 is grey   # Color of base lattice (Fe)
+
+dopants:   # List of dopant species; substitutional or interstitial
+  - name: "H"
+    color: "blue"
+    mode: "interstitial"   # Dopant mode: 'substitutional' or 'interstitial'
+    size_scale: 0.5   # Visual radius relative to Fe (1.0 = same, 0.5 = half, etc.)
+    count: 1   # For interstitial: absolute number of atoms to place
+
+  - name: "A"
+    color: "red"
+    mode: "substitutional"   # Dopant mode: 'substitutional' or 'interstitial'
+    size_scale: 1.2   # Visual radius relative to Fe (1.0 = same, 0.5 = half, etc.)
+    fraction: 0.00   # For substitutional: fraction of lattice sites to occupy
+
+  - name: "B"
+    color: "black"
+    mode: "substitutional"   # Dopant mode: 'substitutional' or 'interstitial'
+    size_scale: 1.5   # Visual radius relative to Fe (1.0 = same, 0.5 = half, etc.)
+    fraction: 0.00   # For substitutional: fraction of lattice sites to occupy
+
+background: "white"  # default: "white", "light grey"
+show_axes: true     # the little blue, green, red orientation axis
+enable_picking: true  # necessary to play the 'find the hydrogen atom' game
+
+
+# turn on the overlay and make markers a bit smaller, with crosses
+show_unit_cell_overlay: true   # Draw conventional unit cell overlay for context
+draw_bravais_overlay: true   # For BCC/FCC: draw hallmark Bravais connections
+overlay_marker_scale: 0.45   # Marker size scaling factor
+overlay_color: "#222222"   # Color for overlay cell edges/markers
+overlay_alpha: 0.6   # Transparency for overlay lines
+overlay_periodic: "both_faces"   # "both_faces" | "canonical"   # 'both_faces' = show 0 and 1 boundaries; 'canonical' = [0,1) only
+
+# demo mode behavior
+demo_cell_auto: true           # auto single-cell if target ≤ elemental threshold   # Auto-enable demo cell if target_atoms is small
+# demo_cell_force: false       # uncomment to override auto (true/false)
+
+# -------- Advanced Settings ----------
+# Rendering
+render_mode: "spheres"          # "auto" | "spheres" (instanced) | "impostor_points"   # 'auto' (instancing if possible), 'spheres', or 'impostor_points'
+
+# Interaction
+zoom_mode: "cursor"              # "focal" (default VTK) | "cursor" (zoom to mouse)
+pick_instruction: "Right click to find the Hydrogen"
+
+# Data thinning / cropping
+stride: 1   # Keep every nth node (thins the dataset)
+slab: null   # Fractional z-range [z0,z1) to crop lattice
+base_displacements: {}
+
+# Exports
+max_atoms_for_true_spheres: 1020030
+
+# Chunking for instanced base spheres
+chunking_enabled: true
+chunk_target_atoms: 125000
+chunk_max_actors: 8
+chunk_axis: "z"
+
+# Adaptive base resolution thresholds
+res_thresh_1: 100000
+res_thresh_2: 300000
+res_thresh_3: 600000
