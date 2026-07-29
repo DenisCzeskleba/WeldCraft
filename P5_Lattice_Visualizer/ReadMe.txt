@@ -53,12 +53,66 @@ file itself. Here are the key options in simple terms:
     holes in the lattice).
   * fraction: For substitutional dopants, fraction of sites to replace (0.01 = 1%).
   * count: For interstitial dopants, number of atoms to add.
-  * interstitial_site: Restrict to "octa" or "tetra" holes if you want.
+  * interstitial_site: Restrict placement to a catalogue family. This may be
+    one value or a lattice-aware mapping, for example:
+        interstitial_site:
+          BCC: tetra
+          FCC: octa
+          SC: cubic
+  * forced_interstitial_position: Optional exact position in fractional
+    conventional-cell coordinates. It may be one legacy [x, y, z] coordinate,
+    or a lattice-aware mapping such as:
+        forced_interstitial_position:
+          BCC: [0.25, 0.0, 0.5]
+          FCC: [0.5, 0.5, 0.5]
+          SC: [0.5, 0.5, 0.5]
+    The selected coordinate must belong to the chosen interstitial family.
+    A missing/null entry falls back to random placement instead of crashing
+    after the lattice type is changed.
   * size_scale: How big dopant atoms look relative to the base atoms.
   * positions: Optionally give explicit coordinates (advanced use).
 
 - sphere_theta / sphere_phi: Control how smooth the spheres look. Higher values
   = smoother but slower. Lower values = blocky but faster.
+- window_size: Interactive window and screenshot size in pixels.
+- display_window / save_png: Select interactive display only, PNG output only,
+  both, or neither. If both are true, the configured camera view is saved first
+  and then a separate normal-resolution interactive window opens. Interactive
+  rotations made afterward do not alter that PNG.
+- png_path / png_scale: Set the lossless PNG destination and saved-resolution
+  multiplier. With window_size [1600, 1200] and png_scale 2, the PNG is
+  3200 x 2400 while the displayed window remains 1600 x 1200.
+- png_include_lattice_name: Adds the active lattice before the extension, for
+  example lattice_visualization FCC.png.
+- png_avoid_overwrite: When true, an existing name.png is preserved and the new
+  image is saved as name (1).png, then name (2).png, and so forth. With the
+  lattice suffix this becomes lattice_visualization FCC (1).png, etc.
+- png_transparent_background: Save the PNG with transparency instead of the
+  configured solid background.
+- deduplicate_axis_zero_labels: Shows a single shared-origin zero label while
+  retaining all nonzero X/Y/Z ticks.
+- axis_font_size / axis_line_width: Control the publication-scale numbered-axis
+  text and line thickness. The defaults are enlarged for figures that will be
+  reduced on a page.
+- base_atom_outline_depth_offset / base_atom_outline_as_tubes: Keep outline
+  contours solid and slightly in front of translucent Fe surfaces, avoiding
+  depth-fighting stipple and white fringe pixels at overlapping edges.
+- camera_preset: "custom" uses camera_direction and the other explicit camera
+  settings; "isometric" uses the original equal-axis view; "low_isometric"
+  reproduces the lower-elevation perspective reconstructed from the reference
+  screenshot. Camera presets are independent of visual_preset.
+- anti_aliasing: Edge smoothing. "fxaa" is recommended for the translucent
+  outline preset because MSAA can produce white/colored fringe pixels where
+  transparent surfaces and silhouettes overlap. "msaa" remains crisp for
+  opaque presets; "ssaa" is softer because it downsamples the whole frame.
+- sphere_specular: Controls reflective highlights; 0.0 gives a matte surface.
+- visual_preset: "screen" preserves the configured colors; "thesis" and
+  "publication" apply the thesis palette (silver Fe, blue H, green/teal site
+  families, near-black lines) and flatter lighting. "outline" retains that
+  palette but draws Fe as translucent shells with solid, camera-aware outlines,
+  which helps reveal atoms hidden by an isometric projection.
+- adaptive_resolution and res_cap_1/2/3: Keep very large instanced scenes
+  responsive by capping base-sphere smoothness at the configured thresholds.
 - render_mode: "auto" (smart choice), "spheres" (full spheres), or
   "impostor_points" (fast, simplified spheres).
 - stride: Keep every nth atom. For example stride=2 shows half the atoms.
@@ -70,10 +124,26 @@ Overlays:
 - overlay_color: Color of the overlay lines.
 - overlay_alpha: Transparency of the overlay lines.
 - overlay_marker_scale: Adjusts size of overlay markers.
+- overlay_marker_opacity / overlay_marker_specular: Control marker transparency
+  and shininess.
+- interstitial_site_view: "all" shows both periodic faces; "canonical" folds
+  duplicate boundary sites into [0,1); "picture" uses the equivalent faces
+  selected by picture_site_faces. This controls the single-cell
+  overlay wherever it is enabled; in demo mode, "picture" also moves a boundary
+  dopant to its selected equivalent periodic image.
+- picture_site_faces: May be one [x, y, z] face selection or separate BCC/FCC/SC
+  selections. An occupied interstitial replaces the candidate-site marker at
+  the same periodic coordinate instead of drawing two overlapping spheres.
 - overlay_periodic: Choose whether overlays repeat on both faces or just the
-  canonical unit cell.
+  canonical unit cell. This is the legacy name for interstitial_site_view.
 - show_overlay_legend: Adds a legend for overlays.
 - overlay_legend_loc: Where the legend appears.
+- overlay_legend_text_color / overlay_legend_padding: Control the legend's
+  neutral text color and internal spacing independently of its colored dots.
+- overlay_legend_font_size: Controls the structured legend heading and row
+  text size.
+- overlay_legend_x_offset: Moves the structured legend horizontally as a
+  fraction of the viewport width; positive values move right.
 
 Demo mode:
 - demo_cell_force: If true, only show one conventional unit cell.

@@ -11,7 +11,7 @@ has been removed or added.
 """
 
 from dataclasses import dataclass, field, asdict
-from typing import List, Tuple, Dict, Optional
+from typing import List, Tuple, Dict, Optional, Union
 import argparse
 import json
 import os
@@ -120,8 +120,18 @@ Dataclass for a dopant/secondary species (visual color, size, placement mode, et
     fraction: float = 0.0                 # for substitutional species (0..1)
     count: int = 0                        # for interstitial species (absolute)
 
-    # Interstitial family (optional): "octa" | "tetra"; if None, we pick from all legal
-    interstitial_site: Optional[str] = None
+    # Interstitial family, either one name or a per-lattice mapping.
+    interstitial_site: Optional[
+        Union[str, Dict[str, Optional[str]]]
+    ] = None
+    # Optional exact interstitial in fractional conventional-cell coordinates.
+    # This may be one legacy [x, y, z] position or a per-lattice mapping.
+    forced_interstitial_position: Optional[
+        Union[
+            Tuple[float, float, float],
+            Dict[str, Optional[Tuple[float, float, float]]],
+        ]
+    ] = None
 
     # Single intuitive knob per dopant — relative to base Fe visual radius
     # Example: H size_scale=0.5 (half the grey), A size_scale=1.1 (10% larger than grey)
@@ -170,8 +180,40 @@ Dataclass for all runtime settings (lattice, sizes, rendering, dopants, overlays
     # Rendering & interaction
     background: str = "white"
     show_axes: bool = True
-    sphere_theta: int = 32
-    sphere_phi: int = 32
+    display_window: bool = True
+    save_png: bool = False
+    png_path: str = "02_Results/lattice_visualization.png"
+    png_include_lattice_name: bool = True
+    png_avoid_overwrite: bool = True
+    png_scale: int = 2
+    png_transparent_background: bool = False
+    window_size: Tuple[int, int] = (1600, 1200)
+    anti_aliasing: str = "msaa"  # "msaa" | "ssaa" | "fxaa" | "none"
+    multi_samples: int = 8
+    visual_preset: str = "screen"  # "screen" | "thesis" | "publication" | "outline"
+    sphere_theta: int = 48
+    sphere_phi: int = 48
+    sphere_specular: float = 0.0
+    sphere_ambient: float = 0.0
+    sphere_diffuse: float = 1.0
+    base_atom_opacity: float = 1.0
+    base_atom_outline: bool = False
+    base_atom_outline_color: str = "#202124"
+    base_atom_outline_width: float = 2.5
+    base_atom_outline_depth_offset: float = -2.0
+    base_atom_outline_as_tubes: bool = True
+    max_atoms_for_outlines: int = 30_000
+    camera_preset: str = "custom"  # "custom" | "isometric" | "low_isometric"
+    camera_direction: Tuple[float, float, float] = (-1.0, -1.0, 1.0)
+    camera_view_up: Tuple[float, float, float] = (0.0, 0.0, 1.0)
+    camera_distance_scale: float = 3.0
+    camera_parallel_projection: bool = False
+    camera_view_angle: float = 30.0
+    axis_location: str = "outer"
+    axis_use_3d_text: bool = False
+    axis_font_size: int = 32
+    axis_line_width: float = 1.75
+    deduplicate_axis_zero_labels: bool = True
     enable_picking: bool = True
 
     # NEW: zoom behavior
@@ -200,19 +242,37 @@ Dataclass for all runtime settings (lattice, sizes, rendering, dopants, overlays
     chunk_axis: str = "z"
 
     # Adaptive resolution thresholds (for base sphere source)
+    adaptive_resolution: bool = True
     res_thresh_1: int = 100_000
     res_thresh_2: int = 300_000
     res_thresh_3: int = 1_000_000
+    res_cap_1: int = 16
+    res_cap_2: int = 12
+    res_cap_3: int = 8
 
     # Unit-cell overlay & legend
     show_unit_cell_overlay: bool = False
     overlay_color: str = "black"
     overlay_alpha: float = 0.65
     overlay_marker_scale: float = 0.6  # as a fraction of cfg.base_radius
+    overlay_marker_opacity: float = 0.55
+    overlay_marker_specular: float = 0.0
+    tetrahedral_color: str = "green"
+    octahedral_color: str = "orange"
+    cubic_color: str = "purple"
     draw_bravais_overlay: bool = True
+    interstitial_site_view: Optional[str] = None  # "all" | "canonical" | "picture"
+    picture_site_faces: Union[
+        Tuple[int, int, int],
+        Dict[str, Tuple[int, int, int]],
+    ] = (1, 1, 0)
     overlay_periodic: str = "both_faces"  # "both_faces" | "canonical"
     show_overlay_legend: bool = True  # show legend when unit-cell overlay is on
     overlay_legend_loc: str = "upper right"  # 'upper right' | 'upper left' | 'lower left' | 'lower right'
+    overlay_legend_text_color: str = "#3A3A3A"
+    overlay_legend_padding: int = 8
+    overlay_legend_font_size: int = 18
+    overlay_legend_x_offset: float = 0.025
 
     demo_cell_auto: bool = True  # auto-activate if target_atoms <= threshold for the chosen lattice
     demo_cell_force: Optional[bool] = None  # set to True/False to override auto (None = auto)
@@ -277,6 +337,72 @@ Load configuration from YAML/JSON and normalize legacy fields.
     return Config(**raw)
 
 
+def apply_visual_preset(cfg: Config) -> None:
+    """Apply optional coordinated appearance settings after loading the YAML."""
+
+    preset = str(cfg.visual_preset or "screen").strip().lower()
+    if preset in ("", "screen", "default", "custom"):
+        return
+    if preset not in ("thesis", "publication", "outline"):
+        raise ValueError(
+            f"Unknown visual_preset {cfg.visual_preset!r}; "
+            "use 'screen', 'thesis', 'publication', or 'outline'."
+        )
+
+    # Thesis palette: neutral steel, muted hydrogen blue, soft green/teal site
+    # families, and near-black construction lines. Flatter lighting reproduces
+    # cleanly in print and avoids the heavy black Fe spheres of screen mode.
+    cfg.background = "white"
+    cfg.base_color = "#9A9FA5"
+    cfg.overlay_color = "#202124"
+    cfg.overlay_alpha = 0.78
+    cfg.overlay_marker_opacity = 0.76
+    cfg.overlay_marker_specular = 0.0
+    cfg.sphere_specular = 0.0
+    cfg.sphere_ambient = 0.32
+    cfg.sphere_diffuse = 0.68
+    cfg.tetrahedral_color = "#5BB97D"
+    cfg.octahedral_color = "#C83E4D"
+    cfg.cubic_color = "#202124"
+    for sp in cfg.dopants:
+        if sp.name.strip().lower().startswith("h"):
+            sp.color = "#3F6FAE"
+
+    if preset == "outline":
+        # A translucent Fe shell plus a camera-aware silhouette makes atoms
+        # hidden by an isometric projection remain legible. Site markers and
+        # dopants deliberately retain their normal opacity.
+        cfg.base_atom_opacity = 0.74
+        cfg.base_atom_outline = True
+        cfg.base_atom_outline_color = "#202124"
+        cfg.base_atom_outline_width = 2.5
+
+
+def apply_camera_preset(cfg: Config) -> None:
+    """Apply an optional camera-only preset after loading the YAML."""
+
+    preset = str(cfg.camera_preset or "custom").strip().lower().replace("-", "_")
+    if preset in ("", "custom", "manual", "none"):
+        return
+    if preset in ("isometric", "full_isometric"):
+        cfg.camera_direction = (-1.0, -1.0, 1.0)
+    elif preset in ("low_isometric", "reference"):
+        # Reconstructed from the supplied PyVista screenshot: symmetric X/Y
+        # azimuth, a lower ~18-degree camera elevation, Z upright, and VTK's
+        # normal perspective projection.
+        cfg.camera_direction = (-1.0, -1.0, 0.45)
+    else:
+        raise ValueError(
+            f"Unknown camera_preset {cfg.camera_preset!r}; "
+            "use 'custom', 'isometric', or 'low_isometric'."
+        )
+
+    cfg.camera_view_up = (0.0, 0.0, 1.0)
+    cfg.camera_distance_scale = 3.0
+    cfg.camera_parallel_projection = False
+    cfg.camera_view_angle = 30.0
+
+
 def dump_config(cfg: Config, path: str):
     """
 Write the current configuration to a YAML or JSON file.
@@ -291,6 +417,82 @@ Write the current configuration to a YAML or JSON file.
     else:
         with open(path, "w", encoding="utf-8") as f:
             json.dump(d, f, indent=2)
+
+
+def _normalized_lattice_key(lattice: str) -> str:
+    """Return the short configuration key for a supported lattice."""
+
+    lattice_name = str(lattice or "").strip().lower().replace("_", " ")
+    if lattice_name in ("simple cubic", "sc"):
+        return "sc"
+    if lattice_name in ("bcc", "fcc"):
+        return lattice_name
+    return lattice_name
+
+
+def _resolve_lattice_setting(value, lattice: str):
+    """Resolve either one value or a BCC/FCC/SC keyed configuration value."""
+
+    if not isinstance(value, dict):
+        return value
+
+    normalized_values = {}
+    for key, item in value.items():
+        normalized_key = str(key).strip().lower().replace("_", " ")
+        if normalized_key == "simple cubic":
+            normalized_key = "sc"
+        normalized_values[normalized_key] = item
+
+    return normalized_values.get(
+        _normalized_lattice_key(lattice),
+        normalized_values.get("default"),
+    )
+
+
+def _picture_site_faces_for_lattice(cfg: Config) -> Tuple[int, int, int]:
+    """Return the selected periodic faces for the active lattice."""
+
+    faces = _resolve_lattice_setting(cfg.picture_site_faces, cfg.lattice)
+    if not isinstance(faces, (list, tuple)) or len(faces) != 3:
+        raise ValueError(
+            "picture_site_faces must be [x, y, z] or a lattice-aware "
+            "mapping containing three-value lists."
+        )
+    resolved = tuple(int(value) for value in faces)
+    if any(value not in (0, 1) for value in resolved):
+        raise ValueError("picture_site_faces values must each be 0 or 1")
+    return resolved
+
+
+def output_path_with_lattice_name(path: str, lattice: str) -> str:
+    """Append the active lattice to a configured PNG filename once."""
+
+    requested = Path(path)
+    lattice_label = _normalized_lattice_key(lattice).upper()
+    if requested.stem.lower().endswith(f" {lattice_label.lower()}"):
+        return str(requested)
+    return str(
+        requested.with_name(
+            f"{requested.stem} {lattice_label}{requested.suffix}"
+        )
+    )
+
+
+def next_available_output_path(path: str) -> str:
+    """Return a download-style numbered filename without overwriting a file."""
+
+    requested = Path(path)
+    if not requested.exists():
+        return str(requested)
+
+    counter = 1
+    while True:
+        candidate = requested.with_name(
+            f"{requested.stem} ({counter}){requested.suffix}"
+        )
+        if not candidate.exists():
+            return str(candidate)
+        counter += 1
 
 
 def _compute_counts(cfg: Config):
@@ -365,31 +567,41 @@ Return basis positions and catalogued interstitial sites for the lattice.
     if lat in ("simple cubic", "sc"):
         basis = np.array([[0.0, 0.0, 0.0]], dtype=np.float32)
 
-        # --- Interstitials for SC ---
-        # Tetrahedral: the 8 (1/4,1/4,1/4)-type positions
-        tetra = []
-        for x in (0.25, 0.75):
-            for y in (0.25, 0.75):
-                for z in (0.25, 0.75):
-                    tetra.append((x, y, z))
+        # Simple cubic has one conventional cubic (CN=8) hole at the body
+        # centre. Quarter-coordinate points are not tetrahedral holes: each has
+        # only one nearest SC atom, rather than four equidistant neighbours.
 
         # Cubic (CN=8): body center (½,½,½). (This is *not* octahedral.)
         cubic = [(0.5, 0.5, 0.5)]
 
-        # No true octahedral (CN=6) sites in perfect SC at equal distances
         inter = {
-            "octa": [],  # intentionally empty for SC
-            "tetra": [np.array(p, dtype=np.float32) for p in tetra],
-            "cubic": [np.array(p, dtype=np.float32) for p in cubic],}
+            "octa": [],
+            "tetra": [],
+            "cubic": [np.array(p, dtype=np.float32) for p in cubic],
+        }
 
     elif lat == "bcc":
         # Basis
         basis = np.array([[0.0, 0.0, 0.0],
                           [0.5, 0.5, 0.5]], dtype=np.float32)
-        # Octahedral in BCC: the 6 face centers
-        octa = [(0.5, 0.5, 0.0), (0.5, 0.5, 1.0),
-                (0.5, 0.0, 0.5), (0.5, 1.0, 0.5),
-                (0.0, 0.5, 0.5), (1.0, 0.5, 0.5)]
+        # Octahedral in BCC: 6 face centers and 12 edge centers as drawn on a
+        # closed conventional cell. Periodic deduplication yields 6 sites/cell:
+        # 3 from shared faces and 3 from shared edges.
+        octa_faces = [
+            (0.5, 0.5, 0.0), (0.5, 0.5, 1.0),
+            (0.5, 0.0, 0.5), (0.5, 1.0, 0.5),
+            (0.0, 0.5, 0.5), (1.0, 0.5, 0.5),
+        ]
+        octa_edges = []
+        for axis in range(3):
+            for u in (0.0, 1.0):
+                for v in (0.0, 1.0):
+                    p = [0.0, 0.0, 0.0]
+                    p[axis] = 0.5
+                    p[(axis + 1) % 3] = u
+                    p[(axis + 2) % 3] = v
+                    octa_edges.append(tuple(p))
+        octa = octa_faces + octa_edges
         # Tetrahedral in BCC: 12 positions like (1/4,1/2,0) and permutations with 1/4↔3/4
         tetra = []
         vals_q = (0.25, 0.75)
@@ -418,16 +630,9 @@ Return basis positions and catalogued interstitial sites for the lattice.
                           [0.0, 0.5, 0.5],
                           [0.5, 0.0, 0.5],
                           [0.5, 0.5, 0.0]], dtype=np.float32)
-        # Octahedral in FCC: 1 body center + 12 edge centers
+        # Octahedral in FCC: 1 body center + 12 edge centers. Face centers are
+        # Fe basis sites and must not be catalogued as interstitials.
         octa = [(0.5, 0.5, 0.5)]
-        half = 0.5
-        for axis in range(3):
-            for u in (0.0, 1.0):
-                p = [half, half, half]
-                p[axis] = u
-                octa.append(tuple(p))
-        # that added 2*3 = 6 face centers; now add the 12 edge centers:
-        # edges have exactly one coordinate at 0.5 and the other two at 0 or 1
         edges = []
         for axis in range(3):
             for u in (0.0, 1.0):
@@ -437,8 +642,7 @@ Return basis positions and catalogued interstitial sites for the lattice.
                     p[(axis + 1) % 3] = u
                     p[(axis + 2) % 3] = v
                     edges.append(tuple(p))
-        # keep unique (a few duplicates appear when mixing definitions)
-        octa = list({tuple(p) for p in (octa + edges)})
+        octa.extend(edges)
         # Tetrahedral in FCC: all 8 with coords in {1/4, 3/4}
         tetra = []
         for x in (0.25, 0.75):
@@ -450,6 +654,49 @@ Return basis positions and catalogued interstitial sites for the lattice.
     else:
         raise ValueError(f"Unknown lattice type: {lattice}")
     return basis, inter
+
+
+def _periodic_site_representatives(frac_pts, mode: str, picture_faces=None):
+    """
+    Return periodic site representatives for an overlay or a single demo cell.
+
+    ``canonical`` uses [0,1), while ``picture`` chooses the explicitly
+    configured equivalent face (0 or 1) independently for X, Y, and Z.
+    ``all`` preserves both faces of the closed conventional cell.
+    """
+
+    if frac_pts is None:
+        return []
+    pts = np.asarray(frac_pts, dtype=np.float32)
+    if pts.size == 0:
+        return []
+    pts = pts.reshape((-1, 3))
+
+    normalized_mode = str(mode or "all").strip().lower()
+    if normalized_mode == "both_faces":
+        normalized_mode = "all"
+    if normalized_mode == "all":
+        return [tuple(map(float, p)) for p in pts]
+    if normalized_mode not in ("canonical", "picture"):
+        raise ValueError(
+            f"Unknown interstitial_site_view {mode!r}; use 'all', 'canonical', or 'picture'."
+        )
+
+    pts = np.mod(pts, 1.0)
+    pts[np.isclose(pts, 0.0, atol=1e-7)] = 0.0
+    if normalized_mode == "picture":
+        selected_faces = np.asarray(
+            picture_faces if picture_faces is not None else (1, 1, 0),
+            dtype=int,
+        )
+        for axis in range(3):
+            if selected_faces[axis] not in (0, 1):
+                raise ValueError("picture_site_faces values must each be 0 or 1")
+            if selected_faces[axis] == 1:
+                pts[np.isclose(pts[:, axis], 0.0, atol=1e-7), axis] = 1.0
+    pts = np.round(pts, 6)
+    uniq = np.unique(pts, axis=0)
+    return [tuple(map(float, p)) for p in uniq]
 
 
 def generate_sc_indices(Nx, Ny, Nz) -> np.ndarray:
@@ -737,9 +984,9 @@ def _append_interstitial_random(cfg: Config, sp: Species):
     """
     Place exactly one interstitial per randomly chosen unit cell.
     Site choice is randomized per atom among legal interstitials for the lattice.
-    If interstitial_site is "octa" or "tetra", restrict to that family;
-    otherwise sample the union of all families. Avoid collisions with Fe basis
-    and already occupied dopant positions.
+    If interstitial_site names a catalogue family, restrict to that family;
+    otherwise "any" samples the union of all families. Avoid collisions with
+    Fe basis and already occupied dopant positions.
     """
     if sp.count <= 0:
         return
@@ -749,18 +996,27 @@ def _append_interstitial_random(cfg: Config, sp: Species):
     nbasis = int(basis.shape[0])
 
     # Build candidate offsets
-    site_key = (sp.interstitial_site or "any").strip().lower()
-    if site_key in ("octa", "tetra"):
+    resolved_site = _resolve_lattice_setting(sp.interstitial_site, cfg.lattice)
+    site_key = str(resolved_site or "any").strip().lower()
+    if site_key in inter:
         families = inter.get(site_key, [])
-    else:
+    elif site_key == "any":
         families = sum((v for v in inter.values()), [])
+    else:
+        raise ValueError(
+            f"{sp.name}: unknown interstitial family {site_key!r} for "
+            f"{cfg.lattice}; use one of {sorted(inter)} or 'any'."
+        )
 
     # If no catalogued sites, skip cleanly (no legacy numeric offset)
     if not families:
         print(f"[warn] no interstitial families defined for {cfg.lattice}; placed 0 for {sp.name}.")
         return
 
-    sites = np.vstack(families).astype(np.float32, copy=False)  # (S,3)
+    # Use one representative per periodic site so shared faces/edges do not
+    # bias random placement merely because the overlay draws them repeatedly.
+    canonical_sites = _periodic_site_representatives(families, "canonical")
+    sites = np.asarray(canonical_sites, dtype=np.float32)  # (S,3)
 
     # Hash of forbidden lattice positions (Fe basis + existing dopants) rounded to 1/8
     forbidden = set()
@@ -812,6 +1068,93 @@ def _append_interstitial_random(cfg: Config, sp: Species):
     sp.positions = list(sp.positions) + chosen
 
 
+def _assign_forced_interstitial_position(cfg: Config, sp: Species) -> bool:
+    """Validate and assign an exact catalogued interstitial position."""
+
+    raw_position = _resolve_lattice_setting(
+        sp.forced_interstitial_position,
+        cfg.lattice,
+    )
+    if raw_position is None:
+        if isinstance(sp.forced_interstitial_position, dict):
+            resolved_site = _resolve_lattice_setting(
+                sp.interstitial_site,
+                cfg.lattice,
+            )
+            print(
+                f"[info] {sp.name}: no forced interstitial position is set "
+                f"for {cfg.lattice}; selecting a random catalogued "
+                f"{resolved_site or 'interstitial'} site."
+            )
+        return False
+    if sp.mode != "interstitial":
+        raise ValueError(
+            f"{sp.name}: forced_interstitial_position is only valid for "
+            "mode: 'interstitial'."
+        )
+
+    position = np.asarray(raw_position, dtype=float)
+    if position.shape != (3,) or not np.all(np.isfinite(position)):
+        raise ValueError(
+            f"{sp.name}: forced_interstitial_position must contain three "
+            "finite fractional coordinates, either directly or below the "
+            f"{cfg.lattice} lattice key."
+        )
+
+    cell_limits = np.asarray([cfg.Nx, cfg.Ny, cfg.Nz], dtype=float)
+    if np.any(position < 0.0) or np.any(position > cell_limits):
+        raise ValueError(
+            f"{sp.name}: forced interstitial {position.tolist()} lies outside "
+            f"the configured {cfg.Nx} x {cfg.Ny} x {cfg.Nz} cells."
+        )
+
+    basis, inter = _basis_and_interstitials(cfg.lattice)
+    resolved_site = _resolve_lattice_setting(sp.interstitial_site, cfg.lattice)
+    site_key = str(resolved_site or "any").strip().lower()
+    if site_key in inter:
+        allowed_sites = inter.get(site_key, [])
+    elif site_key == "any":
+        allowed_sites = sum((sites for sites in inter.values()), [])
+    else:
+        raise ValueError(
+            f"{sp.name}: unknown interstitial family {site_key!r} for "
+            f"{cfg.lattice}; use one of {sorted(inter)} or 'any'."
+        )
+    if not allowed_sites:
+        raise ValueError(
+            f"{sp.name}: no {site_key!r} interstitial sites are defined for "
+            f"{cfg.lattice}."
+        )
+
+    # Compare modulo whole-cell translations so a periodic image at 1 is
+    # equivalent to its canonical coordinate at 0.
+    is_catalogued = False
+    for site in allowed_sites:
+        delta = position - np.asarray(site, dtype=float)
+        delta -= np.rint(delta)
+        if np.all(np.abs(delta) < 1e-6):
+            is_catalogued = True
+            break
+    if not is_catalogued:
+        raise ValueError(
+            f"{sp.name}: forced interstitial {position.tolist()} is not a "
+            f"catalogued {site_key} site in {cfg.lattice}."
+        )
+
+    # Reject a coordinate that is periodically equivalent to an Fe basis site.
+    for base_site in basis:
+        delta = position - np.asarray(base_site, dtype=float)
+        delta -= np.rint(delta)
+        if np.all(np.abs(delta) < 1e-6):
+            raise ValueError(
+                f"{sp.name}: forced interstitial {position.tolist()} overlaps "
+                "an Fe lattice site."
+            )
+
+    sp.positions = [tuple(float(value) for value in position)]
+    return True
+
+
 def assign_random_positions(cfg: Config, dopants: List[Species]) -> None:
     """
 Populate dopants with random positions per their mode and counts.
@@ -821,6 +1164,8 @@ Populate dopants with random positions per their mode and counts.
     for sp in dopants:
         if sp.mode == "substitutional":
             _append_substitutional_random(cfg, sp, taken_sub)
+        elif _assign_forced_interstitial_position(cfg, sp):
+            continue
         else:
             _append_interstitial_random(cfg, sp)
 
@@ -852,16 +1197,23 @@ Render fast point impostors as spheres for huge scenes.
 # ------------------ Instanced rendering helpers ------------------
 def adaptive_base_res(n_atoms: int, cfg: Config) -> Tuple[int, int]:
     """
-Lower sphere resolution as atom count increases (performance heuristic).
+Use the configured sphere resolution for smaller scenes, then cap it as atom
+count increases to keep large instanced scenes responsive.
     """
 
+    configured = (max(3, int(cfg.sphere_theta)), max(3, int(cfg.sphere_phi)))
+    if not cfg.adaptive_resolution:
+        return configured
     if n_atoms >= cfg.res_thresh_3:
-        return 8, 8
+        cap = max(3, int(cfg.res_cap_3))
+        return min(configured[0], cap), min(configured[1], cap)
     if n_atoms >= cfg.res_thresh_2:
-        return 12, 12
+        cap = max(3, int(cfg.res_cap_2))
+        return min(configured[0], cap), min(configured[1], cap)
     if n_atoms >= cfg.res_thresh_1:
-        return 16, 16
-    return 24, 24
+        cap = max(3, int(cfg.res_cap_1))
+        return min(configured[0], cap), min(configured[1], cap)
+    return configured
 
 
 def _color_to_rgb01(c) -> Tuple[float, float, float]:
@@ -893,8 +1245,58 @@ Convert color spec to (r,g,b) floats in [0,1].
     return 0.5, 0.5, 0.5
 
 
+def _register_png_scalable_text(plotter: pv.Plotter, actor) -> None:
+    """Track a 2D text actor whose pixel size should follow png_scale."""
+
+    actors = getattr(plotter, "_png_scalable_text_actors", None)
+    if actors is None:
+        actors = []
+        plotter._png_scalable_text_actors = actors
+    actors.append(actor)
+
+
+def _scale_viewport_text_for_png(plotter: pv.Plotter, scale: int) -> None:
+    """Preserve on-page text proportions in a scaled high-resolution PNG."""
+
+    scale = max(1, int(scale))
+    if scale == 1:
+        return
+
+    for actor in getattr(plotter, "_png_scalable_text_actors", []):
+        text_property = actor.GetTextProperty()
+        text_property.SetFontSize(
+            max(1, int(round(text_property.GetFontSize() * scale)))
+        )
+
+    cube_axes = getattr(plotter, "_numbered_axes_actor", None)
+    if cube_axes is not None:
+        cube_axes.SetScreenSize(float(cube_axes.GetScreenSize()) * scale)
+        for axis_index in range(3):
+            for text_property in (
+                cube_axes.GetTitleTextProperty(axis_index),
+                cube_axes.GetLabelTextProperty(axis_index),
+            ):
+                text_property.SetFontSize(
+                    max(1, int(round(text_property.GetFontSize() * scale)))
+                )
+
+    corner_axes = getattr(plotter, "_corner_axes_actor", None)
+    if corner_axes is not None:
+        for caption_actor in (
+            corner_axes.GetXAxisCaptionActor2D(),
+            corner_axes.GetYAxisCaptionActor2D(),
+            corner_axes.GetZAxisCaptionActor2D(),
+        ):
+            text_property = caption_actor.GetCaptionTextProperty()
+            text_property.SetFontSize(
+                max(1, int(round(text_property.GetFontSize() * scale)))
+            )
+
+
 def make_instanced_actor(points_world: np.ndarray, radius: float, color: str,
-                         theta: int, phi: int):
+                         theta: int, phi: int, specular: float = 0.0,
+                         ambient: float = 0.0, diffuse: float = 1.0,
+                         opacity: float = 1.0):
     """
 Create a VTK instanced glyph actor (hardware instancing path).
     """
@@ -922,7 +1324,10 @@ Create a VTK instanced glyph actor (hardware instancing path).
     r, g, b = _color_to_rgb01(color)
     actor.GetProperty().SetColor(r, g, b)
     actor.GetProperty().SetInterpolationToPhong()
-    actor.GetProperty().SetSpecular(0.2)
+    actor.GetProperty().SetSpecular(float(specular))
+    actor.GetProperty().SetAmbient(float(ambient))
+    actor.GetProperty().SetDiffuse(float(diffuse))
+    actor.GetProperty().SetOpacity(float(opacity))
     return actor
 
 
@@ -1008,31 +1413,50 @@ def draw_unit_cell_overlay(pl: pv.Plotter, cfg: Config):
                     render_lines_as_tubes=False, line_width=2)
 
     # markers: pick a few representative sites (not all of them)
-    basis, inter = _basis_and_interstitials(cfg.lattice)
+    _, inter = _basis_and_interstitials(cfg.lattice)
 
     # families
     octa = inter.get("octa", [])
     tetra = inter.get("tetra", [])
     cubic = inter.get("cubic", [])
 
-    # only collapse to canonical [0,1) if you ask for it
-    if getattr(cfg, "overlay_periodic", "both_faces") == "canonical":
-        def _unique_overlay_points(frac_pts):
-            """
-Def '_unique_overlay_points'.
-            """
+    # Select all closed-cell markers, canonical representatives, or equivalent
+    # representatives chosen for visibility from the configured camera.
+    site_view = (
+        getattr(cfg, "interstitial_site_view", None)
+        or getattr(cfg, "overlay_periodic", "both_faces")
+    )
+    site_view = str(site_view).strip().lower()
+    picture_faces = _picture_site_faces_for_lattice(cfg)
+    octa = _periodic_site_representatives(octa, site_view, picture_faces)
+    tetra = _periodic_site_representatives(tetra, site_view, picture_faces)
+    cubic = _periodic_site_representatives(cubic, site_view, picture_faces)
 
-            if not frac_pts:
-                return []
-            pts = np.asarray(frac_pts, dtype=np.float32)
-            pts = np.mod(pts, 1.0)  # map 1.0 → 0.0
-            pts = np.round(pts, 6)
-            uniq = np.unique(pts, axis=0)
-            return [tuple(map(float, p)) for p in uniq]
+    # An occupied interstitial replaces its candidate marker. Keeping both
+    # spheres at the same coordinate creates a misleading extra site and can
+    # also cause transparency/depth artefacts around the occupied atom.
+    occupied_sites = []
+    for species in getattr(cfg, "dopants", []):
+        if species.mode != "interstitial":
+            continue
+        for position in species.positions:
+            occupied_sites.append(np.mod(np.asarray(position, dtype=float), 1.0))
 
-        octa = _unique_overlay_points(octa)
-        tetra = _unique_overlay_points(tetra)
-        cubic = _unique_overlay_points(cubic)
+    def _remove_occupied_markers(frac_pts):
+        remaining = []
+        for point in frac_pts:
+            canonical_point = np.mod(np.asarray(point, dtype=float), 1.0)
+            if any(
+                np.allclose(canonical_point, occupied, atol=1e-6)
+                for occupied in occupied_sites
+            ):
+                continue
+            remaining.append(point)
+        return remaining
+
+    octa = _remove_occupied_markers(octa)
+    tetra = _remove_occupied_markers(tetra)
+    cubic = _remove_occupied_markers(cubic)
 
     # scale marker spheres small vs base spheres
     r_mark = float(cfg.base_radius) * float(cfg.overlay_marker_scale)
@@ -1046,71 +1470,106 @@ Def '_add_markers'.
             return None
         lat = np.vstack(frac_pts).astype(np.float32)
         world = world_from_lattice(lat, cfg.a)
-        mesh = glyph_spheres(world, r_mark, 16, 16)
+        mesh = glyph_spheres(world, r_mark, cfg.sphere_theta, cfg.sphere_phi)
         if mesh is not None and mesh.n_points:
-            pl.add_mesh(mesh, color=color, smooth_shading=True, opacity=0.95, specular=0.2)
+            pl.add_mesh(
+                mesh,
+                color=color,
+                smooth_shading=True,
+                opacity=float(cfg.overlay_marker_opacity),
+                specular=float(cfg.overlay_marker_specular),
+                ambient=float(cfg.sphere_ambient),
+                diffuse=float(cfg.sphere_diffuse),
+            )
             # add one label near the first marker for a clean legend
             pl.add_point_labels([tuple(world[0])], [label], show_points=False,
                                 text_color="black", font_size=14, always_visible=True,
                                 fill_shape=True, shape_opacity=0.7)
         return mesh
 
-    # Fe lattice site marker (use the first basis site)
-    _add_markers([basis[0]], cfg.base_color, "")
-    _add_markers(octa, "orange", "")
-    _add_markers(tetra, "green", "")
-    _add_markers(cubic, "purple", "")
+    # Do not add a separate Fe marker: an actual basis atom already occupies
+    # that position. A duplicate is invisible for opaque atoms but appears as
+    # a misleading smaller atom inside translucent Fe shells.
+    _add_markers(octa, cfg.octahedral_color, "")
+    _add_markers(tetra, cfg.tetrahedral_color, "")
+    _add_markers(cubic, cfg.cubic_color, "")
 
-    # ----- Legend (always shown when overlay is on) -----
-    L = (cfg.lattice or "Simple Cubic").strip().lower()
-    if L in ("simple cubic", "sc") and cubic:
-        labels = [
-            ("Basis lattice site (Fe)", cfg.base_color),
-            ("Tetrahedral interstitial site", "green"),
-            ("Cubic interstitial site", "purple"),
-        ]
-    else:
-        labels = [
-            ("Basis lattice site (Fe)", cfg.base_color),
-            ("Tetrahedral interstitial site", "green"),
-            ("Octahedral interstitial site", "orange"),
-        ]
+    # ----- Structured legend (always shown when overlay is on) -----
+    legend_rows = [
+        ("Basis Lattice (Fe)", cfg.base_color, False),
+        ("Interstitials:", None, True),
+    ]
+    if tetra:
+        legend_rows.append(("Tetrahedral", cfg.tetrahedral_color, False))
+    if octa:
+        legend_rows.append(("Octahedral", cfg.octahedral_color, False))
+    if cubic:
+        legend_rows.append(("Cubic", cfg.cubic_color, False))
 
     # Append any dopants that are actually present (placed positions > 0)
     present = []
     for d in getattr(cfg, "dopants", []):
         n = len(getattr(d, "positions", []) or [])
         if n > 0:
-            mode = getattr(d, "mode", "substitutional")
             color = (getattr(d, "color", None) or "black")
-            present.append((f"Occupied {mode} ({d.name})", color))
+            present.append((f"Occupied ({d.name})", color))
 
     # Stable order for readability
     present.sort(key=lambda x: x[0].lower())
-    labels.extend(present)
+    legend_rows.extend((label, color, False) for label, color in present)
 
-    legend_loc = getattr(cfg, "overlay_legend_loc", "upper left")
-    legend_size = (0.24, 0.20)
+    if not getattr(cfg, "show_overlay_legend", True):
+        return
 
-    try:
-        # Prefer circular chips if your PyVista build supports it
-        pl.add_legend(
-            labels=labels,
-            face="circle",  # chip shape (falls back below if unsupported)
-            bcolor="w",
-            size=legend_size,
-            loc=legend_loc,
-            background_opacity=0.7,
+    # vtkLegendBoxActor applies each entry color to both its marker and text.
+    # Separate 2D bullet/text actors retain colored dots while keeping all
+    # wording—including the light-grey Fe entry—a readable dark neutral.
+    legend_loc = str(getattr(cfg, "overlay_legend_loc", "upper right")).lower()
+    on_right = "right" in legend_loc
+    on_upper = "upper" in legend_loc
+    base_x = 0.735 if on_right else 0.035
+    x_start = min(0.95, max(0.0, base_x + float(cfg.overlay_legend_x_offset)))
+    y_start = 0.925 if on_upper else 0.285
+    row_step = 0.052
+    font_size = max(1, int(cfg.overlay_legend_font_size))
+    viewport_width = max(1, int(cfg.window_size[0]))
+    text_gap = 0.012 + max(0, int(cfg.overlay_legend_padding)) / viewport_width
+
+    for index, (label, bullet_color, heading) in enumerate(legend_rows):
+        y_pos = y_start - index * row_step
+        row_x = x_start
+        if bullet_color is not None:
+            bullet_actor = pl.add_text(
+                "\u2022",
+                position=(row_x, y_pos),
+                font_size=font_size + 4,
+                color=bullet_color,
+                name=f"_overlay_legend_bullet_{index}",
+                viewport=True,
+            )
+            _register_png_scalable_text(pl, bullet_actor)
+            label_x = row_x + text_gap
+        else:
+            label_x = row_x
+
+        # Fe and the heading use the configured neutral; interstitial families
+        # and occupied atoms use the same color as their corresponding dot.
+        text_color = (
+            cfg.overlay_legend_text_color
+            if index < 2
+            else bullet_color
         )
-    except TypeError:
-        # Older builds: no 'face' kwarg — still works fine
-        pl.add_legend(
-            labels=labels,
-            bcolor="white",
-            border=True,
-            size=legend_size,
-            loc=legend_loc,
+        text_actor = pl.add_text(
+            label,
+            position=(label_x, y_pos),
+            font_size=font_size,
+            color=text_color,
+            name=f"_overlay_legend_text_{index}",
+            viewport=True,
         )
+        if heading:
+            text_actor.GetTextProperty().SetBold(True)
+        _register_png_scalable_text(pl, text_actor)
 
 
 # ------------------ Scene construction ------------------
@@ -1157,6 +1616,21 @@ Def 'build_scene_points'.
         if not sp.positions:
             dop_meshes.append((None, sp)); continue
         pos_lat = np.asarray(sp.positions, dtype=np.float32)
+        if (
+            getattr(cfg, "_demo_cell_active", False)
+            and sp.mode == "interstitial"
+            and str(cfg.interstitial_site_view or "").strip().lower() == "picture"
+        ):
+            # A boundary interstitial at 0 and its image at 1 are the same
+            # periodic site. In picture mode, draw the camera-facing image.
+            pos_lat = np.asarray(
+                _periodic_site_representatives(
+                    pos_lat,
+                    "picture",
+                    _picture_site_faces_for_lattice(cfg),
+                ),
+                dtype=np.float32,
+            )
         dop_world = world_from_lattice(pos_lat, cfg.a)
         dop_mesh = glyph_spheres(dop_world, sp.radius, cfg.sphere_theta, cfg.sphere_phi)
         dop_meshes.append((dop_mesh, sp))
@@ -1256,6 +1730,37 @@ Def '_pick_world_point'.
 
 
 # ------------------ Toast helpers (robust) ------------------
+def restore_numbered_axes(plotter: pv.Plotter) -> None:
+    """Restore the fixed zero-based label ranges after scene actor changes."""
+
+    actor = getattr(plotter, "_numbered_axes_actor", None)
+    ranges = getattr(plotter, "_numbered_axes_ranges", None)
+    if actor is None or ranges is None:
+        return
+    try:
+        actor.SetXAxisRange(float(ranges[0]), float(ranges[1]))
+        actor.SetYAxisRange(float(ranges[2]), float(ranges[3]))
+        actor.SetZAxisRange(float(ranges[4]), float(ranges[5]))
+        if getattr(plotter, "_deduplicate_axis_zero_labels", False):
+            # Retain X's origin label and suppress only the duplicate zero
+            # strings on Y and Z. Nonzero labels are left untouched.
+            for axis_index in (1, 2):
+                labels = actor.GetAxisLabels(axis_index)
+                if labels is None:
+                    continue
+                for index in range(labels.GetNumberOfValues()):
+                    label = labels.GetValue(index).strip()
+                    try:
+                        is_zero = abs(float(label)) < 1e-12
+                    except ValueError:
+                        is_zero = False
+                    if is_zero:
+                        labels.SetValue(index, "")
+                labels.Modified()
+    except Exception:
+        pass
+
+
 def clear_toast(pl: pv.Plotter):
     """Remove any existing toast and its timer observer, if present."""
     # remove the actor
@@ -1328,6 +1833,7 @@ def show_toast(pl: pv.Plotter, message: str, seconds: float = 5.0,
         finally:
             # clear and detach in any case to avoid leaks
             clear_toast(pl)
+            restore_numbered_axes(pl)
             try:
                 obj.RemoveObserver(cid)
             except Exception:
@@ -1343,8 +1849,14 @@ def enable_picker(plotter: pv.Plotter, cfg: Config,
 
     """Right-click picking; detects H hits and shows a toast. Clears toast on misses."""
     # Instruction overlay (bottom-left)
-    plotter.add_text(cfg.pick_instruction, position="upper_left",
-                     font_size=12, color="black", name="_pick_help")
+    pick_help_actor = plotter.add_text(
+        cfg.pick_instruction,
+        position="upper_left",
+        font_size=12,
+        color="black",
+        name="_pick_help",
+    )
+    _register_png_scalable_text(plotter, pick_help_actor)
 
     # Tolerance so users don't need a pixel-perfect hit
     tol = float(hydrogen_radius) * 1.2 if hydrogen_radius > 0 else 0.0
@@ -1370,6 +1882,7 @@ def enable_picker(plotter: pv.Plotter, cfg: Config,
                 print(f"[pick] unknown payload type: {type(picked)}")
                 # treat as miss: clear any existing toast
                 clear_toast(plotter)
+                restore_numbered_axes(plotter)
                 plotter.render()
                 return
 
@@ -1391,7 +1904,8 @@ def enable_picker(plotter: pv.Plotter, cfg: Config,
             else:
                 # not hydrogen: clear any existing toast immediately
                 clear_toast(plotter)
-                plotter.render()
+            restore_numbered_axes(plotter)
+            plotter.render()
 
         except Exception as e:
             print(f"[pick] error: {e}")
@@ -1400,7 +1914,9 @@ def enable_picker(plotter: pv.Plotter, cfg: Config,
         callback=_on_pick,
         use_picker=True,
         show_message=False,   # we show our own instruction text
-        show_point=True,
+        # PyVista's default pick marker becomes scene geometry and makes the
+        # cube-axes actor recalculate its ranges from the marker bounds.
+        show_point=False,
         left_clicking=False,  # right-click to pick
     )
 
@@ -1409,8 +1925,31 @@ def enable_picker(plotter: pv.Plotter, cfg: Config,
 def plot(cfg: Config, export_dir: Optional[str], export_merged: Optional[str],
          screenshot: Optional[str], no_show: bool):
     """
-Assemble scene, choose render path, handle overlay/picking, and show/export.
+    Assemble scene, choose render path, handle overlay/picking, and show/export.
     """
+
+    # On Windows, clicking a PyVista window's close button destroys the VTK
+    # render window before a final screenshot callback can run. For "both"
+    # mode, render the configured view to PNG first, then build a fresh normal-
+    # resolution interactive plotter. This also keeps PNG-only font scaling out
+    # of the displayed window.
+    if screenshot and not no_show:
+        plot(
+            cfg,
+            export_dir=export_dir,
+            export_merged=export_merged,
+            screenshot=screenshot,
+            no_show=True,
+        )
+        print(f"[info] high-quality PNG saved: {screenshot}")
+        plot(
+            cfg,
+            export_dir=None,
+            export_merged=None,
+            screenshot=None,
+            no_show=False,
+        )
+        return
 
     # Build points and dopant meshes (+ centers for picking)
     base_world, dop_meshes, dopant_world_centers = build_scene_points(cfg)
@@ -1426,8 +1965,18 @@ Assemble scene, choose render path, handle overlay/picking, and show/export.
         base_mesh = glyph_spheres(base_world, cfg.base_radius, cfg.sphere_theta, cfg.sphere_phi)
 
     # Plotter
-    pl = pv.Plotter(off_screen=no_show and (screenshot is not None))
+    pl = pv.Plotter(
+        off_screen=no_show and (screenshot is not None),
+        window_size=tuple(int(v) for v in cfg.window_size),
+    )
     pl.set_background(cfg.background)
+    aa_type = str(cfg.anti_aliasing).strip().lower()
+    if aa_type in ("", "none", "off", "false"):
+        pl.disable_anti_aliasing()
+    elif aa_type == "msaa":
+        pl.enable_anti_aliasing(aa_type, multi_samples=int(cfg.multi_samples))
+    else:
+        pl.enable_anti_aliasing(aa_type)
 
     # Zoom mode switch
     if cfg.zoom_mode == "cursor":
@@ -1435,22 +1984,75 @@ Assemble scene, choose render path, handle overlay/picking, and show/export.
     else:
         pl.enable_trackball_style()
 
-    # Base atoms
-    if use_impostor:
+    # Base atoms. The outline preset uses true geometry so PyVista can derive
+    # camera-aware silhouettes; large scenes fall back to translucent instancing
+    # rather than materializing an impractically large merged mesh.
+    use_base_outlines = bool(cfg.base_atom_outline and n_atoms <= cfg.max_atoms_for_outlines)
+    if use_base_outlines:
+        outlined_base = glyph_spheres(
+            base_world,
+            cfg.base_radius,
+            cfg.sphere_theta,
+            cfg.sphere_phi,
+        )
+        if outlined_base.n_points:
+            pl.add_mesh(
+                outlined_base,
+                color=cfg.base_color,
+                opacity=float(cfg.base_atom_opacity),
+                smooth_shading=True,
+                specular=cfg.sphere_specular,
+                ambient=cfg.sphere_ambient,
+                diffuse=cfg.sphere_diffuse,
+            )
+            silhouette_actor = pl.add_silhouette(
+                outlined_base,
+                color=cfg.base_atom_outline_color,
+                line_width=float(cfg.base_atom_outline_width),
+                opacity=1.0,
+            )
+            silhouette_mapper = silhouette_actor.GetMapper()
+            silhouette_mapper.SetResolveCoincidentTopologyToPolygonOffset()
+            silhouette_mapper.SetRelativeCoincidentTopologyLineOffsetParameters(
+                0.0,
+                float(cfg.base_atom_outline_depth_offset),
+            )
+            silhouette_actor.GetProperty().SetRenderLinesAsTubes(
+                bool(cfg.base_atom_outline_as_tubes)
+            )
+    elif use_impostor:
         add_points_impostor(pl, base_world, cfg.base_color, cfg.points_impostor_size)
     elif use_instanced:
         theta, phi = adaptive_base_res(n_atoms, cfg)
         chunks = (chunk_points_z(base_world, cfg.chunk_target_atoms, cfg.chunk_max_actors)
                   if cfg.chunking_enabled and n_atoms > 0 else [base_world])
         for ch in chunks:
-            actor = make_instanced_actor(ch, cfg.base_radius, cfg.base_color, theta, phi)
+            actor = make_instanced_actor(
+                ch,
+                cfg.base_radius,
+                cfg.base_color,
+                theta,
+                phi,
+                specular=cfg.sphere_specular,
+                ambient=cfg.sphere_ambient,
+                diffuse=cfg.sphere_diffuse,
+                opacity=cfg.base_atom_opacity,
+            )
             if actor is not None:
                 pl.renderer.AddActor(actor)
     else:
         if n_atoms <= cfg.max_atoms_for_true_spheres:
             baked = glyph_spheres(base_world, cfg.base_radius, cfg.sphere_theta, cfg.sphere_phi)
             if baked is not None and baked.n_points:
-                pl.add_mesh(baked, color=cfg.base_color, smooth_shading=True, specular=0.2)
+                pl.add_mesh(
+                    baked,
+                    color=cfg.base_color,
+                    opacity=float(cfg.base_atom_opacity),
+                    smooth_shading=True,
+                    specular=cfg.sphere_specular,
+                    ambient=cfg.sphere_ambient,
+                    diffuse=cfg.sphere_diffuse,
+                )
         else:
             print("[info] vtkGlyph3DMapper not available; falling back to impostor points for large scene.")
             add_points_impostor(pl, base_world, cfg.base_color, cfg.points_impostor_size)
@@ -1460,7 +2062,14 @@ Assemble scene, choose render path, handle overlay/picking, and show/export.
     hydrogen_radius = 0.0
     for mesh, sp in dop_meshes:
         if mesh is not None and mesh.n_points:
-            pl.add_mesh(mesh, color=sp.color, smooth_shading=True, specular=0.25)
+            pl.add_mesh(
+                mesh,
+                color=sp.color,
+                smooth_shading=True,
+                specular=cfg.sphere_specular,
+                ambient=cfg.sphere_ambient,
+                diffuse=cfg.sphere_diffuse,
+            )
     # Collect H centers for picking feedback
     for sp, centers_w, rad in dopant_world_centers:
         if sp.mode == "interstitial" and sp.name.lower().startswith("h") and centers_w.size:
@@ -1471,18 +2080,35 @@ Assemble scene, choose render path, handle overlay/picking, and show/export.
     # Camera
     extent = np.array([cfg.Nx, cfg.Ny, cfg.Nz], dtype=np.float32) * np.float32(cfg.a)
     center = 0.5 * extent
-    dist = float(np.linalg.norm(extent)) * 2.2
-    pl.camera.SetPosition(center[0], 1.2 * center[1], center[2] + dist)
+    dist = float(np.linalg.norm(extent)) * float(cfg.camera_distance_scale)
+    camera_direction = np.asarray(cfg.camera_direction, dtype=float)
+    direction_norm = float(np.linalg.norm(camera_direction))
+    if direction_norm <= 1e-12:
+        raise ValueError("camera_direction must contain at least one non-zero value")
+    camera_direction /= direction_norm
+    camera_position = center.astype(float) + dist * camera_direction
+    pl.camera.SetPosition(*camera_position)
     pl.camera.SetFocalPoint(*center)
-    pl.camera.SetViewUp(0, 1, 0)
-    pl.camera.Azimuth(25)
-    pl.camera.Elevation(20)
+    pl.camera.SetViewUp(*(float(v) for v in cfg.camera_view_up))
+    pl.camera.SetParallelProjection(bool(cfg.camera_parallel_projection))
+    pl.camera.SetViewAngle(float(cfg.camera_view_angle))
 
     # Axes
     if cfg.show_axes:
-        pl.add_axes()  # corner XYZ triad
+        pl._corner_axes_actor = pl.add_axes()  # corner XYZ triad
 
-    # Numbered axes with tick marks (math-style)
+    # Unit-cell overlay & site legend (optional)
+    if cfg.show_unit_cell_overlay:
+        draw_unit_cell_overlay(pl, cfg)
+
+    # Picking (right click)
+    if cfg.enable_picking and not no_show:
+        enable_picker(pl, cfg, hydrogen_centers_world, hydrogen_radius)
+
+    # Numbered axes with tick marks (math-style). Add this after all geometry so
+    # later actors cannot make PyVista replace the zero-based display range with
+    # the negative/positive sphere-surface bounds.
+    if cfg.show_axes:
         Lx = float(np.max(base_world[:, 0]) - np.min(base_world[:, 0]))
         Ly = float(np.max(base_world[:, 1]) - np.min(base_world[:, 1]))
         Lz = float(np.max(base_world[:, 2]) - np.min(base_world[:, 2]))
@@ -1495,45 +2121,55 @@ Assemble scene, choose render path, handle overlay/picking, and show/export.
         bz = _rng(Lz)
         bounds = (bx[0], bx[1], by[0], by[1], bz[0], bz[1])
 
-        # build clean tick arrays so the first tick is exactly 0.0 (no "-0.0")
-        def _ticks(L, n=5):
-
-            vals = np.linspace(0.0, L, n)
-            vals[np.isclose(vals, 0.0, atol=1e-12)] = 0.0
-            return vals
-
-        tx = _ticks(bx[1])
-        ty = _ticks(by[1])
-        tz = _ticks(bz[1])
-
-        pl.show_bounds(
-            bounds=bounds,
+        axes_actor = pl.show_bounds(
+            axes_ranges=bounds,
             show_xaxis=True, show_yaxis=True, show_zaxis=True,
-            xtitle="x (nm)", ytitle="y (nm)", ztitle="z (nm)",
-            location="outer",
-            ticks="outside",  # <- explicit ticks; first is 0.0 exactly
+            xtitle="x [nm]", ytitle="y [nm]", ztitle="z [nm]",
+            location=cfg.axis_location,
+            ticks="outside",
+            font_size=max(1, int(cfg.axis_font_size)),
+            bold=True,
             fmt="%.2f",  # keep labels tidy; adjust precision if you like
             minor_ticks=False,
+            use_3d_text=bool(cfg.axis_use_3d_text),
         )
-
-    # Unit-cell overlay & site legend (optional)
-    if cfg.show_unit_cell_overlay:
-        draw_unit_cell_overlay(pl, cfg)
-
-    # Picking (right click)
-    if cfg.enable_picking and not no_show:
-        enable_picker(pl, cfg, hydrogen_centers_world, hydrogen_radius)
+        for line_property in (
+            axes_actor.GetXAxesLinesProperty(),
+            axes_actor.GetYAxesLinesProperty(),
+            axes_actor.GetZAxesLinesProperty(),
+        ):
+            line_property.SetLineWidth(max(1.0, float(cfg.axis_line_width)))
+        pl._numbered_axes_actor = axes_actor
+        pl._numbered_axes_ranges = bounds
+        pl._deduplicate_axis_zero_labels = bool(cfg.deduplicate_axis_zero_labels)
+        restore_numbered_axes(pl)
 
     # Exports (meshes)
     export_all(base_mesh, dop_meshes, export_dir, export_merged)
 
-    # Show
+    # Display and/or lossless PNG output. A scaled PNG increases saved
+    # resolution without making the interactive window correspondingly huge.
     if screenshot:
         os.makedirs(os.path.dirname(screenshot) or ".", exist_ok=True)
-        pl.show(screenshot=screenshot, auto_close=True)
+        png_scale = max(1, int(cfg.png_scale))
+        png_window_size = (
+            max(1, int(cfg.window_size[0])) * png_scale,
+            max(1, int(cfg.window_size[1])) * png_scale,
+        )
+        transparent = bool(cfg.png_transparent_background)
+        _scale_viewport_text_for_png(pl, png_scale)
+        pl.show(auto_close=False)
+        pl.screenshot(
+            screenshot,
+            window_size=png_window_size,
+            transparent_background=transparent,
+        )
+        pl.close()
     elif not no_show:
         mark_weldcraft_startup_ready()
         pl.show()
+    else:
+        pl.close()
 
 
 # ------------------ Startup summary (optional) ------------------
@@ -1558,6 +2194,8 @@ Print a human-readable summary of the current run.
     print(f"base radius:   {cfg.base_radius}, color: {cfg.base_color}")
     print(f"dopants:       {[d.name for d in cfg.dopants if d.positions] or 'none'}")
     print(f"render_mode:   {cfg.render_mode}")
+    print(f"visual preset: {cfg.visual_preset}")
+    print(f"site view:     {cfg.interstitial_site_view or cfg.overlay_periodic}")
     print(f"atoms:         base={base_count}, substitutionals={sub_counts or {}}, interstitials={int_counts or {}}, total={total}")
     print(f"zoom_mode:     {cfg.zoom_mode}")
     if cfg.slab: print(f"slab z-range:  {cfg.slab}")
@@ -1596,6 +2234,21 @@ Entry point wiring: config, normalization, placements, optional dump, run plot.
 
     config_path = args.config or guess_default_config()
     cfg = load_config(config_path) if config_path else Config()
+    apply_visual_preset(cfg)
+    apply_camera_preset(cfg)
+
+    screenshot = args.screenshot
+    using_configured_png = screenshot is None and cfg.save_png
+    if using_configured_png:
+        screenshot = str(cfg.png_path)
+        if cfg.png_include_lattice_name:
+            screenshot = output_path_with_lattice_name(
+                screenshot,
+                cfg.lattice,
+            )
+    if screenshot is not None and cfg.png_avoid_overwrite:
+        screenshot = next_available_output_path(screenshot)
+    no_show = bool(args.no_show or not cfg.display_window)
 
     # Enforce physical sizing from (target_atoms, r, lattice)
     normalize_physical_config(cfg)
@@ -1610,14 +2263,14 @@ Entry point wiring: config, normalization, placements, optional dump, run plot.
     print_startup_summary(config_path, cfg,
                           export_dir=args.export_dir,
                           export_merged=args.export_merged,
-                          screenshot=args.screenshot,
-                          no_show=args.no_show)
+                          screenshot=screenshot,
+                          no_show=no_show)
 
     plot(cfg,
          export_dir=args.export_dir,
          export_merged=args.export_merged,
-         screenshot=args.screenshot,
-         no_show=args.no_show)
+         screenshot=screenshot,
+         no_show=no_show)
 
 
 if __name__ == "__main__":

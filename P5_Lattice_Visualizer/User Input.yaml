@@ -1,14 +1,25 @@
 # Physical sizing (only knobs you really need)
-lattice: "BCC"     # SC (Simple Cubic) | BCC | FCC   # Lattice type: 'Simple Cubic' | 'BCC' | 'FCC'
-target_atoms: 900000   # 1_000_000 for ppm visualization / DEMO-MODE: SC: <=8, BCC: <=9, FCC: <=14   # Approximate total atoms, determines cell counts (Nx,Ny,Nz)
+lattice: "FCC"     # SC (Simple Cubic) | BCC | FCC   # Lattice type: 'Simple Cubic' | 'BCC' | 'FCC'
+target_atoms: 1   # 1_000_000 for ppm visualization / DEMO-MODE: SC: <=8, BCC: <=9, FCC: <=14   # Approximate total atoms, determines cell counts (Nx,Ny,Nz)
 r: 0.124                    # nm  (Fe atomic radius @ RT; adjust if desired)   # Atomic radius of Fe (nm); sets lattice constant 'a'
-base_radius_scale: 0.5     # Atom visually smaller than its radius good default: 0.4
+base_radius_scale: 0.5     # Visual-only: 1.0 = physical radius; 0.5 draws half-radius atoms with more space
 base_color: "#555555"       # Color of the base atoms #555555 is grey   # Color of base lattice (Fe)
 
 dopants:   # List of dopant species; substitutional or interstitial
   - name: "H"
     color: "blue"
     mode: "interstitial"   # Dopant mode: 'substitutional' or 'interstitial'
+    # Preferred family is lattice-aware: H is tetrahedral in BCC Fe,
+    # octahedral in FCC Fe, and uses the cubic hole in Simple Cubic.
+    interstitial_site:
+      BCC: "tetra"
+      FCC: "octa"
+      SC: "cubic"
+    # Optional exact site per lattice. A null/missing lattice entry selects a random legal site.
+    forced_interstitial_position:
+      BCC: [0.25, 0.0, 0.5]       # H site used in the BCC reference image
+      FCC: [0.5, 0.5, 0.5]        # Occupied blue octahedral site in the very middle
+      SC: [0.5, 0.5, 0.5]         # Cubic interstitial at the body centre
     size_scale: 0.5   # Visual radius relative to Fe (1.0 = same, 0.5 = half, etc.)
     count: 1   # For interstitial: absolute number of atoms to place
 
@@ -35,7 +46,17 @@ draw_bravais_overlay: true   # For BCC/FCC: draw hallmark Bravais connections
 overlay_marker_scale: 0.45   # Marker size scaling factor
 overlay_color: "#222222"   # Color for overlay cell edges/markers
 overlay_alpha: 0.6   # Transparency for overlay lines
-overlay_periodic: "both_faces"   # "both_faces" | "canonical"   # 'both_faces' = show 0 and 1 boundaries; 'canonical' = [0,1) only
+overlay_marker_opacity: 0.55   # 0.0 = invisible, 1.0 = opaque
+overlay_marker_specular: 0.0   # 0.0 = matte; increase for a shiny highlight
+tetrahedral_color: "green"
+octahedral_color: "orange"
+cubic_color: "purple"
+show_overlay_legend: true
+overlay_legend_loc: "upper right"   # "upper right" | "upper left" | "lower left" | "lower right"
+overlay_legend_text_color: "#3A3A3A"   # Dark text remains readable beside light Fe markers
+overlay_legend_padding: 8            # Horizontal space between each marker dot and its text
+overlay_legend_font_size: 18         # Legend heading and row text size
+overlay_legend_x_offset: 0.025       # Positive moves the legend right; negative moves it left
 
 # demo mode behavior
 demo_cell_auto: true           # auto single-cell if target ≤ elemental threshold   # Auto-enable demo cell if target_atoms is small
@@ -43,7 +64,42 @@ demo_cell_auto: true           # auto single-cell if target ≤ elemental thresh
 
 # -------- Advanced Settings ----------
 # Rendering
-render_mode: "spheres"          # "auto" | "spheres" (instanced) | "impostor_points"   # 'auto' (instancing if possible), 'spheres', or 'impostor_points'
+visual_preset: "outline"         # "screen" | "thesis"/"publication" | "outline" (transparent Fe with solid silhouettes)
+render_mode: "auto"             # "auto" | "spheres" (instanced) | "impostor_points"   # 'auto' (instancing if possible), 'spheres', or 'impostor_points'
+display_window: true             # true = open the interactive PyVista window
+save_png: true                  # true = also create the PNG configured below
+png_path: "02_Results/lattice_visualization.png"
+png_include_lattice_name: true  # e.g. lattice_visualization FCC.png
+png_avoid_overwrite: true        # Existing name.png becomes name (1).png, then name (2).png, etc.
+png_scale: 2                     # Saved resolution multiplier: 2 gives 3200x2400 from a 1600x1200 window
+png_transparent_background: false
+window_size: [1600, 1200]       # Interactive window size and base PNG dimensions
+anti_aliasing: "fxaa"           # FXAA avoids MSAA fringe pixels on translucent outline spheres
+multi_samples: 8                # MSAA sample count; 4 or 8 is usually sufficient
+sphere_theta: 48                # Sphere mesh resolution around the equator; higher = smoother
+sphere_phi: 48                  # Sphere mesh resolution from pole to pole; higher = smoother
+sphere_specular: 0.0            # 0.0 = matte; increase for reflective highlights
+sphere_ambient: 0.0             # Flat fill light; publication preset raises this
+sphere_diffuse: 1.0             # Directional shading strength
+base_atom_outline_depth_offset: -2.0   # Pull silhouettes forward to prevent white/z-fighting edge gaps
+base_atom_outline_as_tubes: true       # Render continuous solid contours instead of flat GPU lines
+points_impostor_size: 3.0       # Pixel diameter used only by render_mode: "impostor_points"
+interstitial_site_view: "picture"   # "all" | "canonical" ([0,1)) | "picture" (uses picture_site_faces)
+picture_site_faces:              # Picture mode: select periodic copies separately per lattice
+  BCC: [1, 1, 0]
+  FCC: [1, 1, 0]                 # FCC edge sites: bottom plus the visible left-side representatives
+  SC: [1, 1, 0]
+camera_preset: "custom"   # "custom" | "isometric" | "low_isometric" (reference-image view)
+camera_direction: [-1.0, -0.7, 0.35]   # Isometric camera: x back-right, y left, z up
+camera_view_up: [0.0, 0.0, 1.0]
+camera_distance_scale: 3.0
+camera_parallel_projection: false   # false = perspective; true = orthographic
+camera_view_angle: 30.0           # Perspective field of view in degrees
+axis_location: "outer"
+axis_use_3d_text: false          # Crisp literal text; keeps [nm] as square brackets
+axis_font_size: 32               # Larger axis titles/tick labels for print figures
+axis_line_width: 1.75            # Numbered-axis and tick-line thickness
+deduplicate_axis_zero_labels: true   # Keep one shared-origin 0.00 instead of one per axis
 
 # Interaction
 zoom_mode: "cursor"              # "focal" (default VTK) | "cursor" (zoom to mouse)
@@ -64,6 +120,10 @@ chunk_max_actors: 8
 chunk_axis: "z"
 
 # Adaptive base resolution thresholds
+adaptive_resolution: true       # false forces sphere_theta / sphere_phi at every atom count (can be very slow)
 res_thresh_1: 100000
 res_thresh_2: 300000
 res_thresh_3: 600000
+res_cap_1: 16                   # Base-sphere cap above res_thresh_1
+res_cap_2: 12                   # Base-sphere cap above res_thresh_2
+res_cap_3: 8                    # Base-sphere cap above res_thresh_3
