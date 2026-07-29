@@ -207,6 +207,7 @@ Dataclass for all runtime settings (lattice, sizes, rendering, dopants, overlays
     camera_direction: Tuple[float, float, float] = (-1.0, -1.0, 1.0)
     camera_view_up: Tuple[float, float, float] = (0.0, 0.0, 1.0)
     camera_distance_scale: float = 3.0
+    camera_normalize_demo_atom_size: bool = True
     camera_parallel_projection: bool = False
     camera_view_angle: float = 30.0
     axis_location: str = "outer"
@@ -476,6 +477,15 @@ def output_path_with_lattice_name(path: str, lattice: str) -> str:
             f"{requested.stem} {lattice_label}{requested.suffix}"
         )
     )
+
+
+def resolve_runtime_output_path(path: str) -> str:
+    """Anchor a relative configured output path beside the program."""
+
+    requested = Path(path)
+    if not requested.is_absolute():
+        requested = runtime_directory() / requested
+    return str(requested.resolve())
 
 
 def next_available_output_path(path: str) -> str:
@@ -1496,7 +1506,7 @@ Def '_add_markers'.
 
     # ----- Structured legend (always shown when overlay is on) -----
     legend_rows = [
-        ("Basis Lattice (Fe)", cfg.base_color, False),
+        ("Host Lattice (Fe)", cfg.base_color, False),
         ("Interstitials:", None, True),
     ]
     if tetra:
@@ -2080,7 +2090,22 @@ def plot(cfg: Config, export_dir: Optional[str], export_merged: Optional[str],
     # Camera
     extent = np.array([cfg.Nx, cfg.Ny, cfg.Nz], dtype=np.float32) * np.float32(cfg.a)
     center = 0.5 * extent
-    dist = float(np.linalg.norm(extent)) * float(cfg.camera_distance_scale)
+    camera_extent = extent
+    if (
+        bool(cfg.camera_normalize_demo_atom_size)
+        and getattr(cfg, "_demo_cell_active", False)
+    ):
+        # The old distance was proportional to lattice constant, which made
+        # equal-radius Fe spheres look smaller in FCC than BCC. Use the BCC
+        # hard-sphere spacing as a common camera reference in all one-cell
+        # comparison views. Coordinates and numbered-axis values still retain
+        # the active lattice's actual lattice constant.
+        reference_a = 4.0 * float(cfg.r) / math.sqrt(3.0)
+        camera_extent = (
+            np.array([cfg.Nx, cfg.Ny, cfg.Nz], dtype=np.float32)
+            * np.float32(reference_a)
+        )
+    dist = float(np.linalg.norm(camera_extent)) * float(cfg.camera_distance_scale)
     camera_direction = np.asarray(cfg.camera_direction, dtype=float)
     direction_norm = float(np.linalg.norm(camera_direction))
     if direction_norm <= 1e-12:
@@ -2240,7 +2265,7 @@ Entry point wiring: config, normalization, placements, optional dump, run plot.
     screenshot = args.screenshot
     using_configured_png = screenshot is None and cfg.save_png
     if using_configured_png:
-        screenshot = str(cfg.png_path)
+        screenshot = resolve_runtime_output_path(str(cfg.png_path))
         if cfg.png_include_lattice_name:
             screenshot = output_path_with_lattice_name(
                 screenshot,

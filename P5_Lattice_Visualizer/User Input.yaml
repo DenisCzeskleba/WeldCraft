@@ -18,7 +18,7 @@ dopants:   # List of dopant species; substitutional or interstitial
     # Optional exact site per lattice. A null/missing lattice entry selects a random legal site.
     forced_interstitial_position:
       BCC: [0.25, 0.0, 0.5]       # H site used in the BCC reference image
-      FCC: [0.5, 0.5, 0.5]        # Occupied blue octahedral site in the very middle
+      FCC: [0.5, 0.0, 0.0]        # Occupied blue octahedral site at the lower-right front
       SC: [0.5, 0.5, 0.5]         # Cubic interstitial at the body centre
     size_scale: 0.5   # Visual radius relative to Fe (1.0 = same, 0.5 = half, etc.)
     count: 1   # For interstitial: absolute number of atoms to place
@@ -87,12 +87,14 @@ points_impostor_size: 3.0       # Pixel diameter used only by render_mode: "impo
 interstitial_site_view: "picture"   # "all" | "canonical" ([0,1)) | "picture" (uses picture_site_faces)
 picture_site_faces:              # Picture mode: select periodic copies separately per lattice
   BCC: [1, 1, 0]
-  FCC: [1, 1, 0]                 # FCC edge sites: bottom plus the visible left-side representatives
+  FCC: [0, 0, 0]                 # FCC periodic edge sites on the camera-facing/front faces
   SC: [1, 1, 0]
 camera_preset: "custom"   # "custom" | "isometric" | "low_isometric" (reference-image view)
 camera_direction: [-1.0, -0.7, 0.35]   # Isometric camera: x back-right, y left, z up
+# camera_direction: [-1.0, -0.7, 0.35]   # looked goof for custom for BCC
 camera_view_up: [0.0, 0.0, 1.0]
 camera_distance_scale: 3.0
+camera_normalize_demo_atom_size: true  # Keep Fe spheres equally large across SC/BCC/FCC demo views
 camera_parallel_projection: false   # false = perspective; true = orthographic
 camera_view_angle: 30.0           # Perspective field of view in degrees
 axis_location: "outer"

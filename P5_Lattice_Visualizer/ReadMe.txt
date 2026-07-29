@@ -81,7 +81,9 @@ file itself. Here are the key options in simple terms:
   rotations made afterward do not alter that PNG.
 - png_path / png_scale: Set the lossless PNG destination and saved-resolution
   multiplier. With window_size [1600, 1200] and png_scale 2, the PNG is
-  3200 x 2400 while the displayed window remains 1600 x 1200.
+  3200 x 2400 while the displayed window remains 1600 x 1200. Relative paths
+  are anchored to the visualizer/executable directory, not VS Code's current
+  working directory.
 - png_include_lattice_name: Adds the active lattice before the extension, for
   example lattice_visualization FCC.png.
 - png_avoid_overwrite: When true, an existing name.png is preserved and the new
@@ -101,6 +103,10 @@ file itself. Here are the key options in simple terms:
   settings; "isometric" uses the original equal-axis view; "low_isometric"
   reproduces the lower-elevation perspective reconstructed from the reference
   screenshot. Camera presets are independent of visual_preset.
+- camera_normalize_demo_atom_size: Uses one BCC-derived camera distance for
+  one-cell SC/BCC/FCC comparisons. Fe spheres with the same configured radius
+  therefore retain the same on-page size while the physical axis lengths still
+  reflect each lattice constant.
 - anti_aliasing: Edge smoothing. "fxaa" is recommended for the translucent
   outline preset because MSAA can produce white/colored fringe pixels where
   transparent surfaces and silhouettes overlap. "msaa" remains crisp for
