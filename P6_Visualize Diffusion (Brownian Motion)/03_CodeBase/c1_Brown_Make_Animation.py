@@ -289,9 +289,16 @@ def update(frame, state, matrices, saved_steps, transport_analysis):
         artists.append(state["conc_plot"])
 
     if state["flux_line"] is not None:
+        flux_stop = int(
+            np.searchsorted(
+                transport_analysis["time"],
+                saved_steps[frame],
+                side="right",
+            )
+        )
         state["flux_line"].set_data(
-            transport_analysis["time"][:frame + 1],
-            transport_analysis["net_flux"][:frame + 1],
+            transport_analysis["time"][:flux_stop],
+            transport_analysis["net_flux"][:flux_stop],
         )
         state["flux_cursor"].set_xdata([saved_steps[frame], saved_steps[frame]])
         artists.extend([state["flux_line"], state["flux_cursor"]])

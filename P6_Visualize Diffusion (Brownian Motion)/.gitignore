@@ -9,6 +9,11 @@
 *.hdf5
 *.mp4
 
+# Publish every file directly in Examples, but keep all of its subfolders local
+!/02_Results/Examples/
+!/02_Results/Examples/*
+/02_Results/Examples/*/
+
 # Python runtime artifacts
 __pycache__/
 *.pyc

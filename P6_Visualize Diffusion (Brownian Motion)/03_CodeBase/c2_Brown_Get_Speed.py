@@ -11,6 +11,8 @@ Two data paths are supported:
    signed molecular x-displacement accumulated between saved frames.  Dividing
    it by elapsed steps and sampled x-width gives the spatially averaged net
    crossing flux directly.
+   Publication-optimized files may keep a full independent transport timeline
+   in ``/transport/saved_steps`` while retaining fewer full matrix snapshots.
 2. Legacy files contain only occupancy snapshots.  Their steady through-flow
    is not observable from mass balance alone, so an effective diffusivity is
    fitted from the transient relaxation of coarse concentration profiles.
@@ -133,10 +135,35 @@ def load_binned_concentration(h5_path, frame_stride=1):
 
         snapshots = hf["snapshots"]
         all_steps = np.asarray(read_saved_steps(hf), dtype=np.float64)
+        if len(all_steps) != snapshots.shape[0]:
+            raise RuntimeError(
+                "The root saved_steps dataset must align with the matrix snapshots."
+            )
+
+        transport_group = hf.get("transport")
+        required_transport_datasets = {
+            "net_x_displacement",
+            "interval_steps",
+            "region_widths",
+            "region_centers_x",
+        }
+        has_recorded_transport = (
+            transport_group is not None
+            and required_transport_datasets.issubset(transport_group.keys())
+        )
+        has_independent_transport_timeline = (
+            has_recorded_transport and "saved_steps" in transport_group
+        )
+
         frame_indices = np.arange(0, snapshots.shape[0], frame_stride, dtype=int)
         saved_steps = all_steps[frame_indices]
-        if len(saved_steps) < 3:
-            raise RuntimeError("At least three saved snapshots are required for transport analysis.")
+        minimum_snapshot_count = 1 if has_independent_transport_timeline else 2
+        if len(saved_steps) < minimum_snapshot_count:
+            raise RuntimeError(
+                f"At least {minimum_snapshot_count} saved snapshot"
+                f"{'s are' if minimum_snapshot_count != 1 else ' is'} "
+                "required for transport analysis."
+            )
         if np.any(np.diff(saved_steps) <= 0):
             raise RuntimeError("Saved simulation steps must be strictly increasing.")
 
@@ -163,17 +190,62 @@ def load_binned_concentration(h5_path, frame_stride=1):
             )
 
         recorded_transport = None
-        if "transport" in hf:
-            transport_group = hf["transport"]
-            required = {
-                "net_x_displacement",
-                "interval_steps",
-                "region_widths",
-                "region_centers_x",
-            }
-            if required.issubset(transport_group.keys()):
-                all_displacement = transport_group["net_x_displacement"][:]
-                all_interval_steps = transport_group["interval_steps"][:]
+        if has_recorded_transport:
+            all_displacement = transport_group["net_x_displacement"][:]
+            all_interval_steps = transport_group["interval_steps"][:]
+
+            if has_independent_transport_timeline:
+                all_transport_steps = np.asarray(
+                    transport_group["saved_steps"][:],
+                    dtype=np.float64,
+                )
+                transport_frame_count = len(all_transport_steps)
+                if (
+                    len(all_displacement) != transport_frame_count
+                    or len(all_interval_steps) != transport_frame_count
+                ):
+                    raise RuntimeError(
+                        "Independent recorded-transport datasets have "
+                        "incompatible timeline lengths."
+                    )
+                if np.any(np.diff(all_transport_steps) <= 0):
+                    raise RuntimeError(
+                        "Independent recorded-transport steps must be "
+                        "strictly increasing."
+                    )
+
+                transport_indices = np.arange(
+                    0,
+                    transport_frame_count,
+                    frame_stride,
+                    dtype=int,
+                )
+                transport_time = all_transport_steps[transport_indices]
+                if frame_stride == 1:
+                    displacement = np.asarray(all_displacement, dtype=np.float64)
+                    interval_steps = np.asarray(all_interval_steps, dtype=np.int64)
+                else:
+                    displacement = np.zeros(
+                        (len(transport_indices), all_displacement.shape[1]),
+                        dtype=np.float64,
+                    )
+                    interval_steps = np.zeros(len(transport_indices), dtype=np.int64)
+                    previous_frame = -1
+                    for output_index, transport_index in enumerate(transport_indices):
+                        interval_slice = slice(
+                            previous_frame + 1,
+                            int(transport_index) + 1,
+                        )
+                        displacement[output_index] = np.sum(
+                            all_displacement[interval_slice],
+                            axis=0,
+                        )
+                        interval_steps[output_index] = np.sum(
+                            all_interval_steps[interval_slice],
+                        )
+                        previous_frame = int(transport_index)
+            else:
+                transport_time = saved_steps
                 displacement = np.zeros(
                     (len(frame_indices), all_displacement.shape[1]),
                     dtype=np.float64,
@@ -190,12 +262,19 @@ def load_binned_concentration(h5_path, frame_stride=1):
                         all_interval_steps[interval_slice],
                     )
                     previous_frame = int(frame_index)
-                recorded_transport = {
-                    "net_x_displacement": displacement,
-                    "interval_steps": interval_steps,
-                    "region_widths": transport_group["region_widths"][:],
-                    "region_centers_x": transport_group["region_centers_x"][:],
-                }
+            recorded_transport = {
+                "time": transport_time,
+                "net_x_displacement": displacement,
+                "interval_steps": interval_steps,
+                "region_widths": transport_group["region_widths"][:],
+                "region_centers_x": transport_group["region_centers_x"][:],
+            }
+
+        if recorded_transport is None and len(saved_steps) < 3:
+            raise RuntimeError(
+                "At least three saved snapshots are required when recorded "
+                "transport data is unavailable."
+            )
 
     widths = np.diff(edges).astype(np.float64)
     centers = (edges[:-1] + edges[1:]) / 2
@@ -370,12 +449,15 @@ def _smooth_time_series(values, sigma):
 
 def _analysis_from_recorded_transport(profile_data):
     recorded = profile_data["recorded_transport"]
+    transport_time = np.asarray(recorded["time"], dtype=np.float64)
     displacement = np.asarray(recorded["net_x_displacement"], dtype=np.float64)
     interval_steps = np.asarray(recorded["interval_steps"], dtype=np.float64)
     region_widths = np.asarray(recorded["region_widths"], dtype=np.float64)
 
     if displacement.ndim != 2 or displacement.shape[1] != len(region_widths):
         raise RuntimeError("Recorded transport datasets have incompatible shapes.")
+    if len(transport_time) != len(displacement) or len(interval_steps) != len(displacement):
+        raise RuntimeError("Recorded transport timeline and interval arrays do not align.")
 
     denominator = interval_steps[:, None] * region_widths[None, :]
     region_flux = np.full_like(displacement, np.nan, dtype=np.float64)
@@ -416,7 +498,8 @@ def _analysis_from_recorded_transport(profile_data):
     return {
         "method": "recorded signed molecular crossings",
         "method_key": "recorded",
-        "time": profile_data["time"],
+        "time": transport_time,
+        "concentration_time": profile_data["time"],
         "x": np.asarray(recorded["region_centers_x"], dtype=np.float64),
         "concentration_x": profile_data["x"],
         "concentration": profile_data["concentration"],
@@ -477,6 +560,7 @@ def _analysis_from_profiles(profile_data, imposed_diffusivity=None):
         "method": method,
         "method_key": method_key,
         "time": profile_data["time"],
+        "concentration_time": profile_data["time"],
         "x": profile_data["x"],
         "concentration_x": profile_data["x"],
         "concentration": concentration,
@@ -539,6 +623,7 @@ def print_analysis_summary(analysis):
 def create_transport_figure(analysis, selected_frame=SELECTED_FRAME):
     frame_index = normalize_frame_index(selected_frame, len(analysis["time"]))
     time = analysis["time"]
+    concentration_time = analysis.get("concentration_time", time)
 
     fig = plt.figure(figsize=(12, 8))
     grid = fig.add_gridspec(2, 2, height_ratios=(1, 1.15), hspace=0.34, wspace=0.28)
@@ -546,19 +631,21 @@ def create_transport_figure(analysis, selected_frame=SELECTED_FRAME):
     flux_profile_axis = fig.add_subplot(grid[0, 1])
     flux_time_axis = fig.add_subplot(grid[1, :])
 
-    profile_indices = sorted(
-        {
-            0,
-            max(0, frame_index // 4),
-            max(0, frame_index // 2),
-            frame_index,
-        }
+    concentration_frame_count = len(analysis["concentration"])
+    profile_indices = np.unique(
+        np.rint(
+            np.linspace(
+                0,
+                concentration_frame_count - 1,
+                min(4, concentration_frame_count),
+            )
+        ).astype(int)
     )
     for index in profile_indices:
         concentration_axis.plot(
             analysis["concentration_x"],
             100 * analysis["concentration"][index],
-            label=f"step {int(time[index]):,}",
+            label=f"step {int(concentration_time[index]):,}",
         )
     concentration_axis.set_title("Noise-reduced concentration profiles")
     concentration_axis.set_xlabel("Matrix x")

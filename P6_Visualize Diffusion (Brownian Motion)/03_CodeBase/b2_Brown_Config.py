@@ -21,12 +21,11 @@ y = 650  # Height (y)
 x = 1300  # Width (x)
 
 # Number of simulation steps. For continuation, this is the number of additional steps.
-steps = 20_000_000_000  # use 10_000_000 notation, or 10000000. DO NOT use 100.000.000
+steps = 70_000_000_000  # use 10_000_000 notation, or 10000000. DO NOT use 100.000.000
 max_radius_to_jump = 10
 
 # ---------------------- Matrix Source ---------------------- #
 MATRIX_SOURCE = "random"  # Options: "random", "image", "lattice"
-
 
 # Used when MATRIX_SOURCE = "random" or "lattice"
 max_sol_a = Fraction(5, 100)
@@ -34,7 +33,7 @@ max_sol_b = Fraction(5, 100)
 
 # Independent possible-site densities for the optional special areas
 max_sol_spot = Fraction(100, 100)
-max_sol_trap_layer = Fraction(10, 100)
+max_sol_trap_layer = Fraction(20, 100)
 
 # Used when MATRIX_SOURCE = "lattice"
 LATTICE_STYLE = "prime"
@@ -51,7 +50,7 @@ show_image_matrix_plot = True
 concentration_a = 0
 concentration_b = 0
 concentration_spot = 0  # only used if USE_SPOT = True
-concentration_trap_layer = 75  # only used if USE_TRAP_LAYER = True
+concentration_trap_layer = 0  # only used if USE_TRAP_LAYER = True
 
 # Optional left-to-right linear starting profiles for the two base areas.
 # When enabled, concentration_a and concentration_b above are replaced by these profiles.
@@ -63,7 +62,7 @@ concentration_profile_b = (50, 0)
 # ---------------------- Layer / Boundary Options ---------------------- #
 USE_SPOT = False
 SPOT_DIAMETER = 120
-SPOT_CENTER_X = 1 * x // 2  # Column position of the spot center
+SPOT_CENTER_X = 3 * x // 4  # Column position of the spot center
 SPOT_CENTER_Y = 1 * y // 2  # Row position of the spot center
 
 USE_TRAP_LAYER = False
@@ -106,7 +105,7 @@ RESUME_FROM_H5 = None
 random_seed = None  # None selects a fresh seed per run; set an integer to reproduce a run exactly.
 random_size = 10 ** 7  # Deprecated forced_jump only: number of precomputed random values.
 max_ram_mb = 2000  # Adjustable memory target for HDF5 frame buffering
-save_every_steps = 1_000_000
+save_every_steps = 100_000_000
 delete_old_h5 = True
 
 
@@ -137,7 +136,7 @@ animation_output_folder = "Saved Animations"
 animation_filename = "brownian_motion_animation.mp4"
 
 # ---------------------- Video Output ---------------------- #
-render_every_nth_frame = 20  # Render every Nth saved HDF5 frame; use larger values for huge runs to keep videos and memory smaller.
+render_every_nth_frame = 5  # Render every Nth saved HDF5 frame; use larger values for huge runs to keep videos and memory smaller.
 animation_fps = 12
 animation_main_pixel_scale = 2  # Integer video pixels per matrix cell; 2 preserves sparse one-cell sites clearly.
 animation_side_panel_width_px = 480

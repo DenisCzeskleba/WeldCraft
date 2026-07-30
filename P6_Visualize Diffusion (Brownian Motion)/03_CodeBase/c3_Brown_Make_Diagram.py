@@ -9,6 +9,7 @@ from pathlib import Path
 import contextlib
 import importlib.util
 import io
+import json
 
 import h5py
 import matplotlib.pyplot as plt
@@ -31,8 +32,10 @@ with contextlib.redirect_stdout(io.StringIO()):
 
 
 # ---------------------- Input Snapshot ---------------------- #
-INPUT_H5_FILENAME = "random_motion.h5"  # Set to a sparse H5 name such as "random_motion_sparse.h5" when needed.
-SNAPSHOT_INDEX = 0  # HDF5 saved-frame index to plot; -1 means the last saved frame, 0 means first saved frame.
+# Used by ordinary presets. The special "all_presets" mode instead always uses
+# 02_Results/Examples/published_examples_source.h5 for reproducible public examples.
+INPUT_H5_FILENAME = "O1 V3 long run should include everythig.h5"
+SNAPSHOT_INDEX = -1  # HDF5 saved-frame index to plot; -1 means the last saved frame, 0 means first saved frame.
 
 
 # ---------------------- Output ---------------------- #
@@ -50,6 +53,7 @@ SAVE_DPI = 300
 # ---------------------- Diagram Profile ---------------------- #
 # Available diagram presets:
 #   "default"                       - Detailed pixel-by-pixel simulation matrix.
+#   "all_presets"                   - Render every preset from Examples/published_examples_source.h5 into Examples.
 #   "two_regions_w_solubility"      - Pixel matrix emphasizing both regions and solubilities.
 #   "simple_1_region_source_sink"   - Pixel matrix configured for a single-region source/sink view.
 #   "depletion_heatmap"             - Smoothed local enrichment/depletion heatmap.
@@ -57,7 +61,9 @@ SAVE_DPI = 300
 #   "area_summary"                  - Stylized non-overlapping dots using measured area averages.
 #   "chapter_2_3_brown_overview"    - Stylized dots following a transient saved x-profile.
 #   "area_summary_transient"        - Stylized non-overlapping dots using measured area averages, with transient x-profile.
-DIAGRAM_PRESET = "default"  # File stem in 01_Resources/Diagram_Presets.
+# When adding a preset, also add it to BATCH_PRESET_ORDER in the "all_presets"
+# preset file. Treat existing entries as append-only to keep public numbering stable.
+DIAGRAM_PRESET = "all_presets"  # File stem in 01_Resources/Diagram_Presets.
 
 REQUIRED_DIAGRAM_PRESET_KEYS = [
     "PRESET_NAME",
@@ -193,7 +199,7 @@ def diagram_presets_dir():
     return resources_dir() / "Diagram_Presets"
 
 
-def load_diagram_preset(preset_file_stem):
+def load_diagram_preset_module(preset_file_stem):
     preset_path = diagram_presets_dir() / f"{preset_file_stem}.py"
     if not preset_path.exists():
         available = sorted(path.stem for path in diagram_presets_dir().glob("*.py"))
@@ -207,6 +213,37 @@ def load_diagram_preset(preset_file_stem):
 
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
+    return module, preset_path
+
+
+def load_diagram_preset(preset_file_stem):
+    module, preset_path = load_diagram_preset_module(preset_file_stem)
+    if getattr(module, "BATCH_RENDER_ALL_PRESETS", False):
+        required_batch_keys = (
+            "PRESET_NAME",
+            "BATCH_INPUT_H5_FILENAME",
+            "BATCH_SNAPSHOT_INDEX",
+            "BATCH_OUTPUT_FOLDER",
+            "BATCH_SAVE_DPI",
+            "BATCH_MANIFEST_FILENAME",
+            "BATCH_PRESET_ORDER",
+        )
+        missing = [key for key in required_batch_keys if not hasattr(module, key)]
+        if missing:
+            raise RuntimeError(
+                f"Batch diagram preset {preset_path} is missing required settings: "
+                f"{', '.join(missing)}"
+            )
+        return {
+            "PRESET_NAME": module.PRESET_NAME,
+            "BATCH_RENDER_ALL_PRESETS": True,
+            "BATCH_INPUT_H5_FILENAME": module.BATCH_INPUT_H5_FILENAME,
+            "BATCH_SNAPSHOT_INDEX": module.BATCH_SNAPSHOT_INDEX,
+            "BATCH_OUTPUT_FOLDER": module.BATCH_OUTPUT_FOLDER,
+            "BATCH_SAVE_DPI": module.BATCH_SAVE_DPI,
+            "BATCH_MANIFEST_FILENAME": module.BATCH_MANIFEST_FILENAME,
+            "BATCH_PRESET_ORDER": tuple(module.BATCH_PRESET_ORDER),
+        }
 
     missing = [key for key in REQUIRED_DIAGRAM_PRESET_KEYS if not hasattr(module, key)]
     if missing:
@@ -222,6 +259,9 @@ def load_diagram_preset(preset_file_stem):
 
 def apply_diagram_preset(preset_file_stem):
     preset = load_diagram_preset(preset_file_stem)
+    globals()["BATCH_RENDER_ALL_PRESETS"] = bool(
+        preset.get("BATCH_RENDER_ALL_PRESETS", False)
+    )
     for key, value in preset.items():
         globals()[key] = value
 
@@ -2104,12 +2144,29 @@ def draw_net_flux(axis, transport_analysis, saved_step):
         axis.set_axis_off()
         return
 
-    time_values = transport_analysis["time"]
-    net_flux = transport_analysis["net_flux"]
+    time_values = np.asarray(transport_analysis["time"], dtype=float)
+    net_flux = np.asarray(transport_analysis["net_flux"], dtype=float)
+    flux_low = np.asarray(transport_analysis["flux_low"], dtype=float)
+    flux_high = np.asarray(transport_analysis["flux_high"], dtype=float)
+
+    # A file sparsified to its first and last snapshots contains one measured
+    # interval-average flux. Draw that value across its interval instead of as
+    # an invisible one-point line at the final saved step.
+    finite_flux_indices = np.flatnonzero(np.isfinite(net_flux))
+    if len(time_values) == 2 and len(finite_flux_indices) == 1:
+        flux_index = int(finite_flux_indices[0])
+        interval_flux = net_flux[flux_index]
+        interval_low = flux_low[flux_index]
+        interval_high = flux_high[flux_index]
+        time_values = np.asarray([time_values[0], time_values[-1]], dtype=float)
+        net_flux = np.full(2, interval_flux, dtype=float)
+        flux_low = np.full(2, interval_low, dtype=float)
+        flux_high = np.full(2, interval_high, dtype=float)
+
     axis.fill_between(
         time_values,
-        transport_analysis["flux_low"],
-        transport_analysis["flux_high"],
+        flux_low,
+        flux_high,
         color=NET_FLUX_BAND_COLOR,
         alpha=0.35,
         label="10th–90th spatial percentile",
@@ -2250,7 +2307,181 @@ def requested_area_summary_outputs():
     return outputs
 
 
+def discover_batch_diagram_presets():
+    """Return ordinary presets in documented order, then newly added presets."""
+    discovered = {
+        path.stem
+        for path in diagram_presets_dir().glob("*.py")
+        if path.stem != "all_presets" and not path.stem.startswith("_")
+    }
+    ordered = [
+        preset_name
+        for preset_name in BATCH_PRESET_ORDER
+        if preset_name in discovered
+    ]
+    ordered.extend(sorted(discovered.difference(ordered)))
+    return ordered
+
+
+def read_batch_manifest(manifest_path):
+    """Return files managed by a previous successful all-presets run."""
+    if not manifest_path.exists():
+        return set()
+
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"Could not read batch manifest: {manifest_path}") from exc
+
+    generated_files = manifest.get("generated_files")
+    if not isinstance(generated_files, list):
+        raise RuntimeError(
+            f"Batch manifest has no valid generated_files list: {manifest_path}"
+        )
+
+    managed_names = set()
+    for name in generated_files:
+        if (
+            not isinstance(name, str)
+            or Path(name).name != name
+            or not name.lower().endswith(".png")
+        ):
+            raise RuntimeError(
+                f"Unsafe generated filename in batch manifest: {name!r}"
+            )
+        managed_names.add(name)
+    return managed_names
+
+
+def publish_batch_manifest(
+    manifest_path,
+    *,
+    previous_generated_files,
+    saved_paths,
+    saved_step,
+):
+    """Atomically publish the new manifest, then remove obsolete managed PNGs."""
+    current_names = [path.name for path in saved_paths]
+    manifest = {
+        "generated_files": current_names,
+        "simulation_step": int(saved_step),
+        "source_h5": BATCH_INPUT_H5_FILENAME,
+    }
+    temporary_manifest = manifest_path.with_name(f".{manifest_path.name}.tmp")
+    temporary_manifest.write_text(
+        json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+    obsolete_names = sorted(previous_generated_files.difference(current_names))
+    for obsolete_name in obsolete_names:
+        obsolete_path = manifest_path.parent / obsolete_name
+        if obsolete_path.is_file():
+            obsolete_path.unlink()
+            print(f"Deleted obsolete published example: {obsolete_path}")
+
+    temporary_manifest.replace(manifest_path)
+    print(f"Updated published-example manifest: {manifest_path}")
+
+
+def render_all_diagram_presets():
+    """Render Examples/published_examples_source.h5 through every ordinary preset."""
+    input_path = Path(BATCH_INPUT_H5_FILENAME)
+    h5_path = input_path if input_path.is_absolute() else in_results(
+        BATCH_INPUT_H5_FILENAME
+    )
+    if not h5_path.exists():
+        raise FileNotFoundError(f"HDF5 file not found: {h5_path}")
+
+    output_dir = results_dir() / BATCH_OUTPUT_FOLDER
+    output_dir.mkdir(parents=False, exist_ok=True)
+    manifest_name = str(BATCH_MANIFEST_FILENAME)
+    if Path(manifest_name).name != manifest_name:
+        raise ValueError("BATCH_MANIFEST_FILENAME must be a plain filename")
+    manifest_path = output_dir / manifest_name
+    previous_generated_files = read_batch_manifest(manifest_path)
+
+    preset_names = discover_batch_diagram_presets()
+    if not preset_names:
+        raise RuntimeError("No ordinary diagram presets were found.")
+
+    # Validate every preset before creating output and load transport only when
+    # at least one of the discovered presets needs it.
+    preset_settings = {
+        preset_name: load_diagram_preset(preset_name)
+        for preset_name in preset_names
+    }
+    globals()["SHOW_NET_FLUX_PANEL"] = any(
+        settings["SHOW_NET_FLUX_PANEL"]
+        for settings in preset_settings.values()
+    )
+    matrix, saved_step, frame_index, metadata, transport_analysis = (
+        load_snapshot_and_context(h5_path, BATCH_SNAPSHOT_INDEX)
+    )
+
+    saved_paths = []
+    for preset_number, preset_name in enumerate(preset_names, start=1):
+        apply_diagram_preset(preset_name)
+        outputs = requested_area_summary_outputs()
+        multiple_variants = len(outputs) > 1
+
+        for variant_index, (shake_mode, output_variant) in enumerate(outputs):
+            number_label = (
+                str(preset_number)
+                if variant_index == 0
+                else f"{preset_number}.{variant_index}"
+            )
+            variant_suffix = (
+                f"_{output_variant}"
+                if multiple_variants and output_variant
+                else ""
+            )
+            output_path = output_dir / (
+                f"{number_label}_{preset_name}{variant_suffix}.png"
+            )
+            style_description = (
+                f" ({output_variant})" if output_variant else ""
+            )
+            print(
+                f"Rendering {number_label}: {preset_name}{style_description} "
+                f"at frame {frame_index}, step {saved_step}"
+            )
+
+            fig = create_figure(
+                matrix,
+                saved_step,
+                frame_index,
+                metadata,
+                transport_analysis,
+                area_summary_shake_mode=shake_mode,
+            )
+            fig.savefig(
+                output_path,
+                dpi=BATCH_SAVE_DPI,
+                bbox_inches="tight",
+            )
+            plt.close(fig)
+            saved_paths.append(output_path)
+            print(f"Saved PNG: {output_path}")
+
+    publish_batch_manifest(
+        manifest_path,
+        previous_generated_files=previous_generated_files,
+        saved_paths=saved_paths,
+        saved_step=saved_step,
+    )
+    print(
+        f"Rendered {len(saved_paths)} diagram files from "
+        f"{len(preset_names)} presets into {output_dir}"
+    )
+    return saved_paths
+
+
 def main():
+    if BATCH_RENDER_ALL_PRESETS:
+        render_all_diagram_presets()
+        return
+
     h5_path = resolve_h5_path()
     if not h5_path.exists():
         raise FileNotFoundError(f"HDF5 file not found: {h5_path}")

@@ -1,0 +1,17 @@
+{
+  "generated_files": [
+    "1_default.png",
+    "2_two_regions_w_solubility.png",
+    "3_simple_1_region_source_sink.png",
+    "4_depletion_heatmap.png",
+    "5_printer_friendly.png",
+    "6_area_summary_organic.png",
+    "6.1_area_summary_clustered.png",
+    "7_chapter_2_3_brown_overview_organic.png",
+    "7.1_chapter_2_3_brown_overview_clustered.png",
+    "8_area_summary_transient_organic.png",
+    "8.1_area_summary_transient_clustered.png"
+  ],
+  "simulation_step": 70000000000,
+  "source_h5": "Examples/published_examples_source.h5"
+}
