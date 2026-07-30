@@ -195,6 +195,10 @@ def create_small_test_config(path: Path) -> None:
     config = yaml.safe_load(CONFIG_PATH.read_text(encoding="utf-8"))
     config["target_atoms"] = 1
     config["demo_cell_force"] = True
+    # Smoke tests validate startup/rendering without leaving user-output
+    # directories inside the portable release contract.
+    config["display_window"] = False
+    config["save_png"] = False
     config["Nx"] = 1
     config["Ny"] = 1
     config["Nz"] = 1

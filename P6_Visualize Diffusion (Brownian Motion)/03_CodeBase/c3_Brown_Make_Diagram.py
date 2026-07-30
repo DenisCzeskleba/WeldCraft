@@ -36,9 +36,9 @@ SNAPSHOT_INDEX = -1  # HDF5 saved-frame index to plot; -1 means the last saved f
 
 # ---------------------- Output ---------------------- #
 SHOW_PLOT = True
-SAVE_PNG = False
+SAVE_PNG = True
 SAVE_PDF = False
-SAVE_SVG = True
+SAVE_SVG = False
 # False keeps labels as editable text in Inkscape; True converts them to paths.
 SVG_TEXT_AS_PATHS = False
 OUTPUT_FOLDER = ""  # Relative to 02_Results; leave empty to save directly in 02_Results.
