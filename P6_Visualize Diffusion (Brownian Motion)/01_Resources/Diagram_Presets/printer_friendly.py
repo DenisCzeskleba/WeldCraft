@@ -6,7 +6,7 @@ RENDER_MODE = "printer_glyphs"
 FIGURE_SIZE = (13, 6)
 MATCH_SIDE_PANEL_HEIGHT_TO_MAIN = True
 TITLE = "Hydrogen Distribution (Spatially Binned)"
-X_LABEL = "Width"
+X_LABEL = "Length"
 Y_LABEL = "Height"
 
 COLOR_EMPTY = "#F5F5F5"

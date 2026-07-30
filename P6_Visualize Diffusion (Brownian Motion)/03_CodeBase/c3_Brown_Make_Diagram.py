@@ -31,8 +31,8 @@ with contextlib.redirect_stdout(io.StringIO()):
 
 
 # ---------------------- Input Snapshot ---------------------- #
-INPUT_H5_FILENAME = "Diss Case 1 Most Simple.h5"  # Set to a sparse H5 name such as "random_motion_sparse.h5" when needed.
-SNAPSHOT_INDEX = -0  # HDF5 saved-frame index to plot; -1 means the last saved frame, 0 means first saved frame.
+INPUT_H5_FILENAME = "random_motion.h5"  # Set to a sparse H5 name such as "random_motion_sparse.h5" when needed.
+SNAPSHOT_INDEX = 0  # HDF5 saved-frame index to plot; -1 means the last saved frame, 0 means first saved frame.
 
 
 # ---------------------- Output ---------------------- #
@@ -311,6 +311,10 @@ def apply_l_fraction_ticks(axis, x_length=None, y_length=None):
         axis.set_yticklabels(["0", "H/4", "H/2", "3H/4", "H"])
 
 
+def dimension_label_with_pixels(label, pixel_count):
+    return f"{label} ({int(pixel_count)} px)"
+
+
 def clamp_range(range_value, upper_bound, label):
     if range_value is None:
         return 0, upper_bound
@@ -379,7 +383,7 @@ def compute_profile(matrix, metadata):
         total_spots = np.sum((cropped > 0) & cropped_included, axis=0)
         filled_spots = np.sum((cropped == 2) & cropped_included, axis=0)
         coordinates = np.arange(x_start, x_end)
-        axis_label = "Width"
+        axis_label = "Length"
     elif PROFILE_AXIS == "y":
         total_spots = np.sum((cropped > 0) & cropped_included, axis=1)
         filled_spots = np.sum((cropped == 2) & cropped_included, axis=1)
@@ -1969,8 +1973,8 @@ def draw_main_panel(axis, matrix, saved_step, metadata, area_summary_shake_mode=
         if concentration_title is not None:
             title = f"{title} - {concentration_title}"
     axis.set_title(f"{title} (Step: {saved_step})")
-    axis.set_xlabel(X_LABEL)
-    axis.set_ylabel(Y_LABEL)
+    axis.set_xlabel(dimension_label_with_pixels(X_LABEL, cols))
+    axis.set_ylabel(dimension_label_with_pixels(Y_LABEL, rows))
     apply_l_fraction_ticks(axis, x_length=cols, y_length=rows)
 
     if SHOW_REGION_ANNOTATIONS:
@@ -2014,12 +2018,16 @@ def draw_concentration_profile(axis, matrix, metadata):
     rows, cols = matrix.shape
     axis.plot(coordinates, profile * 100, color=COLOR_CONCENTRATION_LINE)
     axis.set_title("Concentration Profile")
-    axis.set_xlabel(axis_label)
+    profile_pixel_count = cols if PROFILE_AXIS == "x" else rows
+    axis.set_xlabel(dimension_label_with_pixels(axis_label, profile_pixel_count))
     axis.set_ylabel("Concentration (%)")
     axis.set_xlim(coordinates[0], coordinates[-1])
     axis.set_ylim(0, 100)
     axis.set_xticks(np.linspace(coordinates[0], coordinates[-1], 5))
-    axis.set_xticklabels(["0", "L/4", "L/2", "3L/4", "L"])
+    if PROFILE_AXIS == "x":
+        axis.set_xticklabels(["0", "L/4", "L/2", "3L/4", "L"])
+    else:
+        axis.set_xticklabels(["0", "H/4", "H/2", "3H/4", "H"])
 
     if PROFILE_AXIS == "x" and SHOW_PROFILE_HALF_TRANSITION:
         axis.axvline(cols / 2, color=PROFILE_HALF_TRANSITION_COLOR, linestyle="--", linewidth=1)

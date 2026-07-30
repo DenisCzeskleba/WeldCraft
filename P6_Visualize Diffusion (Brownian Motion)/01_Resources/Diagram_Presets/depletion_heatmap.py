@@ -6,7 +6,7 @@ RENDER_MODE = "concentration_heatmap"
 FIGURE_SIZE = (13, 6)
 MATCH_SIDE_PANEL_HEIGHT_TO_MAIN = True
 TITLE = "Local Hydrogen Redistribution"
-X_LABEL = "Width"
+X_LABEL = "Length"
 Y_LABEL = "Height"
 
 COLOR_EMPTY = "#E8E8E8"

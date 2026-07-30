@@ -20,7 +20,8 @@ simulation_mode = "event_driven_wiggle"
 y = 650  # Height (y)
 x = 1300  # Width (x)
 
-steps = 20_000_000_000  # use 10_000_000 notation, or 10000000. DO NOT use 100.000.000 10_000_000_000
+# Number of simulation steps. For continuation, this is the number of additional steps.
+steps = 20_000_000_000  # use 10_000_000 notation, or 10000000. DO NOT use 100.000.000
 max_radius_to_jump = 10
 
 # ---------------------- Matrix Source ---------------------- #
@@ -28,8 +29,8 @@ MATRIX_SOURCE = "random"  # Options: "random", "image", "lattice"
 
 
 # Used when MATRIX_SOURCE = "random" or "lattice"
-max_sol_a = Fraction(10, 100)
-max_sol_b = Fraction(10, 100)
+max_sol_a = Fraction(5, 100)
+max_sol_b = Fraction(5, 100)
 
 # Independent possible-site densities for the optional special areas
 max_sol_spot = Fraction(100, 100)
@@ -47,8 +48,8 @@ max_sol_black = Fraction(2, 100)
 show_image_matrix_plot = True
 
 # ---------------------- Initial Concentration ---------------------- #
-concentration_a = 50
-concentration_b = 50
+concentration_a = 0
+concentration_b = 0
 concentration_spot = 0  # only used if USE_SPOT = True
 concentration_trap_layer = 75  # only used if USE_TRAP_LAYER = True
 
@@ -60,8 +61,8 @@ concentration_profile_a = (100, 50)
 concentration_profile_b = (50, 0)
 
 # ---------------------- Layer / Boundary Options ---------------------- #
-USE_SPOT = True
-SPOT_DIAMETER = 80
+USE_SPOT = False
+SPOT_DIAMETER = 120
 SPOT_CENTER_X = 1 * x // 2  # Column position of the spot center
 SPOT_CENTER_Y = 1 * y // 2  # Row position of the spot center
 
@@ -69,7 +70,7 @@ USE_TRAP_LAYER = False
 TRAP_LAYER_CENTER_X = 1 * x // 4
 TRAP_LAYER_WIDTH = 40
 
-USE_SINK_SOURCE = False
+USE_SINK_SOURCE = True
 SINK_SOURCE_THICKNESS = 10
 SOURCE_SIDE = "left"  # Options: "left" or "right"
 num_subregions = 1
@@ -97,6 +98,11 @@ AREA_CHARACTERISTICS = {
 
 # --------------------- Numerics stuff --------------------- #
 
+# None starts a new simulation. To continue, use an absolute HDF5 path or a path
+# relative to 02_Results. Continuation always writes h5_filename as a separate file.
+# New checkpoint-enabled files resume exactly; older/interrupted files resume from
+# their last valid snapshot with a fresh RNG and record that they are statistical.
+RESUME_FROM_H5 = None
 random_seed = None  # None selects a fresh seed per run; set an integer to reproduce a run exactly.
 random_size = 10 ** 7  # Deprecated forced_jump only: number of precomputed random values.
 max_ram_mb = 2000  # Adjustable memory target for HDF5 frame buffering

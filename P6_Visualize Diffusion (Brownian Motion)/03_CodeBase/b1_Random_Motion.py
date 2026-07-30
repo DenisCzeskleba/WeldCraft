@@ -3,6 +3,15 @@ import numpy as np
 from tqdm import tqdm
 
 from b3_Brown_Functions import *
+from b4_Brown_Checkpoint import (
+    build_saved_steps,
+    load_resume_state,
+    resolve_resume_path,
+    restore_compact_hydrogen_order,
+    restore_ordered_hydrogen_site_ids,
+    validate_resume_config,
+    write_final_checkpoint,
+)
 
 
 cfg = load_brown_config()
@@ -21,10 +30,10 @@ if cfg.base_movement_probability < 0 or cfg.base_movement_probability > 1:
     raise ValueError("base_movement_probability must be between 0 and 1")
 
 
-# Make the initial Matrix
-y = cfg.y
-x = cfg.x
-steps = cfg.steps
+# A resumed run treats cfg.steps as additional work and writes a new HDF5 segment.
+steps = int(cfg.steps)
+if steps < 0:
+    raise ValueError("steps must be non-negative")
 max_radius_to_jump = cfg.max_radius_to_jump
 print(f"Simulation mode: {cfg.simulation_mode}")
 if cfg.simulation_mode == "forced_jump":
@@ -33,19 +42,62 @@ if cfg.simulation_mode == "forced_jump":
         "and ignores AREA_CHARACTERISTICS."
     )
 
-# Initialize reproducible random state. None selects a fresh seed that is saved in the HDF5 metadata.
+results_directory = results_dir()
+h5_filename = results_directory / cfg.h5_filename
+resume_path = resolve_resume_path(getattr(cfg, "RESUME_FROM_H5", None), results_directory)
+resume_state = None
+if resume_path is not None:
+    if resume_path == h5_filename.resolve():
+        raise ValueError(
+            "RESUME_FROM_H5 and h5_filename resolve to the same file. "
+            "Continuation must be written to a new HDF5 file."
+        )
+    resume_state = load_resume_state(resume_path)
+    validate_resume_config(resume_state["source_config"], brown_config_snapshot())
+    if resume_state["mode"] != cfg.simulation_mode:
+        raise RuntimeError(
+            "Resume source simulation mode does not match the current configuration: "
+            f"{resume_state['mode']!r} != {cfg.simulation_mode!r}"
+        )
+
+segment_start_step = int(resume_state["step"]) if resume_state is not None else 0
+segment_end_step = segment_start_step + steps
+saved_steps = build_saved_steps(
+    segment_start_step,
+    steps,
+    cfg.save_every_steps,
+)
+num_saved_frames = len(saved_steps)
+
+# Exact checkpoints restore the running generator. Statistical continuation from
+# legacy/interrupted files intentionally starts a fresh saved seed.
 configured_random_seed = getattr(cfg, "random_seed", None)
-if configured_random_seed is None:
+if resume_state is not None and resume_state["exact"]:
+    if resume_state["random_seed_used"] is None:
+        raise RuntimeError("Exact checkpoint is missing random_seed_used_uint64.")
+    random_seed_used = int(resume_state["random_seed_used"])
+elif configured_random_seed is None:
     random_seed_used = int(np.random.SeedSequence().generate_state(1, dtype=np.uint64)[0])
 else:
     random_seed_used = int(configured_random_seed) & ((1 << 64) - 1)
 
 np.random.seed(random_seed_used & 0xFFFFFFFF)
 random_size = cfg.random_size
-rand_index = 0
+rand_index = (
+    int(resume_state["forced_jump_rand_index"])
+    if resume_state is not None
+    and resume_state["exact"]
+    and resume_state["forced_jump_rand_index"] is not None
+    else 0
+)
 if cfg.simulation_mode in wiggle_modes:
     random_values = np.empty(0, dtype=np.float32)
-    molecular_rng_state = create_xoshiro256ss_state(random_seed_used)
+    if resume_state is not None and resume_state["exact"]:
+        if resume_state["rng_state"] is None or len(resume_state["rng_state"]) != 4:
+            raise RuntimeError("Exact wiggle checkpoint is missing its four-word RNG state.")
+        molecular_rng_state = resume_state["rng_state"].copy()
+    else:
+        molecular_rng_state = create_xoshiro256ss_state(random_seed_used)
     sigma = max_radius_to_jump / 3
     jump_probability_table = create_jump_probability_table(max_radius_to_jump, sigma)
     uniformization_site_bound = create_wiggle_uniformization_bound(
@@ -61,41 +113,118 @@ else:
     random_algorithm_used = "precomputed PCG64 float32 buffer"
 
 print(f"Random algorithm: {random_algorithm_used}, seed: {random_seed_used}")
-
-h5_filename = results_dir() / cfg.h5_filename
-saved_steps = np.arange(0, steps, cfg.save_every_steps, dtype=np.int64)
-num_saved_frames = len(saved_steps)
-print(f"Total frames to be saved: {num_saved_frames}, approx. "
-      f"{int((num_saved_frames * (y * x * np.dtype(np.int8).itemsize) / (1024 ** 2)) * 1.15)} MB")
-
-print("Creating initial matrix")
 lattice_spacing_used = None
-if cfg.MATRIX_SOURCE == "image":
-    h_spots_matrix = create_matrix_from_image(
-        image_dir() / cfg.image_name,
-        cfg.max_sol_white,
-        cfg.max_sol_black,
-        show_plot=cfg.show_image_matrix_plot,
+sink_source_thickness = cfg.SINK_SOURCE_THICKNESS if cfg.USE_SINK_SOURCE else 0
+if resume_state is not None:
+    h_spots_matrix = resume_state["matrix"].copy()
+    resume_kind = "exact" if resume_state["exact"] else "statistical"
+    print(
+        f"Continuing {resume_kind} state from {resume_path}\n"
+        f"  source snapshot index: {resume_state['snapshot_index']}\n"
+        f"  starting global step: {segment_start_step:,}\n"
+        f"  additional steps: {steps:,}\n"
+        f"  ending global step: {segment_end_step:,}"
     )
+    if resume_state["legacy_step_adjusted"]:
+        print("  adjusted legacy loop-based snapshot label by +1 step")
 else:
-    num_possible_spots_a = int(y * (x // 2) * cfg.max_sol_a)
-    num_possible_spots_b = int(y * (x // 2) * cfg.max_sol_b)
-    if cfg.MATRIX_SOURCE == "random":
-        h_spots_matrix = create_custom_matrix(x, y, num_possible_spots_a, num_possible_spots_b)
-    else:
-        h_spots_matrix, lattice_spacing_used = create_lattice_matrix_for_halves(
-            x,
-            y,
-            num_possible_spots_a,
-            num_possible_spots_b,
-            lattice_style=cfg.LATTICE_STYLE,
-            start_spacing=cfg.LATTICE_START_SPACING,
-            min_spacing=cfg.LATTICE_MIN_SPACING,
+    resume_kind = "new"
+    y = cfg.y
+    x = cfg.x
+    print("Creating initial matrix")
+    if cfg.MATRIX_SOURCE == "image":
+        h_spots_matrix = create_matrix_from_image(
+            image_dir() / cfg.image_name,
+            cfg.max_sol_white,
+            cfg.max_sol_black,
+            show_plot=cfg.show_image_matrix_plot,
         )
-        print(f"Lattice style: {cfg.LATTICE_STYLE}, spacing used: {lattice_spacing_used}")
+    else:
+        num_possible_spots_a = int(y * (x // 2) * cfg.max_sol_a)
+        num_possible_spots_b = int(y * (x // 2) * cfg.max_sol_b)
+        if cfg.MATRIX_SOURCE == "random":
+            h_spots_matrix = create_custom_matrix(x, y, num_possible_spots_a, num_possible_spots_b)
+        else:
+            h_spots_matrix, lattice_spacing_used = create_lattice_matrix_for_halves(
+                x,
+                y,
+                num_possible_spots_a,
+                num_possible_spots_b,
+                lattice_style=cfg.LATTICE_STYLE,
+                start_spacing=cfg.LATTICE_START_SPACING,
+                min_spacing=cfg.LATTICE_MIN_SPACING,
+            )
+            print(f"Lattice style: {cfg.LATTICE_STYLE}, spacing used: {lattice_spacing_used}")
+
+    print("Applying concentration")
+    if cfg.USE_INITIAL_CONCENTRATION_PROFILE:
+        concentration_profile_a = validate_concentration_profile(
+            cfg.concentration_profile_a,
+            "concentration_profile_a",
+        )
+        concentration_profile_b = validate_concentration_profile(
+            cfg.concentration_profile_b,
+            "concentration_profile_b",
+        )
+        print(
+            "Applying left-to-right initial concentration profiles: "
+            f"A {concentration_profile_a[0]:g}% -> {concentration_profile_a[1]:g}%, "
+            f"B {concentration_profile_b[0]:g}% -> {concentration_profile_b[1]:g}%"
+        )
+        h_spots_matrix = define_linear_concentration_profiles_to_halves(
+            h_spots_matrix,
+            concentration_profile_a,
+            concentration_profile_b,
+        )
+    else:
+        h_spots_matrix = define_concentration_to_halves(
+            h_spots_matrix,
+            cfg.concentration_a,
+            cfg.concentration_b,
+        )
+    if cfg.USE_SINK_SOURCE:
+        h_spots_matrix = define_concentration_sink_source(
+            h_spots_matrix,
+            sink_source_thickness,
+            source_side=cfg.SOURCE_SIDE,
+        )
+
+    if cfg.USE_TRAP_LAYER:
+        print(
+            f"Adding trap layer at x={cfg.TRAP_LAYER_CENTER_X}, "
+            f"{float(cfg.max_sol_trap_layer) * 100:g}% max. solubility, "
+            f"{cfg.concentration_trap_layer}% initial concentration"
+        )
+        h_spots_matrix = apply_layer(
+            h_spots_matrix,
+            width=cfg.TRAP_LAYER_WIDTH,
+            center_x=cfg.TRAP_LAYER_CENTER_X,
+            max_solubility=cfg.max_sol_trap_layer,
+            concentration=cfg.concentration_trap_layer,
+        )
+
+    if cfg.USE_SPOT:
+        print(
+            f"Adding spot with {float(cfg.max_sol_spot) * 100:g}% max. solubility "
+            f"and {cfg.concentration_spot}% initial concentration"
+        )
+        h_spots_matrix = apply_spot(
+            h_spots_matrix,
+            diameter=cfg.SPOT_DIAMETER,
+            center_x=cfg.SPOT_CENTER_X,
+            center_y=cfg.SPOT_CENTER_Y,
+            concentration=cfg.concentration_spot,
+            max_solubility=cfg.max_sol_spot,
+        )
+
+    print("Cleaning Loners")
+    clean_loners(h_spots_matrix, max_radius_to_jump)
 
 height, width = h_spots_matrix.shape
-sink_source_thickness = cfg.SINK_SOURCE_THICKNESS if cfg.USE_SINK_SOURCE else 0
+print(
+    f"Total frames to be saved: {num_saved_frames}, approx. "
+    f"{int((num_saved_frames * (height * width * np.dtype(np.int8).itemsize) / (1024 ** 2)) * 1.15)} MB"
+)
 region_map, num_regions = create_region_mapping(
     width,
     height,
@@ -117,70 +246,6 @@ region_centers_x = np.asarray(
 )
 if np.any(region_widths <= 0) or np.any(~np.isfinite(region_centers_x)):
     raise RuntimeError("Transport regions must each contain at least one matrix x-column.")
-
-print("Applying concentration")
-if cfg.USE_INITIAL_CONCENTRATION_PROFILE:
-    concentration_profile_a = validate_concentration_profile(
-        cfg.concentration_profile_a,
-        "concentration_profile_a",
-    )
-    concentration_profile_b = validate_concentration_profile(
-        cfg.concentration_profile_b,
-        "concentration_profile_b",
-    )
-    print(
-        "Applying left-to-right initial concentration profiles: "
-        f"A {concentration_profile_a[0]:g}% -> {concentration_profile_a[1]:g}%, "
-        f"B {concentration_profile_b[0]:g}% -> {concentration_profile_b[1]:g}%"
-    )
-    h_spots_matrix = define_linear_concentration_profiles_to_halves(
-        h_spots_matrix,
-        concentration_profile_a,
-        concentration_profile_b,
-    )
-else:
-    h_spots_matrix = define_concentration_to_halves(
-        h_spots_matrix,
-        cfg.concentration_a,
-        cfg.concentration_b,
-    )
-if cfg.USE_SINK_SOURCE:
-    h_spots_matrix = define_concentration_sink_source(
-        h_spots_matrix,
-        sink_source_thickness,
-        source_side=cfg.SOURCE_SIDE,
-    )
-
-if cfg.USE_TRAP_LAYER:
-    print(
-        f"Adding trap layer at x={cfg.TRAP_LAYER_CENTER_X}, "
-        f"{float(cfg.max_sol_trap_layer) * 100:g}% max. solubility, "
-        f"{cfg.concentration_trap_layer}% initial concentration"
-    )
-    h_spots_matrix = apply_layer(
-        h_spots_matrix,
-        width=cfg.TRAP_LAYER_WIDTH,
-        center_x=cfg.TRAP_LAYER_CENTER_X,
-        max_solubility=cfg.max_sol_trap_layer,
-        concentration=cfg.concentration_trap_layer,
-    )
-
-if cfg.USE_SPOT:
-    print(
-        f"Adding spot with {float(cfg.max_sol_spot) * 100:g}% max. solubility "
-        f"and {cfg.concentration_spot}% initial concentration"
-    )
-    h_spots_matrix = apply_spot(
-        h_spots_matrix,
-        diameter=cfg.SPOT_DIAMETER,
-        center_x=cfg.SPOT_CENTER_X,
-        center_y=cfg.SPOT_CENTER_Y,
-        concentration=cfg.concentration_spot,
-        max_solubility=cfg.max_sol_spot,
-    )
-
-print("Cleaning Loners")
-clean_loners(h_spots_matrix, max_radius_to_jump)
 
 characteristic_map = create_area_characteristic_map(
     h_spots_matrix.shape,
@@ -220,6 +285,11 @@ use_forced_jump_precomputed_lane = cfg.simulation_mode == "forced_jump" and not 
 use_random_sequential_lane = cfg.simulation_mode == "random_sequential_wiggle"
 use_event_driven_lane = cfg.simulation_mode == "event_driven_wiggle"
 use_compact_wiggle_lane = cfg.simulation_mode in compact_wiggle_modes
+event_pending_wait_steps = (
+    int(resume_state["event_pending_wait_steps"])
+    if resume_state is not None and resume_state["exact"] and use_event_driven_lane
+    else 0
+)
 compact_hydrogen_count = 0
 compact_transition_count = 0
 compact_lookup_mb = 0.0
@@ -259,6 +329,17 @@ if use_compact_wiggle_lane:
         characteristic_map,
         characteristic_transition_multipliers,
     )
+    if resume_state is not None and resume_state["exact"]:
+        saved_order = resume_state["ordered_hydrogen_site_ids"]
+        if saved_order is None:
+            raise RuntimeError("Exact compact checkpoint is missing hydrogen ordering.")
+        compact_hydrogen_count = restore_compact_hydrogen_order(
+            site_states,
+            hydrogen_site_ids,
+            hydrogen_transition_totals,
+            transition_totals,
+            saved_order,
+        )
     neighbor_site_ids = np.empty((0, 4), dtype=np.int32)
     neighbor_counts = np.empty(0, dtype=np.int32)
     if use_event_driven_lane:
@@ -268,6 +349,19 @@ if use_compact_wiggle_lane:
                 compact_hydrogen_count,
             )
         )
+        if resume_state is not None and resume_state["exact"]:
+            saved_tree = resume_state["event_fenwick_tree"]
+            saved_total = resume_state["event_total_transition_weight"]
+            if saved_tree is None or saved_tree.shape != hydrogen_probability_tree.shape:
+                raise RuntimeError(
+                    "Exact event-driven checkpoint Fenwick tree has the wrong shape."
+                )
+            if saved_total is None or not np.isfinite(saved_total):
+                raise RuntimeError(
+                    "Exact event-driven checkpoint transition weight is invalid."
+                )
+            hydrogen_probability_tree[:] = saved_tree
+            total_transition_weight = float(saved_total)
     compact_transition_count = len(transition_targets)
     max_transition_total = (
         float(np.max(transition_totals)) if len(transition_totals) else 0.0
@@ -294,6 +388,17 @@ elif use_forced_jump_precomputed_lane:
         h_spots_matrix,
         max_radius_to_jump,
     )
+    if resume_state is not None and resume_state["exact"]:
+        saved_order = resume_state["ordered_hydrogen_site_ids"]
+        if saved_order is None:
+            raise RuntimeError(
+                "Exact forced-jump checkpoint is missing hydrogen ordering."
+            )
+        restore_ordered_hydrogen_site_ids(
+            site_states,
+            hydrogen_site_ids,
+            saved_order,
+        )
     average_forced_jump_target_count = float(np.mean(neighbor_counts)) if len(neighbor_counts) else 0.0
 else:
     site_y = np.empty(0, dtype=np.int32)
@@ -304,7 +409,6 @@ else:
     hydrogen_site_ids = np.empty(0, dtype=np.int32)
     average_forced_jump_target_count = None
 snapshot_size_mb = (height * width * np.dtype(np.int8).itemsize) / (1024 ** 2)
-optimal_batch_size = max(1, int(cfg.max_ram_mb / snapshot_size_mb))
 
 print(f"Matrix size: {height}x{width}, Snapshot size: {snapshot_size_mb:.2f} MB")
 if cfg.simulation_mode == "molecular_wiggle":
@@ -338,8 +442,6 @@ if cfg.simulation_mode == "forced_jump":
         )
     else:
         print("Forced jump safe lane: scanning active sites because USE_SINK_SOURCE changes hydrogen count")
-if not use_compact_wiggle_lane:
-    print(f"Using batch size of {optimal_batch_size} frames (max {cfg.max_ram_mb}MB RAM usage)")
 print(f"Initial matrix unique values: {np.unique(h_spots_matrix)}")
 
 print("Region Map Summary:")
@@ -363,7 +465,12 @@ else:
     molecular_sampler_used = None
 
 
-def run_compact_wiggle_work(hydrogen_count, transition_weight, work_count):
+def run_compact_wiggle_work(
+    hydrogen_count,
+    transition_weight,
+    work_count,
+    pending_wait_steps,
+):
     if use_random_sequential_lane:
         hydrogen_count, displacement_stats, wiggle_attempt_count = (
             simulate_random_sequential_wiggle_steps(
@@ -390,6 +497,7 @@ def run_compact_wiggle_work(hydrogen_count, transition_weight, work_count):
             displacement_stats,
             work_count,
             wiggle_attempt_count,
+            pending_wait_steps,
         )
 
     return simulate_event_driven_wiggle_events(
@@ -411,6 +519,7 @@ def run_compact_wiggle_work(hydrogen_count, transition_weight, work_count):
         molecular_rng_state,
         uniformization_site_bound,
         work_count,
+        pending_wait_steps,
     )
 
 
@@ -422,6 +531,14 @@ with h5py.File(h5_filename, "w") as hf:
             "num_saved_frames": num_saved_frames,
             "saved_steps_first": int(saved_steps[0]) if len(saved_steps) else None,
             "saved_steps_last": int(saved_steps[-1]) if len(saved_steps) else None,
+            "segment_start_step": segment_start_step,
+            "segment_additional_steps": steps,
+            "segment_end_step": segment_end_step,
+            "resume_kind": resume_kind,
+            "resumed_from": str(resume_path) if resume_path is not None else None,
+            "resumed_source_snapshot_index": (
+                resume_state["snapshot_index"] if resume_state is not None else None
+            ),
             "sink_source_thickness_used": sink_source_thickness,
             "num_regions": num_regions,
             "active_site_count": len(active_y),
@@ -460,9 +577,28 @@ with h5py.File(h5_filename, "w") as hf:
         },
     )
     hf["meta"].attrs["random_seed_used_uint64"] = np.uint64(random_seed_used)
+    hf.attrs["run_status"] = "in_progress"
+    hf.attrs["frames_written"] = np.int64(0)
 
-    dset = hf.create_dataset("snapshots", shape=(num_saved_frames, height, width), dtype=np.int8, chunks=True)
+    dset = hf.create_dataset(
+        "snapshots",
+        shape=(num_saved_frames, height, width),
+        dtype=np.int8,
+        chunks=(1, height, width),
+    )
     hf.create_dataset("saved_steps", data=saved_steps, dtype=np.int64)
+
+    if resume_state is not None:
+        provenance_group = hf.create_group("resume")
+        provenance_group.attrs["source_path"] = str(resume_path)
+        provenance_group.attrs["source_snapshot_index"] = np.int64(
+            resume_state["snapshot_index"]
+        )
+        provenance_group.attrs["source_step"] = np.int64(segment_start_step)
+        provenance_group.attrs["kind"] = resume_kind
+        provenance_group.attrs["legacy_step_adjusted"] = bool(
+            resume_state["legacy_step_adjusted"]
+        )
 
     transport_group = hf.create_group("transport")
     transport_group.attrs["schema"] = "signed_x_displacement_v1"
@@ -505,7 +641,7 @@ with h5py.File(h5_filename, "w") as hf:
             shape=(num_saved_frames,),
             dtype=np.int64,
         )
-        previous_saved_step = 0
+        previous_saved_step = segment_start_step
         compact_progress_count = 0
         progress_description = (
             "Random sequential wiggle steps"
@@ -515,7 +651,7 @@ with h5py.File(h5_filename, "w") as hf:
 
         with tqdm(total=steps, desc=progress_description) as progress:
             for frame_index, saved_step in enumerate(saved_steps):
-                steps_to_run = 0 if frame_index == 0 else int(saved_step - previous_saved_step)
+                steps_to_run = int(saved_step - previous_saved_step)
                 if steps_to_run > 0:
                     (
                         compact_hydrogen_count,
@@ -523,10 +659,12 @@ with h5py.File(h5_filename, "w") as hf:
                         disp_stats,
                         completed_work,
                         completed_activity_count,
+                        event_pending_wait_steps,
                     ) = run_compact_wiggle_work(
                         compact_hydrogen_count,
                         total_transition_weight,
                         steps_to_run,
+                        event_pending_wait_steps,
                     )
                     if use_event_driven_lane and completed_work != steps_to_run:
                         raise RuntimeError(
@@ -551,143 +689,106 @@ with h5py.File(h5_filename, "w") as hf:
                 interval_steps_dset[frame_index] = steps_to_run
 
                 previous_saved_step = int(saved_step)
-
-            remaining_steps = steps - previous_saved_step
-            if remaining_steps > 0:
-                (
-                    compact_hydrogen_count,
-                    total_transition_weight,
-                    _,
-                    completed_work,
-                    completed_activity_count,
-                ) = run_compact_wiggle_work(
-                    compact_hydrogen_count,
-                    total_transition_weight,
-                    remaining_steps,
-                )
-                if use_event_driven_lane and completed_work != remaining_steps:
-                    raise RuntimeError(
-                        "event_driven_wiggle failed to complete its uniformized steps"
-                    )
-                compact_progress_count += completed_activity_count
-                progress.update(remaining_steps)
+                hf.attrs["frames_written"] = np.int64(frame_index + 1)
+                hf.flush()
     else:
-        save_counter = 0
-        buffer = np.empty((optimal_batch_size, height, width), dtype=np.int8)
-        buffer_index = 0
-
-        transport_buffer = np.zeros(
-            (optimal_batch_size, num_regions, 3),
-            dtype=np.float64,
-        )
-        interval_steps_buffer = np.zeros(optimal_batch_size, dtype=np.int64)
-        interval_transport_stats = np.zeros((num_regions, 3), dtype=np.float64)
-        interval_step_count = 0
-
-        for step in tqdm(range(steps)):
-            if cfg.simulation_mode == "molecular_wiggle":
-                h_spots_matrix, disp_stats = simulate_brownian_motion(
-                    h_spots_matrix,
-                    molecular_rng_state,
-                    active_y,
-                    active_x,
-                    width,
-                    height,
-                    max_radius_to_jump,
-                    cfg.base_movement_probability,
-                    jump_probability_table,
-                    characteristic_map,
-                    characteristic_transition_multipliers,
-                    sink_source_thickness,
-                    cfg.USE_SINK_SOURCE,
-                    cfg.SOURCE_SIDE == "left",
-                    region_map,
-                    num_regions,
-                    winner_source,
-                    winner_priority,
-                    claim_epoch,
-                    touched_targets,
-                    step + 1,
-                )
-            elif use_forced_jump_precomputed_lane:
-                site_states, rand_index, disp_stats = simulate_brownian_motion_forced_jump_precomputed(
-                    site_states,
-                    random_values,
-                    hydrogen_site_ids,
-                    site_y,
-                    site_x,
-                    neighbor_site_ids,
-                    neighbor_counts,
-                    rand_index,
-                    random_size,
-                    region_map,
-                    num_regions,
-                )
-            else:
-                h_spots_matrix, rand_index, disp_stats = simulate_brownian_motion_forced_jump(
-                    h_spots_matrix,
-                    random_values,
-                    active_y,
-                    active_x,
-                    width,
-                    height,
-                    rand_index,
-                    random_size,
-                    max_radius_to_jump,
-                    sink_source_thickness,
-                    cfg.USE_SINK_SOURCE,
-                    cfg.SOURCE_SIDE == "left",
-                    region_map,
-                    num_regions,
+        completed_step = segment_start_step
+        molecular_epoch = 0
+        with tqdm(total=steps, desc="Simulation steps") as progress:
+            for frame_index, saved_step in enumerate(saved_steps):
+                steps_to_run = int(saved_step - completed_step)
+                interval_transport_stats = np.zeros(
+                    (num_regions, 3),
+                    dtype=np.float64,
                 )
 
-            interval_transport_stats += disp_stats
-            interval_step_count += 1
+                for _ in range(steps_to_run):
+                    if cfg.simulation_mode == "molecular_wiggle":
+                        molecular_epoch += 1
+                        if molecular_epoch > np.iinfo(np.int32).max:
+                            claim_epoch.fill(0)
+                            molecular_epoch = 1
+                        h_spots_matrix, disp_stats = simulate_brownian_motion(
+                            h_spots_matrix,
+                            molecular_rng_state,
+                            active_y,
+                            active_x,
+                            width,
+                            height,
+                            max_radius_to_jump,
+                            cfg.base_movement_probability,
+                            jump_probability_table,
+                            characteristic_map,
+                            characteristic_transition_multipliers,
+                            sink_source_thickness,
+                            cfg.USE_SINK_SOURCE,
+                            cfg.SOURCE_SIDE == "left",
+                            region_map,
+                            num_regions,
+                            winner_source,
+                            winner_priority,
+                            claim_epoch,
+                            touched_targets,
+                            molecular_epoch,
+                        )
+                    elif use_forced_jump_precomputed_lane:
+                        (
+                            site_states,
+                            rand_index,
+                            disp_stats,
+                        ) = simulate_brownian_motion_forced_jump_precomputed(
+                            site_states,
+                            random_values,
+                            hydrogen_site_ids,
+                            site_y,
+                            site_x,
+                            neighbor_site_ids,
+                            neighbor_counts,
+                            rand_index,
+                            random_size,
+                            region_map,
+                            num_regions,
+                        )
+                    else:
+                        (
+                            h_spots_matrix,
+                            rand_index,
+                            disp_stats,
+                        ) = simulate_brownian_motion_forced_jump(
+                            h_spots_matrix,
+                            random_values,
+                            active_y,
+                            active_x,
+                            width,
+                            height,
+                            rand_index,
+                            random_size,
+                            max_radius_to_jump,
+                            sink_source_thickness,
+                            cfg.USE_SINK_SOURCE,
+                            cfg.SOURCE_SIDE == "left",
+                            region_map,
+                            num_regions,
+                        )
+                    interval_transport_stats += disp_stats
 
-            if should_save_frame(step, cfg.save_every_steps):
                 if use_forced_jump_precomputed_lane:
-                    buffer[buffer_index] = create_matrix_from_site_states(
+                    dset[frame_index] = create_matrix_from_site_states(
                         (height, width),
                         site_y,
                         site_x,
                         site_states,
                     )
                 else:
-                    buffer[buffer_index] = h_spots_matrix
-                transport_buffer[buffer_index] = interval_transport_stats
-                interval_steps_buffer[buffer_index] = interval_step_count
+                    dset[frame_index] = h_spots_matrix
+                net_x_displacement_dset[frame_index] = interval_transport_stats[:, 0]
+                accepted_move_count_dset[frame_index] = interval_transport_stats[:, 2]
+                interval_steps_dset[frame_index] = steps_to_run
 
-                buffer_index += 1
-                interval_transport_stats.fill(0)
-                interval_step_count = 0
-
-                if buffer_index == optimal_batch_size:
-                    dset[save_counter:save_counter + buffer_index] = buffer[:buffer_index]
-                    net_x_displacement_dset[
-                        save_counter:save_counter + buffer_index
-                    ] = transport_buffer[:buffer_index, :, 0]
-                    accepted_move_count_dset[
-                        save_counter:save_counter + buffer_index
-                    ] = transport_buffer[:buffer_index, :, 2]
-                    interval_steps_dset[
-                        save_counter:save_counter + buffer_index
-                    ] = interval_steps_buffer[:buffer_index]
-
-                    save_counter += buffer_index
-                    buffer_index = 0
-
-        if buffer_index > 0:
-            print(f"Final flush: {buffer_index} remaining frames written to HDF5.")
-            dset[save_counter:save_counter + buffer_index] = buffer[:buffer_index]
-            net_x_displacement_dset[
-                save_counter:save_counter + buffer_index
-            ] = transport_buffer[:buffer_index, :, 0]
-            accepted_move_count_dset[
-                save_counter:save_counter + buffer_index
-            ] = transport_buffer[:buffer_index, :, 2]
-            interval_steps_dset[
-                save_counter:save_counter + buffer_index
-            ] = interval_steps_buffer[:buffer_index]
+                completed_step = int(saved_step)
+                progress.update(steps_to_run)
+                hf.attrs["frames_written"] = np.int64(frame_index + 1)
+                hf.flush()
 
     hf.attrs["max_radius_to_jump"] = max_radius_to_jump
     hf.attrs["matrix_shape"] = h_spots_matrix.shape
@@ -702,3 +803,30 @@ with h5py.File(h5_filename, "w") as hf:
             hf["meta"].attrs["proposal_event_count_after_run"] = compact_progress_count
             hf["meta"].attrs["uniformized_step_count_after_run"] = steps
             hf["meta"].attrs["total_transition_weight_after_run"] = total_transition_weight
+
+    if use_compact_wiggle_lane:
+        checkpoint_hydrogen_order = hydrogen_site_ids[:compact_hydrogen_count].copy()
+    elif use_forced_jump_precomputed_lane:
+        checkpoint_hydrogen_order = hydrogen_site_ids.copy()
+    else:
+        checkpoint_hydrogen_order = None
+
+    write_final_checkpoint(
+        hf,
+        step=segment_end_step,
+        snapshot_index=num_saved_frames - 1,
+        simulation_mode=cfg.simulation_mode,
+        random_seed_used=random_seed_used,
+        rng_state=molecular_rng_state if cfg.simulation_mode in wiggle_modes else None,
+        ordered_hydrogen_site_ids=checkpoint_hydrogen_order,
+        forced_jump_rand_index=rand_index if cfg.simulation_mode == "forced_jump" else None,
+        event_pending_wait_steps=(
+            event_pending_wait_steps if use_event_driven_lane else None
+        ),
+        event_fenwick_tree=(
+            hydrogen_probability_tree if use_event_driven_lane else None
+        ),
+        event_total_transition_weight=(
+            total_transition_weight if use_event_driven_lane else None
+        ),
+    )

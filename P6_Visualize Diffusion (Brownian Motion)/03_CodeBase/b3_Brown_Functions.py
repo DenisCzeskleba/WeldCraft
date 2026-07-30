@@ -1066,7 +1066,7 @@ def simulate_event_driven_wiggle_events(site_states, hydrogen_site_ids, hydrogen
                                         transition_targets, transition_cdf, transition_totals,
                                         source_site_flags, sink_site_flags, site_x, region_map,
                                         num_regions, rng_state, uniformization_site_bound,
-                                        num_uniformized_steps):
+                                        num_uniformized_steps, pending_wait_steps=0):
     """Skip uniformized null waiting while preserving the directed-rate equilibrium."""
     displacement_stats = np.zeros((num_regions, 3), dtype=np.float64)
     completed_steps = 0
@@ -1092,26 +1092,31 @@ def simulate_event_driven_wiggle_events(site_states, hydrogen_site_ids, hydrogen
             completed_steps = num_uniformized_steps
             break
 
-        uniformization_weight = hydrogen_count * uniformization_site_bound
-        proposal_probability = total_transition_weight / uniformization_weight
-        if proposal_probability >= 1.0:
-            waiting_steps = 1
+        if pending_wait_steps > 0:
+            waiting_steps = pending_wait_steps
         else:
-            waiting_word = xoshiro256ss_next(rng_state)
-            waiting_random = (float(waiting_word >> 11) + 0.5) * unit_scale_53
-            waiting_steps_float = (
-                np.floor(
-                    np.log1p(-waiting_random)
-                    / np.log1p(-proposal_probability)
+            uniformization_weight = hydrogen_count * uniformization_site_bound
+            proposal_probability = total_transition_weight / uniformization_weight
+            if proposal_probability >= 1.0:
+                waiting_steps = 1
+            else:
+                waiting_word = xoshiro256ss_next(rng_state)
+                waiting_random = (float(waiting_word >> 11) + 0.5) * unit_scale_53
+                waiting_steps = int(
+                    np.floor(
+                        np.log1p(-waiting_random)
+                        / np.log1p(-proposal_probability)
+                    )
+                    + 1.0
                 )
-                + 1.0
-            )
-            remaining_steps = num_uniformized_steps - completed_steps
-            if waiting_steps_float > remaining_steps:
-                completed_steps = num_uniformized_steps
-                break
-            waiting_steps = int(waiting_steps_float)
 
+        remaining_steps = num_uniformized_steps - completed_steps
+        if waiting_steps > remaining_steps:
+            pending_wait_steps = waiting_steps - remaining_steps
+            completed_steps = num_uniformized_steps
+            break
+
+        pending_wait_steps = 0
         completed_steps += waiting_steps
         proposal_event_count += 1
 
@@ -1213,6 +1218,7 @@ def simulate_event_driven_wiggle_events(site_states, hydrogen_site_ids, hydrogen
         displacement_stats,
         completed_steps,
         proposal_event_count,
+        pending_wait_steps,
     )
 
 

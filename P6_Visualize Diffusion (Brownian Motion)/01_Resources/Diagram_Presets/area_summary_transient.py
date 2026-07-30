@@ -6,7 +6,7 @@ RENDER_MODE = "area_summary_dots"
 FIGURE_SIZE = (13, 6)
 MATCH_SIDE_PANEL_HEIGHT_TO_MAIN = False
 TITLE = "Hydrogen Distribution (Stylized)"
-X_LABEL = "Width"
+X_LABEL = "Length"
 Y_LABEL = "Height"
 
 COLOR_EMPTY = "#F2F2F2"

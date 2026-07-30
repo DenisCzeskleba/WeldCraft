@@ -7,6 +7,33 @@ P6 provides three supported wiggle-derived movement modes plus the deprecated `f
 They share the same matrix initialization, concentration settings, spot/layer topology, HDF5 snapshot
 format, and plotting tools. The supported modes differ in how molecular movement is executed.
 
+## Saving and continuing a simulation
+
+Every new run saves the segment's starting state, each configured interval, and the exact final state.
+The endpoint is included once even when it already falls on `save_every_steps`. The final snapshot and
+checkpoint therefore describe the same global step.
+
+To continue a completed checkpoint-enabled file, keep its dynamics settings unchanged and configure:
+
+```python
+RESUME_FROM_H5 = r"F:\path\to\completed_run.h5"
+h5_filename = "continued_run.h5"  # Must be different from the source file
+steps = 15_000_000_000            # Additional steps, not the new absolute total
+```
+
+A relative `RESUME_FROM_H5` path is resolved under `02_Results`. The continuation is always written as
+a new HDF5 segment and its `saved_steps` retain global step numbers. P6 validates the movement mode,
+geometry-dependent area settings, source/sink settings, and movement characteristics before starting.
+
+New completed files contain an exact checkpoint. It includes the aligned final matrix, RNG state, and
+the internal ordering/state needed by the selected mode. Exact continuation therefore produces the same
+state as an uninterrupted run, including when the first segment ends between normal save intervals.
+
+Older files and files stopped with Ctrl+C do not have an aligned exact checkpoint. P6 finds their last
+fully written snapshot and continues it with a fresh recorded RNG, labels the continuation
+`statistical`, and preserves source-file provenance. Once that continuation completes, its own endpoint
+is an exact checkpoint for subsequent segments. The source HDF5 is never appended to or overwritten.
+
 ## Initial concentrations and special-area accounting
 
 `concentration_a` and `concentration_b` set the initial hydrogen percentage on the ordinary available

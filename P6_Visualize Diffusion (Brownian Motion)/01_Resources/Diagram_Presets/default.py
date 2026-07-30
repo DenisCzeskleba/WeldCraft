@@ -10,7 +10,7 @@ RENDER_MODE = "pixels"  # Options: "pixels", "dots", "concentration_heatmap", "p
 FIGURE_SIZE = (15, 6)
 MATCH_SIDE_PANEL_HEIGHT_TO_MAIN = True
 TITLE = "Diffusion as a Result of Random Motion"
-X_LABEL = "Width"
+X_LABEL = "Length"
 Y_LABEL = "Height"
 
 COLOR_EMPTY = "#440154"
