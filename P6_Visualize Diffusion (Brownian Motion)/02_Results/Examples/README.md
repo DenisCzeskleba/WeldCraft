@@ -59,9 +59,10 @@ Then run:
 
 The batch reads the final snapshot from `published_examples_source.h5`,
 discovers every ordinary diagram preset, and recreates the numbered PNG files
-in this directory. `published_examples_manifest.json` records which PNGs are
-managed by the batch. After a completely successful render, PNGs listed by the
-previous manifest but no longer generated are deleted.
+in this directory. The internal
+`01_Resources/Diagram_Presets/published_examples_manifest.json` file records
+which PNGs are managed by the batch. After a completely successful render,
+PNGs listed by the previous manifest but no longer generated are deleted.
 
 The ordering in
 `01_Resources/Diagram_Presets/all_presets.py::BATCH_PRESET_ORDER` defines the

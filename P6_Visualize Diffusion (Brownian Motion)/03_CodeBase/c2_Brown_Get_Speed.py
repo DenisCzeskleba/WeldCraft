@@ -632,14 +632,27 @@ def create_transport_figure(analysis, selected_frame=SELECTED_FRAME):
     flux_time_axis = fig.add_subplot(grid[1, :])
 
     concentration_frame_count = len(analysis["concentration"])
-    profile_indices = np.unique(
-        np.rint(
-            np.linspace(
-                0,
-                concentration_frame_count - 1,
-                min(4, concentration_frame_count),
-            )
-        ).astype(int)
+    if concentration_frame_count == 0 or len(concentration_time) != concentration_frame_count:
+        raise RuntimeError("Concentration profiles and their timeline do not align.")
+    selected_concentration_index = int(
+        np.searchsorted(
+            concentration_time,
+            time[frame_index],
+            side="right",
+        )
+        - 1
+    )
+    selected_concentration_index = min(
+        concentration_frame_count - 1,
+        max(0, selected_concentration_index),
+    )
+    profile_indices = sorted(
+        {
+            0,
+            max(0, selected_concentration_index // 4),
+            max(0, selected_concentration_index // 2),
+            selected_concentration_index,
+        }
     )
     for index in profile_indices:
         concentration_axis.plot(

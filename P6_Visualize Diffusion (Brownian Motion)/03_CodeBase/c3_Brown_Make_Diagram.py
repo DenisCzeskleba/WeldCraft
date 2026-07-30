@@ -34,7 +34,9 @@ with contextlib.redirect_stdout(io.StringIO()):
 # ---------------------- Input Snapshot ---------------------- #
 # Used by ordinary presets. The special "all_presets" mode instead always uses
 # 02_Results/Examples/published_examples_source.h5 for reproducible public examples.
-INPUT_H5_FILENAME = "O1 V3 long run should include everythig.h5"
+INPUT_H5_FILENAME = (
+    "for chapter 2.3/Option 1/O1 V3 long run should include everythig.h5"
+)
 SNAPSHOT_INDEX = -1  # HDF5 saved-frame index to plot; -1 means the last saved frame, 0 means first saved frame.
 
 
@@ -63,7 +65,7 @@ SAVE_DPI = 300
 #   "area_summary_transient"        - Stylized non-overlapping dots using measured area averages, with transient x-profile.
 # When adding a preset, also add it to BATCH_PRESET_ORDER in the "all_presets"
 # preset file. Treat existing entries as append-only to keep public numbering stable.
-DIAGRAM_PRESET = "all_presets"  # File stem in 01_Resources/Diagram_Presets.
+DIAGRAM_PRESET = "default"  # File stem in 01_Resources/Diagram_Presets.
 
 REQUIRED_DIAGRAM_PRESET_KEYS = [
     "PRESET_NAME",
@@ -2356,6 +2358,7 @@ def read_batch_manifest(manifest_path):
 def publish_batch_manifest(
     manifest_path,
     *,
+    output_dir,
     previous_generated_files,
     saved_paths,
     saved_step,
@@ -2375,7 +2378,7 @@ def publish_batch_manifest(
 
     obsolete_names = sorted(previous_generated_files.difference(current_names))
     for obsolete_name in obsolete_names:
-        obsolete_path = manifest_path.parent / obsolete_name
+        obsolete_path = output_dir / obsolete_name
         if obsolete_path.is_file():
             obsolete_path.unlink()
             print(f"Deleted obsolete published example: {obsolete_path}")
@@ -2398,7 +2401,7 @@ def render_all_diagram_presets():
     manifest_name = str(BATCH_MANIFEST_FILENAME)
     if Path(manifest_name).name != manifest_name:
         raise ValueError("BATCH_MANIFEST_FILENAME must be a plain filename")
-    manifest_path = output_dir / manifest_name
+    manifest_path = diagram_presets_dir() / manifest_name
     previous_generated_files = read_batch_manifest(manifest_path)
 
     preset_names = discover_batch_diagram_presets()
@@ -2466,6 +2469,7 @@ def render_all_diagram_presets():
 
     publish_batch_manifest(
         manifest_path,
+        output_dir=output_dir,
         previous_generated_files=previous_generated_files,
         saved_paths=saved_paths,
         saved_step=saved_step,

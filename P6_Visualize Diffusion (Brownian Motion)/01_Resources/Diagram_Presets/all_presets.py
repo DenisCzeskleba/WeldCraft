@@ -9,6 +9,7 @@ BATCH_INPUT_H5_FILENAME = "Examples/published_examples_source.h5"
 BATCH_SNAPSHOT_INDEX = -1
 BATCH_OUTPUT_FOLDER = "Examples"
 BATCH_SAVE_DPI = 300
+# Internal bookkeeping stored beside this preset, not in the public Examples folder.
 BATCH_MANIFEST_FILENAME = "published_examples_manifest.json"
 
 # This is the stable public numbering order documented in
