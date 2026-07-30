@@ -7,7 +7,7 @@ Copy this file to a new preset name when a look is ready to lock in.
 PRESET_NAME = "default"
 
 RENDER_MODE = "pixels"  # Options: "pixels", "dots", "concentration_heatmap", "printer_glyphs", "area_summary_dots"
-FIGURE_SIZE = (12, 6)
+FIGURE_SIZE = (15, 6)
 MATCH_SIDE_PANEL_HEIGHT_TO_MAIN = True
 TITLE = "Diffusion as a Result of Random Motion"
 X_LABEL = "Width"
@@ -17,16 +17,6 @@ COLOR_EMPTY = "#440154"
 COLOR_AVAILABLE_SPOT = "#0000FF"
 COLOR_HYDROGEN = "#FF0000"
 COLOR_CONCENTRATION_LINE = "#253494"
-DIFFUSION_SPEED_COLORS = [
-    "#FF0000",
-    "#FFA500",
-    "#008000",
-    "#800080",
-    "#A52A2A",
-    "#00FFFF",
-    "#000000",
-]
-
 DOT_SIZE_AVAILABLE = 8
 DOT_SIZE_HYDROGEN = 8
 DOT_ALPHA_AVAILABLE = 0.8
@@ -34,7 +24,7 @@ DOT_ALPHA_HYDROGEN = 0.95
 
 SHOW_MAIN_PANEL = True
 SHOW_CONCENTRATION_PROFILE_PANEL = True
-SHOW_DIFFUSION_SPEED_PANEL = False
+SHOW_NET_FLUX_PANEL = True
 
 PROFILE_AXIS = "x"  # Options: "x", "y"
 PROFILE_X_RANGE = None

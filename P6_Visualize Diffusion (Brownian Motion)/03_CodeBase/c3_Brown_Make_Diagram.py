@@ -27,11 +27,12 @@ with contextlib.redirect_stdout(io.StringIO()):
         resources_dir,
         results_dir,
     )
+    from c2_Brown_Get_Speed import analyze_transport
 
 
 # ---------------------- Input Snapshot ---------------------- #
-INPUT_H5_FILENAME = "random_motion.h5"  # Set to a sparse H5 name such as "random_motion_sparse.h5" when needed.
-SNAPSHOT_INDEX = -1  # HDF5 saved-frame index to plot; -1 means the last saved frame, 0 means first saved frame.
+INPUT_H5_FILENAME = "Diss Case 1 Most Simple.h5"  # Set to a sparse H5 name such as "random_motion_sparse.h5" when needed.
+SNAPSHOT_INDEX = -0  # HDF5 saved-frame index to plot; -1 means the last saved frame, 0 means first saved frame.
 
 
 # ---------------------- Output ---------------------- #
@@ -70,14 +71,13 @@ REQUIRED_DIAGRAM_PRESET_KEYS = [
     "COLOR_AVAILABLE_SPOT",
     "COLOR_HYDROGEN",
     "COLOR_CONCENTRATION_LINE",
-    "DIFFUSION_SPEED_COLORS",
     "DOT_SIZE_AVAILABLE",
     "DOT_SIZE_HYDROGEN",
     "DOT_ALPHA_AVAILABLE",
     "DOT_ALPHA_HYDROGEN",
     "SHOW_MAIN_PANEL",
     "SHOW_CONCENTRATION_PROFILE_PANEL",
-    "SHOW_DIFFUSION_SPEED_PANEL",
+    "SHOW_NET_FLUX_PANEL",
     "PROFILE_AXIS",
     "PROFILE_X_RANGE",
     "PROFILE_Y_RANGE",
@@ -184,6 +184,8 @@ OPTIONAL_DIAGRAM_PRESET_DEFAULTS = {
     "ANNOTATION_BOX_EDGE_COLOR": "#707070",
     "ANNOTATION_BOX_ALPHA": 0.88,
     "SHOW_FRAME_SUPTITLE": True,
+    "NET_FLUX_COLOR": "#4A148C",
+    "NET_FLUX_BAND_COLOR": "#B39DDB",
 }
 
 
@@ -269,20 +271,11 @@ def load_snapshot_and_context(h5_path, requested_frame_index):
         matrix = snapshots[frame_index]
         saved_step = int(saved_steps[frame_index])
 
-        diffusion_data = {}
-        for key in sorted(hf.keys()):
-            if not key.startswith("region_"):
-                continue
-            if "mean_disp" not in hf[key]:
-                continue
-            if "time" in hf[key]:
-                time_values = hf[key]["time"][:]
-            else:
-                time_values = saved_steps
-            diffusion_data[key] = {
-                "time": np.asarray(time_values),
-                "mean_disp": hf[key]["mean_disp"][:],
-            }
+    transport_analysis = (
+        analyze_transport(h5_path)
+        if SHOW_NET_FLUX_PANEL
+        else None
+    )
 
     print(f"Loaded: {h5_path}")
     print(f"Available saved frames: {frame_count} (valid indices: -{frame_count}..-1 or 0..{frame_count - 1})")
@@ -291,7 +284,7 @@ def load_snapshot_and_context(h5_path, requested_frame_index):
     print("Metadata: found")
     print(f"Plotting saved-frame index {frame_index}, simulation step {saved_step}")
 
-    return matrix, saved_step, frame_index, metadata, diffusion_data
+    return matrix, saved_step, frame_index, metadata, transport_analysis
 
 
 def concentration_percent(matrix, mask):
@@ -2090,27 +2083,42 @@ def draw_concentration_profile(axis, matrix, metadata):
         )
 
 
-def draw_diffusion_speed(axis, diffusion_data, saved_step):
-    if not diffusion_data:
-        axis.text(0.5, 0.5, "No diffusion speed data found", ha="center", va="center", transform=axis.transAxes)
+def draw_net_flux(axis, transport_analysis, saved_step):
+    if not transport_analysis:
+        axis.text(
+            0.5,
+            0.5,
+            "No net-flux data found",
+            ha="center",
+            va="center",
+            transform=axis.transAxes,
+        )
         axis.set_axis_off()
         return
 
-    max_speed = 0.0
-    for index, (region_name, values) in enumerate(diffusion_data.items()):
-        color = DIFFUSION_SPEED_COLORS[index % len(DIFFUSION_SPEED_COLORS)]
-        time_values = values["time"]
-        mean_disp = values["mean_disp"]
-        axis.plot(time_values, mean_disp, label=region_name, color=color)
-        if len(mean_disp):
-            max_speed = max(max_speed, float(np.nanmax(mean_disp)))
-
+    time_values = transport_analysis["time"]
+    net_flux = transport_analysis["net_flux"]
+    axis.fill_between(
+        time_values,
+        transport_analysis["flux_low"],
+        transport_analysis["flux_high"],
+        color=NET_FLUX_BAND_COLOR,
+        alpha=0.35,
+        label="10th–90th spatial percentile",
+    )
+    axis.plot(
+        time_values,
+        net_flux,
+        color=NET_FLUX_COLOR,
+        linewidth=1.7,
+        label="Net flux",
+    )
+    axis.axhline(0, color="#505050", linewidth=0.8)
     axis.axvline(saved_step, color="#000000", linestyle="--", linewidth=1)
-    axis.set_title("Diffusion Speed")
+    axis.set_title("Net Diffusive Flux")
     axis.set_xlabel("Step")
-    axis.set_ylabel("Mean Displacement")
-    axis.set_ylim(0, max(max_speed * 1.1, 1))
-    axis.legend()
+    axis.set_ylabel("H particles / step\n(+x is positive)")
+    axis.legend(fontsize=8)
 
 
 def match_side_panel_heights_to_main(fig, axes_by_panel):
@@ -2132,7 +2140,7 @@ def create_figure(
     saved_step,
     frame_index,
     metadata,
-    diffusion_data,
+    transport_analysis,
     area_summary_shake_mode=None,
 ):
     panels = []
@@ -2140,8 +2148,8 @@ def create_figure(
         panels.append(("main", 5))
     if SHOW_CONCENTRATION_PROFILE_PANEL:
         panels.append(("profile", 2))
-    if SHOW_DIFFUSION_SPEED_PANEL:
-        panels.append(("speed", 2))
+    if SHOW_NET_FLUX_PANEL:
+        panels.append(("flux", 3))
 
     if not panels:
         raise ValueError("At least one diagram panel must be enabled.")
@@ -2167,8 +2175,8 @@ def create_figure(
             )
         elif panel_name == "profile":
             draw_concentration_profile(axis, matrix, metadata)
-        elif panel_name == "speed":
-            draw_diffusion_speed(axis, diffusion_data, saved_step)
+        elif panel_name == "flux":
+            draw_net_flux(axis, transport_analysis, saved_step)
 
     if SHOW_FRAME_SUPTITLE:
         fig.suptitle(f"Saved Frame {frame_index}", fontsize=14)
@@ -2239,7 +2247,10 @@ def main():
     if not h5_path.exists():
         raise FileNotFoundError(f"HDF5 file not found: {h5_path}")
 
-    matrix, saved_step, frame_index, metadata, diffusion_data = load_snapshot_and_context(h5_path, SNAPSHOT_INDEX)
+    matrix, saved_step, frame_index, metadata, transport_analysis = load_snapshot_and_context(
+        h5_path,
+        SNAPSHOT_INDEX,
+    )
     figures = []
     output_dir = resolve_output_dir() if SAVE_PNG or SAVE_PDF or SAVE_SVG else None
     for shake_mode, output_variant in requested_area_summary_outputs():
@@ -2250,7 +2261,7 @@ def main():
             saved_step,
             frame_index,
             metadata,
-            diffusion_data,
+            transport_analysis,
             area_summary_shake_mode=shake_mode,
         )
         figures.append(fig)

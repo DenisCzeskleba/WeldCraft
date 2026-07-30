@@ -2,7 +2,7 @@
 Create a smaller Brownian-motion HDF5 file by keeping every Nth saved snapshot.
 
 This is meant for very large simulation outputs. It does not rerun the
-simulation; it copies only selected saved frames and matching time/speed arrays
+simulation; it copies only selected saved frames and matching transport arrays
 into a new HDF5 file that the animation and diagram scripts can load faster.
 
 Metadata is never rewritten here. If the input H5 has /meta, it is copied
@@ -76,6 +76,49 @@ def copy_group_datasets(source_group, target_group, frame_indices, frame_count):
             copy_group_datasets(item, nested_target, frame_indices, frame_count)
 
 
+def aggregate_selected_intervals(source_dataset, frame_indices):
+    output_shape = (len(frame_indices),) + source_dataset.shape[1:]
+    aggregated = np.zeros(output_shape, dtype=source_dataset.dtype)
+    previous_frame = -1
+    for output_index, frame_index in enumerate(frame_indices):
+        interval_slice = slice(previous_frame + 1, int(frame_index) + 1)
+        aggregated[output_index] = np.sum(source_dataset[interval_slice], axis=0)
+        previous_frame = int(frame_index)
+    return aggregated
+
+
+def copy_transport_group(source_group, target_group, frame_indices, frame_count):
+    """Preserve interval totals when intermediate snapshots are discarded."""
+    copy_attrs(source_group, target_group)
+    summed_interval_datasets = {
+        "net_x_displacement",
+        "accepted_move_count",
+        "interval_steps",
+    }
+
+    for name, item in source_group.items():
+        if (
+            isinstance(item, h5py.Dataset)
+            and name in summed_interval_datasets
+            and item.shape
+            and item.shape[0] == frame_count
+        ):
+            data = aggregate_selected_intervals(item, frame_indices)
+            create_dataset_like(target_group, name, data, item)
+            copy_attrs(item, target_group[name])
+        elif isinstance(item, h5py.Dataset):
+            copy_frame_aligned_dataset(
+                item,
+                target_group,
+                name,
+                frame_indices,
+                frame_count,
+            )
+        elif isinstance(item, h5py.Group):
+            nested_target = target_group.create_group(name)
+            copy_group_datasets(item, nested_target, frame_indices, frame_count)
+
+
 def copy_snapshots(source_snapshots, target_hf, frame_indices):
     output_shape = (len(frame_indices),) + source_snapshots.shape[1:]
     target_snapshots = target_hf.create_dataset(
@@ -141,7 +184,20 @@ def sparsify_h5(input_path, output_path, keep_every_nth_frame):
 
                 if isinstance(item, h5py.Group):
                     target_group = target_hf.create_group(name)
-                    copy_group_datasets(item, target_group, frame_indices, frame_count)
+                    if name == "transport":
+                        copy_transport_group(
+                            item,
+                            target_group,
+                            frame_indices,
+                            frame_count,
+                        )
+                    else:
+                        copy_group_datasets(
+                            item,
+                            target_group,
+                            frame_indices,
+                            frame_count,
+                        )
                 elif isinstance(item, h5py.Dataset):
                     copy_frame_aligned_dataset(item, target_hf, name, frame_indices, frame_count)
 

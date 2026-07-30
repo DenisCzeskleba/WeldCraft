@@ -104,6 +104,19 @@ region_map, num_regions = create_region_mapping(
     cfg.num_subregions,
     layer_center_x=cfg.TRAP_LAYER_CENTER_X,
 )
+region_widths = np.asarray(
+    [np.count_nonzero(region_map == region_index) for region_index in range(num_regions)],
+    dtype=np.float64,
+)
+region_centers_x = np.asarray(
+    [
+        np.mean(np.flatnonzero(region_map == region_index))
+        for region_index in range(num_regions)
+    ],
+    dtype=np.float64,
+)
+if np.any(region_widths <= 0) or np.any(~np.isfinite(region_centers_x)):
+    raise RuntimeError("Transport regions must each contain at least one matrix x-column.")
 
 print("Applying concentration")
 if cfg.USE_INITIAL_CONCENTRATION_PROFILE:
@@ -451,19 +464,30 @@ with h5py.File(h5_filename, "w") as hf:
     dset = hf.create_dataset("snapshots", shape=(num_saved_frames, height, width), dtype=np.int8, chunks=True)
     hf.create_dataset("saved_steps", data=saved_steps, dtype=np.int64)
 
-    displacement_dsets = {}
-    for i in range(num_regions):
-        displacement_dsets[f"time_{i}"] = hf.create_dataset(f"region_{i}/time", shape=(num_saved_frames,), dtype=int)
-        displacement_dsets[f"mean_disp_{i}"] = hf.create_dataset(
-            f"region_{i}/mean_disp",
-            shape=(num_saved_frames,),
-            dtype=np.float32,
-        )
-        displacement_dsets[f"var_disp_{i}"] = hf.create_dataset(
-            f"region_{i}/var_disp",
-            shape=(num_saved_frames,),
-            dtype=np.float32,
-        )
+    transport_group = hf.create_group("transport")
+    transport_group.attrs["schema"] = "signed_x_displacement_v1"
+    transport_group.attrs["description"] = (
+        "Signed molecular x-displacement accumulated during each saved interval. "
+        "Divide by interval_steps and region_widths to obtain mean cross-sectional "
+        "net flux in H particles per simulation step."
+    )
+    net_x_displacement_dset = transport_group.create_dataset(
+        "net_x_displacement",
+        shape=(num_saved_frames, num_regions),
+        dtype=np.float64,
+    )
+    accepted_move_count_dset = transport_group.create_dataset(
+        "accepted_move_count",
+        shape=(num_saved_frames, num_regions),
+        dtype=np.float64,
+    )
+    interval_steps_dset = transport_group.create_dataset(
+        "interval_steps",
+        shape=(num_saved_frames,),
+        dtype=np.int64,
+    )
+    transport_group.create_dataset("region_widths", data=region_widths)
+    transport_group.create_dataset("region_centers_x", data=region_centers_x)
 
     if use_compact_wiggle_lane:
         hydrogen_count_dset = hf.create_dataset(
@@ -522,14 +546,9 @@ with h5py.File(h5_filename, "w") as hf:
                 hydrogen_count_dset[frame_index] = compact_hydrogen_count
                 progress_count_dset[frame_index] = compact_progress_count
 
-                for i in range(num_regions):
-                    movement_count = max(disp_stats[i, 2], 1)
-                    mean_displacement = disp_stats[i, 0] / movement_count
-                    displacement_dsets[f"time_{i}"][frame_index] = saved_step
-                    displacement_dsets[f"mean_disp_{i}"][frame_index] = mean_displacement
-                    displacement_dsets[f"var_disp_{i}"][frame_index] = (
-                        (disp_stats[i, 1] / movement_count) - mean_displacement ** 2
-                    )
+                net_x_displacement_dset[frame_index] = disp_stats[:, 0]
+                accepted_move_count_dset[frame_index] = disp_stats[:, 2]
+                interval_steps_dset[frame_index] = steps_to_run
 
                 previous_saved_step = int(saved_step)
 
@@ -557,8 +576,13 @@ with h5py.File(h5_filename, "w") as hf:
         buffer = np.empty((optimal_batch_size, height, width), dtype=np.int8)
         buffer_index = 0
 
-        disp_buffer = np.zeros((optimal_batch_size, num_regions, 3), dtype=np.float32)
-        disp_buffer_index = 0
+        transport_buffer = np.zeros(
+            (optimal_batch_size, num_regions, 3),
+            dtype=np.float64,
+        )
+        interval_steps_buffer = np.zeros(optimal_batch_size, dtype=np.int64)
+        interval_transport_stats = np.zeros((num_regions, 3), dtype=np.float64)
+        interval_step_count = 0
 
         for step in tqdm(range(steps)):
             if cfg.simulation_mode == "molecular_wiggle":
@@ -617,6 +641,9 @@ with h5py.File(h5_filename, "w") as hf:
                     num_regions,
                 )
 
+            interval_transport_stats += disp_stats
+            interval_step_count += 1
+
             if should_save_frame(step, cfg.save_every_steps):
                 if use_forced_jump_precomputed_lane:
                     buffer[buffer_index] = create_matrix_from_site_states(
@@ -627,45 +654,40 @@ with h5py.File(h5_filename, "w") as hf:
                     )
                 else:
                     buffer[buffer_index] = h_spots_matrix
-                disp_buffer[disp_buffer_index] = disp_stats
+                transport_buffer[buffer_index] = interval_transport_stats
+                interval_steps_buffer[buffer_index] = interval_step_count
 
                 buffer_index += 1
-                disp_buffer_index += 1
+                interval_transport_stats.fill(0)
+                interval_step_count = 0
 
                 if buffer_index == optimal_batch_size:
                     dset[save_counter:save_counter + buffer_index] = buffer[:buffer_index]
-
-                    for i in range(num_regions):
-                        displacement_dsets[f"time_{i}"][save_counter:save_counter + buffer_index] = (
-                            saved_steps[save_counter:save_counter + buffer_index]
-                        )
-                        displacement_dsets[f"mean_disp_{i}"][save_counter:save_counter + buffer_index] = (
-                            disp_buffer[:buffer_index, i, 0] / np.maximum(disp_buffer[:buffer_index, i, 2], 1)
-                        )
-                        displacement_dsets[f"var_disp_{i}"][save_counter:save_counter + buffer_index] = (
-                            (disp_buffer[:buffer_index, i, 1] / np.maximum(disp_buffer[:buffer_index, i, 2], 1)) -
-                            (disp_buffer[:buffer_index, i, 0] / np.maximum(disp_buffer[:buffer_index, i, 2], 1))**2
-                        )
+                    net_x_displacement_dset[
+                        save_counter:save_counter + buffer_index
+                    ] = transport_buffer[:buffer_index, :, 0]
+                    accepted_move_count_dset[
+                        save_counter:save_counter + buffer_index
+                    ] = transport_buffer[:buffer_index, :, 2]
+                    interval_steps_dset[
+                        save_counter:save_counter + buffer_index
+                    ] = interval_steps_buffer[:buffer_index]
 
                     save_counter += buffer_index
                     buffer_index = 0
-                    disp_buffer_index = 0
 
         if buffer_index > 0:
             print(f"Final flush: {buffer_index} remaining frames written to HDF5.")
             dset[save_counter:save_counter + buffer_index] = buffer[:buffer_index]
-
-            for i in range(num_regions):
-                displacement_dsets[f"time_{i}"][save_counter:save_counter + buffer_index] = (
-                    saved_steps[save_counter:save_counter + buffer_index]
-                )
-                displacement_dsets[f"mean_disp_{i}"][save_counter:save_counter + buffer_index] = (
-                    disp_buffer[:buffer_index, i, 0] / np.maximum(disp_buffer[:buffer_index, i, 2], 1)
-                )
-                displacement_dsets[f"var_disp_{i}"][save_counter:save_counter + buffer_index] = (
-                    (disp_buffer[:buffer_index, i, 1] / np.maximum(disp_buffer[:buffer_index, i, 2], 1)) -
-                    (disp_buffer[:buffer_index, i, 0] / np.maximum(disp_buffer[:buffer_index, i, 2], 1))**2
-                )
+            net_x_displacement_dset[
+                save_counter:save_counter + buffer_index
+            ] = transport_buffer[:buffer_index, :, 0]
+            accepted_move_count_dset[
+                save_counter:save_counter + buffer_index
+            ] = transport_buffer[:buffer_index, :, 2]
+            interval_steps_dset[
+                save_counter:save_counter + buffer_index
+            ] = interval_steps_buffer[:buffer_index]
 
     hf.attrs["max_radius_to_jump"] = max_radius_to_jump
     hf.attrs["matrix_shape"] = h_spots_matrix.shape

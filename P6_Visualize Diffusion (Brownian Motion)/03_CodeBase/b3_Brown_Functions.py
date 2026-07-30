@@ -977,7 +977,9 @@ def simulate_random_sequential_wiggle_steps(site_states, hydrogen_site_ids, hydr
             move_x = site_x[target_site_id] - site_x[source_site_id]
             region_id = region_map[site_x[source_site_id]]
             if region_id >= 0:
-                displacement_stats[region_id, 0] += abs(move_x)
+                # Signed x-displacement is the spatial integral of net
+                # crossings.  Unlike |dx|, opposite molecular moves cancel.
+                displacement_stats[region_id, 0] += move_x
                 displacement_stats[region_id, 1] += move_x ** 2
                 displacement_stats[region_id, 2] += 1
 
@@ -1148,7 +1150,7 @@ def simulate_event_driven_wiggle_events(site_states, hydrogen_site_ids, hydrogen
         move_x = site_x[target_site_id] - site_x[source_site_id]
         region_id = region_map[site_x[source_site_id]]
         if region_id >= 0:
-            displacement_stats[region_id, 0] += abs(move_x)
+            displacement_stats[region_id, 0] += move_x
             displacement_stats[region_id, 1] += move_x ** 2
             displacement_stats[region_id, 2] += 1
 
@@ -1296,7 +1298,7 @@ def simulate_brownian_motion(matrix, rng_state, active_y, active_x, nx, ny, max_
 
         region_id = region_map[source_i]
         if region_id >= 0:
-            displacement_stats[region_id, 0] += np.float32(abs(move_x))
+            displacement_stats[region_id, 0] += np.float32(move_x)
             displacement_stats[region_id, 1] += np.float32(move_x ** 2)
             displacement_stats[region_id, 2] += np.float32(1)
 
@@ -1387,7 +1389,7 @@ def simulate_brownian_motion_forced_jump_precomputed(site_states, random_values,
 
             region_id = region_map[i]
             if region_id >= 0:
-                displacement_stats[region_id, 0] += np.float32(abs(move_x))
+                displacement_stats[region_id, 0] += np.float32(move_x)
                 displacement_stats[region_id, 1] += np.float32(move_x ** 2)
                 displacement_stats[region_id, 2] += np.float32(1)
 
@@ -1441,7 +1443,7 @@ def simulate_brownian_motion_forced_jump(matrix, random_values, active_y, active
 
                 region_id = region_map[i]
                 if region_id >= 0:
-                    displacement_stats[region_id, 0] += np.float32(abs(move_x))
+                    displacement_stats[region_id, 0] += np.float32(move_x)
                     displacement_stats[region_id, 1] += np.float32(move_x ** 2)
                     displacement_stats[region_id, 2] += np.float32(1)
 
@@ -1539,30 +1541,7 @@ def load_brownian_animation_data(h5_filename, render_every_nth_frame=1):
         matrices = hf["snapshots"][frame_slice]
         saved_steps = read_saved_steps(hf)[frame_slice]
 
-        region_indices = []
-        for key in hf.keys():
-            if key.startswith("region_"):
-                region_number = key.split("_", 1)[1]
-                if region_number.isdigit():
-                    region_indices.append(int(region_number))
-
-        diffusion_data = {}
-        for region_index in sorted(region_indices):
-            group_name = f"region_{region_index}"
-            group = hf[group_name]
-            if "mean_disp" in group:
-                mean_disp = group["mean_disp"][frame_slice]
-            else:
-                mean_disp = np.zeros(len(saved_steps), dtype=float)
-
-            if len(mean_disp) < len(saved_steps):
-                mean_disp = np.pad(mean_disp, (0, len(saved_steps) - len(mean_disp)), mode="constant")
-            elif len(mean_disp) > len(saved_steps):
-                mean_disp = mean_disp[:len(saved_steps)]
-
-            diffusion_data[group_name] = mean_disp
-
-    return matrices, saved_steps, diffusion_data
+    return matrices, saved_steps
 
 
 def load_last_snapshot(h5_filename):
@@ -1585,124 +1564,3 @@ def compute_concentration_profile(matrix, smoothing_window=5, gaussian_sigma=1.5
     smoothed_profile = gaussian_filter1d(smoothed_profile, sigma=gaussian_sigma, mode="reflect")
 
     return smoothed_profile[5:-5]
-
-
-def load_simulation_data(h5_filename):
-    with h5py.File(h5_filename, "r") as hf:
-        matrices = hf["snapshots"][:]
-        saved_steps = read_saved_steps(hf)
-        sink_source_thickness = hf.attrs["sink_source_thickness"]
-    return matrices, saved_steps, sink_source_thickness
-
-
-def compute_com_in_zones(matrices, saved_steps, sink_source_thickness):
-    try:
-        from tqdm import tqdm
-    except ImportError:
-        tqdm = None
-
-    ny, nx = matrices.shape[1:]
-    mid_x = nx // 2
-    trap_margin = 5
-
-    left_zone = (slice(None), slice(sink_source_thickness, mid_x - trap_margin))
-    right_zone = (slice(None), slice(mid_x + trap_margin, nx - sink_source_thickness))
-
-    com_left = []
-    com_right = []
-    time_left = []
-    time_right = []
-
-    iterator = enumerate(zip(matrices, saved_steps))
-    if tqdm is not None:
-        iterator = tqdm(iterator, total=len(matrices), desc="Computing COM for left and right zones")
-
-    for _, (matrix, time) in iterator:
-        y_positions_left, x_positions_left = np.where(matrix[left_zone] == 2)
-        if len(x_positions_left) > 0:
-            com_left_x = np.mean(x_positions_left) + sink_source_thickness
-            com_left_y = np.mean(y_positions_left)
-            com_left.append((com_left_x, com_left_y))
-            time_left.append(time)
-
-        y_positions_right, x_positions_right = np.where(matrix[right_zone] == 2)
-        if len(x_positions_right) > 0:
-            com_right_x = np.mean(x_positions_right) + mid_x + trap_margin
-            com_right_y = np.mean(y_positions_right)
-            com_right.append((com_right_x, com_right_y))
-            time_right.append(time)
-
-    return np.array(time_left), np.array(com_left), np.array(time_right), np.array(com_right)
-
-
-def compute_time_resolved_D(time_values, com_positions, window_size=100):
-    if len(com_positions) < window_size:
-        print("Warning: Not enough data points for time-resolved diffusion calculation.")
-        return np.array([]), np.array([])
-
-    msd_values = []
-    time_centers = []
-    x_positions = com_positions[:, 0]
-
-    for i in range(len(x_positions) - window_size):
-        t_window = time_values[i:i + window_size]
-        x_window = x_positions[i:i + window_size]
-
-        diffs = x_window - x_window[0]
-        msd = np.mean(diffs ** 2)
-
-        time_centers.append(np.mean(t_window))
-        msd_values.append(msd)
-
-    time_centers = np.array(time_centers)
-    msd_values = np.array(msd_values)
-
-    D_local = np.zeros_like(time_centers)
-    for i in range(len(time_centers) - 1):
-        dt = time_centers[i + 1] - time_centers[i]
-        d_msd = msd_values[i + 1] - msd_values[i]
-        D_local[i] = d_msd / (4 * dt) if dt > 0 else np.nan
-
-    return time_centers, D_local
-
-
-def compute_mean_displacement(time_values, com_positions):
-    x_positions = com_positions[:, 0]
-    displacements = np.abs(np.diff(x_positions))
-    time_intervals = np.diff(time_values)
-    mean_displacement = displacements / time_intervals
-    time_centers = (time_values[:-1] + time_values[1:]) / 2
-
-    return time_centers, mean_displacement
-
-
-def compute_variance_speed(time_values, com_positions, window_size=50):
-    x_positions = com_positions[:, 0]
-    squared_displacements = (x_positions[1:] - x_positions[:-1]) ** 2
-    rolling_variance = np.convolve(squared_displacements, np.ones(window_size) / window_size, mode="valid")
-    time_centers = (time_values[:len(rolling_variance)] + time_values[1:len(rolling_variance) + 1]) / 2
-
-    return time_centers, rolling_variance
-
-
-def load_diffusion_data(h5_filename):
-    with h5py.File(h5_filename, "r") as hf:
-        saved_steps = read_saved_steps(hf)
-
-        region_indices = []
-        for key in hf.keys():
-            if key.startswith("region_"):
-                region_number = key.split("_", 1)[1]
-                if region_number.isdigit():
-                    region_indices.append(int(region_number))
-
-        diffusion_data = {f"region_{i}": {} for i in sorted(region_indices)}
-
-        for region in diffusion_data:
-            for key in ["time", "mean_disp", "var_disp"]:
-                if f"{region}/{key}" in hf:
-                    diffusion_data[region][key] = hf[f"{region}/{key}"][:]
-                else:
-                    diffusion_data[region][key] = np.zeros(len(saved_steps))
-
-    return saved_steps, diffusion_data

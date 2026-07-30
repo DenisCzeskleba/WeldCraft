@@ -6,6 +6,7 @@ from matplotlib.colors import BoundaryNorm, ListedColormap
 from pathlib import Path
 
 from b3_Brown_Functions import *
+from c2_Brown_Get_Speed import analyze_transport
 
 try:
     from tqdm import tqdm
@@ -47,7 +48,7 @@ def calculate_layout(matrix_shape, panels):
     panel_widths = {
         "main": data_width_px,
         "concentration": side_panel_width_px,
-        "speed": side_panel_width_px,
+        "flux": side_panel_width_px,
     }
     total_width_px = LEFT_MARGIN_PX + RIGHT_MARGIN_PX + sum(panel_widths[name] for name in panels)
     total_width_px += PANEL_GAP_PX * (len(panels) - 1)
@@ -68,14 +69,14 @@ def calculate_layout(matrix_shape, panels):
     }
 
 
-def setup_plot(matrix_shape, saved_steps, diffusion_data):
+def setup_plot(matrix_shape, saved_steps, transport_analysis):
     panels = []
     if cfg.SHOW_MAIN_SIMULATION_PANEL:
         panels.append("main")
     if cfg.SHOW_CONCENTRATION_PROFILE_PANEL:
         panels.append("concentration")
-    if cfg.SHOW_DIFFUSION_SPEED_PANEL:
-        panels.append("speed")
+    if cfg.SHOW_NET_FLUX_PANEL:
+        panels.append("flux")
 
     if not panels:
         raise ValueError("At least one animation panel must be enabled.")
@@ -108,7 +109,8 @@ def setup_plot(matrix_shape, saved_steps, diffusion_data):
         "available_dots": None,
         "hydrogen_dots": None,
         "conc_plot": None,
-        "speed_lines": [],
+        "flux_line": None,
+        "flux_cursor": None,
         "layout": layout,
     }
 
@@ -164,38 +166,65 @@ def setup_plot(matrix_shape, saved_steps, diffusion_data):
         axes["concentration"].set_ylim(-1, 101)
         axes["concentration"].set_xlim(-1, matrix_shape[1] + 1)
 
-    if cfg.SHOW_DIFFUSION_SPEED_PANEL:
-        speed_axis = axes["speed"]
-        max_speed = 0
-        speed_colors = cfg.DIFFUSION_SPEED_COLORS or ["#000000"]
-
-        for index, (region_name, mean_disp) in enumerate(diffusion_data.items()):
-            color = speed_colors[index % len(speed_colors)]
-            line, = speed_axis.plot([], [], label=region_name, color=color)
-            state["speed_lines"].append((line, mean_disp))
-            if len(mean_disp) > 0:
-                max_speed = max(max_speed, float(np.nanmax(mean_disp)))
-
-        speed_axis.set_title("Diffusion Speed Over Time", fontsize=cfg.animation_title_font_size)
-        speed_axis.set_xlabel("Step", fontsize=cfg.animation_axis_label_font_size)
-        speed_axis.set_ylabel("Mean Displacement", fontsize=cfg.animation_axis_label_font_size)
-        if len(saved_steps) > 1:
-            speed_axis.set_xlim(saved_steps[0], saved_steps[-1])
+    if cfg.SHOW_NET_FLUX_PANEL:
+        flux_axis = axes["flux"]
+        if transport_analysis:
+            flux_time = transport_analysis["time"]
+            flux_axis.fill_between(
+                flux_time,
+                transport_analysis["flux_low"],
+                transport_analysis["flux_high"],
+                color=cfg.NET_FLUX_BAND_COLOR,
+                alpha=0.30,
+                label="10th–90th spatial percentile",
+            )
+            state["flux_line"], = flux_axis.plot(
+                [],
+                [],
+                color=cfg.NET_FLUX_COLOR,
+                linewidth=1.7,
+                label="Net flux",
+            )
+            state["flux_cursor"] = flux_axis.axvline(
+                flux_time[0],
+                color="#303030",
+                linestyle="--",
+                linewidth=0.9,
+            )
+            finite_values = np.concatenate(
+                (
+                    transport_analysis["flux_low"][np.isfinite(transport_analysis["flux_low"])],
+                    transport_analysis["flux_high"][np.isfinite(transport_analysis["flux_high"])],
+                )
+            )
+            if len(finite_values):
+                value_min = min(float(np.min(finite_values)), 0.0)
+                value_max = max(float(np.max(finite_values)), 0.0)
+                padding = max(0.08 * (value_max - value_min), 1e-12)
+                flux_axis.set_ylim(value_min - padding, value_max + padding)
+            flux_axis.legend(fontsize=cfg.animation_legend_font_size)
         else:
-            speed_axis.set_xlim(0, 1)
-        speed_axis.set_ylim(0, max(max_speed * 1.1, 1))
-        if state["speed_lines"]:
-            speed_axis.legend(fontsize=cfg.animation_legend_font_size)
-        else:
-            speed_axis.text(
+            flux_axis.text(
                 0.5,
                 0.5,
-                "No diffusion speed data found",
+                "No net-flux data found",
                 ha="center",
                 va="center",
                 fontsize=cfg.animation_axis_label_font_size,
-                transform=speed_axis.transAxes,
+                transform=flux_axis.transAxes,
             )
+
+        flux_axis.axhline(0, color="#505050", linewidth=0.8)
+        flux_axis.set_title("Net Diffusive Flux", fontsize=cfg.animation_title_font_size)
+        flux_axis.set_xlabel("Step", fontsize=cfg.animation_axis_label_font_size)
+        flux_axis.set_ylabel(
+            "H particles / step (+x positive)",
+            fontsize=cfg.animation_axis_label_font_size,
+        )
+        if len(saved_steps) > 1:
+            flux_axis.set_xlim(saved_steps[0], saved_steps[-1])
+        else:
+            flux_axis.set_xlim(0, 1)
 
     for axis in axes.values():
         axis.tick_params(axis="both", labelsize=cfg.animation_tick_font_size)
@@ -226,7 +255,7 @@ def verify_pixel_geometry(fig, state):
         )
 
 
-def update(frame, state, matrices, saved_steps):
+def update(frame, state, matrices, saved_steps, transport_analysis):
     h_spots_matrix = matrices[frame]
     artists = []
 
@@ -259,9 +288,13 @@ def update(frame, state, matrices, saved_steps):
         state["conc_plot"].set_data(np.arange(len(concentration_profile)), concentration_profile * 100)
         artists.append(state["conc_plot"])
 
-    for line, mean_disp in state["speed_lines"]:
-        line.set_data(saved_steps[:frame + 1], mean_disp[:frame + 1])
-        artists.append(line)
+    if state["flux_line"] is not None:
+        state["flux_line"].set_data(
+            transport_analysis["time"][:frame + 1],
+            transport_analysis["net_flux"][:frame + 1],
+        )
+        state["flux_cursor"].set_xdata([saved_steps[frame], saved_steps[frame]])
+        artists.extend([state["flux_line"], state["flux_cursor"]])
 
     return artists
 
@@ -283,8 +316,17 @@ def main():
     if ffmpeg_path.exists():
         mpl.rcParams["animation.ffmpeg_path"] = str(ffmpeg_path)
 
-    matrices, saved_steps, diffusion_data = load_brownian_animation_data(file_name, render_stride)
-    fig, animation_state = setup_plot(matrices.shape[1:], saved_steps, diffusion_data)
+    matrices, saved_steps = load_brownian_animation_data(file_name, render_stride)
+    transport_analysis = (
+        analyze_transport(file_name, frame_stride=render_stride)
+        if cfg.SHOW_NET_FLUX_PANEL
+        else None
+    )
+    fig, animation_state = setup_plot(
+        matrices.shape[1:],
+        saved_steps,
+        transport_analysis,
+    )
     verify_pixel_geometry(fig, animation_state)
     layout = animation_state["layout"]
 
@@ -311,7 +353,13 @@ def main():
                 frames = tqdm(frames, desc="Rendering Animation Frames")
 
             for frame in frames:
-                update(frame, animation_state, matrices, saved_steps)
+                update(
+                    frame,
+                    animation_state,
+                    matrices,
+                    saved_steps,
+                    transport_analysis,
+                )
                 writer.grab_frame()
     finally:
         plt.close(fig)

@@ -107,7 +107,7 @@ delete_old_h5 = True
 # ---------------------- Animation Panels ---------------------- #
 SHOW_MAIN_SIMULATION_PANEL = True
 SHOW_CONCENTRATION_PROFILE_PANEL = True
-SHOW_DIFFUSION_SPEED_PANEL = False
+SHOW_NET_FLUX_PANEL = False
 
 # ---------------------- Main Panel Render Mode ---------------------- #
 MAIN_RENDER_MODE = "pixels"  # Options: "pixels", "dots"
@@ -122,15 +122,8 @@ COLOR_EMPTY = "#440154"  # "#440154"
 COLOR_AVAILABLE_SPOT = "#0000FF"
 COLOR_HYDROGEN = "#FF0000"
 COLOR_CONCENTRATION_LINE = "#0000FF"
-DIFFUSION_SPEED_COLORS = [
-    "#FF0000",
-    "#FFA500",
-    "#008000",
-    "#800080",
-    "#A52A2A",
-    "#00FFFF",
-    "#000000",
-]
+NET_FLUX_COLOR = "#4A148C"
+NET_FLUX_BAND_COLOR = "#B39DDB"
 
 # ---------------------- Output Files ---------------------- #
 h5_filename = "random_motion.h5"
