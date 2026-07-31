@@ -34,7 +34,7 @@ with contextlib.redirect_stdout(io.StringIO()):
 # ---------------------- Input Snapshot ---------------------- #
 # Used by ordinary presets. The special "all_presets" mode instead always uses
 # 02_Results/Examples/published_examples_source.h5 for reproducible public examples.
-INPUT_H5_FILENAME = ("O2 V1 long, only spot.h5")
+INPUT_H5_FILENAME = ("O2 V2 narrower version but short time wise.h5")
 SNAPSHOT_INDEX = -1  # HDF5 saved-frame index to plot; -1 means the last saved frame, 0 means first saved frame.
 
 
@@ -52,19 +52,21 @@ SAVE_DPI = 300
 
 # ---------------------- Diagram Profile ---------------------- #
 # Available diagram presets:
-#   "default"                       - Detailed pixel-by-pixel simulation matrix.
-#   "all_presets"                   - Render every preset from Examples/published_examples_source.h5 into Examples.
-#   "two_regions_w_solubility"      - Pixel matrix emphasizing both regions and solubilities.
-#   "simple_1_region_source_sink"   - Pixel matrix configured for a single-region source/sink view.
-#   "simple_concentration_profile"  - Saved concentration profile without matrix or flux panels.
-#   "depletion_heatmap"             - Smoothed local enrichment/depletion heatmap.
-#   "printer_friendly"              - Spatially binned, larger occupancy glyphs for print.
-#   "area_summary"                  - Stylized non-overlapping dots using measured area averages.
-#   "chapter_2_3_brown_overview"    - Stylized dots following a transient saved x-profile.
-#   "area_summary_transient"        - Stylized non-overlapping dots using measured area averages, with transient x-profile.
+#   "default"                               - Detailed pixel-by-pixel simulation matrix.
+#   "all_presets"                           - Render every preset from Examples/published_examples_source.h5 into Examples.
+#   "two_regions_w_solubility"              - Pixel matrix emphasizing both regions and solubilities.
+#   "simple_1_region_source_sink"           - Pixel matrix configured for a single-region source/sink view.
+#   "simple_1_region_source_with_heatmap"   - Purple source/sink matrix paired with the difference heatmap.
+#   "simple_concentration_profile"          - Saved concentration profile without matrix or flux panels.
+#   "concentration_profile_with_heatmap"    - Clean concentration profile paired with the difference heatmap.
+#   "depletion_heatmap"                     - Smoothed local enrichment/depletion heatmap.
+#   "printer_friendly"                      - Spatially binned, larger occupancy glyphs for print.
+#   "area_summary"                          - Stylized non-overlapping dots using measured area averages.
+#   "chapter_2_3_brown_overview"            - Stylized dots following a transient saved x-profile.
+#   "area_summary_transient"                - Stylized non-overlapping dots using measured area averages, with transient x-profile.
 # When adding a preset, also add it to BATCH_PRESET_ORDER in the "all_presets"
 # preset file. Treat existing entries as append-only to keep public numbering stable.
-DIAGRAM_PRESET = "simple_1_region_source_sink"  # File stem in 01_Resources/Diagram_Presets.
+DIAGRAM_PRESET = "simple_1_region_source_with_heatmap"  # File stem in 01_Resources/Diagram_Presets.
 
 REQUIRED_DIAGRAM_PRESET_KEYS = [
     "PRESET_NAME",
@@ -112,6 +114,8 @@ REQUIRED_DIAGRAM_PRESET_KEYS = [
 ]
 
 OPTIONAL_DIAGRAM_PRESET_DEFAULTS = {
+    "SHOW_LEGEND": True,
+    "SHOW_HEATMAP_PANEL": False,
     # Per-preset panel typography. None keeps Matplotlib's current default.
     "PANEL_TITLE_FONT_SIZE": None,
     "AXIS_LABEL_FONT_SIZE": None,
@@ -1811,7 +1815,7 @@ def draw_area_summary_dots(axis, matrix, metadata, shake_mode=None):
             zorder=4,
         )
 
-    if AREA_SUMMARY_SHOW_DOT_LEGEND:
+    if SHOW_LEGEND and AREA_SUMMARY_SHOW_DOT_LEGEND:
         legend_handles = [
             axis.scatter(
                 [],
@@ -2151,7 +2155,7 @@ def draw_main_panel(axis, matrix, saved_step, metadata, area_summary_shake_mode=
                 )
             ])
 
-    if SHOW_SITE_STATE_LEGEND:
+    if SHOW_LEGEND and SHOW_SITE_STATE_LEGEND:
         draw_site_state_legend(axis)
 
 
@@ -2239,6 +2243,19 @@ def draw_concentration_profile(axis, matrix, metadata):
             color=PROFILE_SPOT_SHADE_LABEL_COLOR,
         )
 
+
+def draw_heatmap_panel(axis, matrix, metadata):
+    rows, cols = matrix.shape
+    draw_concentration_heatmap(axis, matrix, metadata)
+    draw_special_region_outlines(axis, matrix.shape, metadata)
+    axis.set_xlim(-0.5, cols - 0.5)
+    axis.set_ylim(-0.5, rows - 0.5)
+    axis.set_aspect("equal")
+    axis.set_xlabel(dimension_label_with_pixels(X_LABEL, cols))
+    axis.set_ylabel(dimension_label_with_pixels(Y_LABEL, rows))
+    apply_l_fraction_ticks(axis, x_length=cols, y_length=rows)
+
+
 def draw_net_flux(axis, transport_analysis, saved_step):
     if not transport_analysis:
         axis.text(
@@ -2293,7 +2310,8 @@ def draw_net_flux(axis, transport_analysis, saved_step):
     axis.set_title("Net Diffusive Flux")
     axis.set_xlabel("Step")
     axis.set_ylabel("H particles / step\n(+x is positive)")
-    axis.legend(fontsize=8)
+    if SHOW_LEGEND:
+        axis.legend(fontsize=8)
 
 
 def match_side_panel_heights_to_main(fig, axes_by_panel):
@@ -2331,6 +2349,8 @@ def create_figure(
     panels = []
     if SHOW_MAIN_PANEL:
         panels.append(("main", 5))
+    if SHOW_HEATMAP_PANEL:
+        panels.append(("heatmap", 5))
     if SHOW_CONCENTRATION_PROFILE_PANEL:
         panels.append(("profile", 2))
     if SHOW_NET_FLUX_PANEL:
@@ -2360,6 +2380,8 @@ def create_figure(
             )
         elif panel_name == "profile":
             draw_concentration_profile(axis, matrix, metadata)
+        elif panel_name == "heatmap":
+            draw_heatmap_panel(axis, matrix, metadata)
         elif panel_name == "flux":
             draw_net_flux(axis, transport_analysis, saved_step)
 
