@@ -34,9 +34,7 @@ with contextlib.redirect_stdout(io.StringIO()):
 # ---------------------- Input Snapshot ---------------------- #
 # Used by ordinary presets. The special "all_presets" mode instead always uses
 # 02_Results/Examples/published_examples_source.h5 for reproducible public examples.
-INPUT_H5_FILENAME = (
-    "for chapter 2.3/Option 1/O1 V3 long run should include everythig.h5"
-)
+INPUT_H5_FILENAME = ("O2 V1 long, only spot.h5")
 SNAPSHOT_INDEX = -1  # HDF5 saved-frame index to plot; -1 means the last saved frame, 0 means first saved frame.
 
 
@@ -58,6 +56,7 @@ SAVE_DPI = 300
 #   "all_presets"                   - Render every preset from Examples/published_examples_source.h5 into Examples.
 #   "two_regions_w_solubility"      - Pixel matrix emphasizing both regions and solubilities.
 #   "simple_1_region_source_sink"   - Pixel matrix configured for a single-region source/sink view.
+#   "simple_concentration_profile"  - Saved concentration profile without matrix or flux panels.
 #   "depletion_heatmap"             - Smoothed local enrichment/depletion heatmap.
 #   "printer_friendly"              - Spatially binned, larger occupancy glyphs for print.
 #   "area_summary"                  - Stylized non-overlapping dots using measured area averages.
@@ -65,7 +64,7 @@ SAVE_DPI = 300
 #   "area_summary_transient"        - Stylized non-overlapping dots using measured area averages, with transient x-profile.
 # When adding a preset, also add it to BATCH_PRESET_ORDER in the "all_presets"
 # preset file. Treat existing entries as append-only to keep public numbering stable.
-DIAGRAM_PRESET = "default"  # File stem in 01_Resources/Diagram_Presets.
+DIAGRAM_PRESET = "simple_1_region_source_sink"  # File stem in 01_Resources/Diagram_Presets.
 
 REQUIRED_DIAGRAM_PRESET_KEYS = [
     "PRESET_NAME",
@@ -113,6 +112,19 @@ REQUIRED_DIAGRAM_PRESET_KEYS = [
 ]
 
 OPTIONAL_DIAGRAM_PRESET_DEFAULTS = {
+    # Per-preset panel typography. None keeps Matplotlib's current default.
+    "PANEL_TITLE_FONT_SIZE": None,
+    "AXIS_LABEL_FONT_SIZE": None,
+    "TICK_LABEL_FONT_SIZE": None,
+    "SHOW_CONCENTRATION_PROFILE_TITLE": True,
+    "SHOW_SITE_STATE_LEGEND": False,
+    "SITE_STATE_AVAILABLE_LABEL": "Available Lattice Sites",
+    "SITE_STATE_OCCUPIED_LABEL": "Occupied Sites",
+    "SITE_STATE_UNAVAILABLE_LABEL": "Unavailable Locations",
+    "SITE_STATE_LEGEND_LOCATION": "upper right",
+    "SITE_STATE_LEGEND_ANCHOR": (0.98, 0.98),
+    "SITE_STATE_LEGEND_FONT_SIZE": 18,
+    "SITE_STATE_LEGEND_MARKER_AREA": 128,
     # Smoothed concentration-map settings.
     "HEATMAP_MODE": "deviation",  # Options: "deviation", "occupancy"
     "HEATMAP_SIGMA": 18.0,
@@ -167,6 +179,13 @@ OPTIONAL_DIAGRAM_PRESET_DEFAULTS = {
     "AREA_SUMMARY_BACKGROUND_COLOR": "#FAFAFA",
     "AREA_SUMMARY_SHOW_AREA_LABELS": True,
     "AREA_SUMMARY_SHOW_EXPLANATION": True,
+    "AREA_SUMMARY_SHOW_DOT_LEGEND": False,
+    "AREA_SUMMARY_VACANT_LABEL": "Available Lattice Sites",
+    "AREA_SUMMARY_OCCUPIED_LABEL": "Occupied Sites",
+    "AREA_SUMMARY_DOT_LEGEND_LOCATION": "upper right",
+    "AREA_SUMMARY_DOT_LEGEND_ANCHOR": (0.98, 0.98),
+    "AREA_SUMMARY_DOT_LEGEND_FONT_SIZE": 12,
+    "AREA_SUMMARY_DOT_LEGEND_SIZE_SCALE": 1.0,
     "AREA_SUMMARY_SHOW_SOURCE_SINK_BANDS": True,
     "AREA_SUMMARY_SHOW_SOURCE_SINK_LABELS": False,
     "AREA_SUMMARY_SOURCE_SINK_BAND_WIDTH_SCALE": 1.0,
@@ -1792,6 +1811,49 @@ def draw_area_summary_dots(axis, matrix, metadata, shake_mode=None):
             zorder=4,
         )
 
+    if AREA_SUMMARY_SHOW_DOT_LEGEND:
+        legend_handles = [
+            axis.scatter(
+                [],
+                [],
+                s=(
+                    AREA_SUMMARY_DOT_SIZE
+                    * AREA_SUMMARY_DOT_LEGEND_SIZE_SCALE
+                ),
+                c=COLOR_AVAILABLE_SPOT,
+                alpha=AREA_SUMMARY_DOT_ALPHA,
+                marker="o",
+                edgecolors=AREA_SUMMARY_DOT_EDGE_COLOR,
+                linewidths=AREA_SUMMARY_DOT_EDGE_WIDTH,
+                label=AREA_SUMMARY_VACANT_LABEL,
+            ),
+            axis.scatter(
+                [],
+                [],
+                s=(
+                    AREA_SUMMARY_DOT_SIZE
+                    * AREA_SUMMARY_DOT_LEGEND_SIZE_SCALE
+                ),
+                c=COLOR_HYDROGEN,
+                alpha=AREA_SUMMARY_DOT_ALPHA,
+                marker="o",
+                edgecolors=AREA_SUMMARY_DOT_EDGE_COLOR,
+                linewidths=AREA_SUMMARY_DOT_EDGE_WIDTH,
+                label=AREA_SUMMARY_OCCUPIED_LABEL,
+            ),
+        ]
+        legend = axis.legend(
+            handles=legend_handles,
+            loc=AREA_SUMMARY_DOT_LEGEND_LOCATION,
+            bbox_to_anchor=AREA_SUMMARY_DOT_LEGEND_ANCHOR,
+            fontsize=AREA_SUMMARY_DOT_LEGEND_FONT_SIZE,
+            frameon=True,
+            facecolor="#FFFFFF",
+            edgecolor="#707070",
+            framealpha=0.90,
+        )
+        legend.set_zorder(10)
+
     if AREA_SUMMARY_SHOW_EXPLANATION:
         density_text = (
             "dot density = measured available-site density"
@@ -1835,26 +1897,28 @@ def build_annotation_regions(matrix_shape, metadata):
     rows, cols = matrix_shape
     mid_x = cols // 2
     regions = []
+    use_sink_source = metadata_bool(metadata, "USE_SINK_SOURCE")
+    sink_source_thickness = metadata_int(metadata, "SINK_SOURCE_THICKNESS")
+    source_side = metadata_str(metadata, "SOURCE_SIDE")
+    bulk_left_x = sink_source_thickness if use_sink_source else 0
+    bulk_right_x = cols - sink_source_thickness if use_sink_source else cols
 
     if SHOW_LEFT_RIGHT_ANNOTATIONS:
         regions.extend([
             {
                 "name": "Average Regional Concentration",
-                "mask": rectangle_mask(matrix_shape, 0, mid_x),
+                "mask": rectangle_mask(matrix_shape, bulk_left_x, mid_x),
                 "xy": (cols * 0.25, rows * 0.9),
                 "max_solubility": max_solubility_for_x(metadata, cols * 0.25, cols),
             },
             {
                 "name": "Average Regional Concentration",
-                "mask": rectangle_mask(matrix_shape, mid_x, cols),
+                "mask": rectangle_mask(matrix_shape, mid_x, bulk_right_x),
                 "xy": (cols * 0.75, rows * 0.9),
                 "max_solubility": max_solubility_for_x(metadata, cols * 0.75, cols),
             },
         ])
 
-    use_sink_source = metadata_bool(metadata, "USE_SINK_SOURCE")
-    sink_source_thickness = metadata_int(metadata, "SINK_SOURCE_THICKNESS")
-    source_side = metadata_str(metadata, "SOURCE_SIDE")
     if use_sink_source and sink_source_thickness > 0:
         if SHOW_LEFT_RIGHT_WITHOUT_SINK_SOURCE_ANNOTATIONS:
             regions.extend([
@@ -1951,6 +2015,38 @@ def build_annotation_regions(matrix_shape, metadata):
     return regions
 
 
+def draw_site_state_legend(axis):
+    legend_handles = []
+    for color, label in (
+        (COLOR_EMPTY, SITE_STATE_UNAVAILABLE_LABEL),
+        (COLOR_AVAILABLE_SPOT, SITE_STATE_AVAILABLE_LABEL),
+        (COLOR_HYDROGEN, SITE_STATE_OCCUPIED_LABEL),
+    ):
+        legend_handles.append(
+            axis.scatter(
+                [],
+                [],
+                s=SITE_STATE_LEGEND_MARKER_AREA,
+                c=color,
+                marker="s",
+                edgecolors="#303030",
+                linewidths=0.5,
+                label=label,
+            )
+        )
+    legend = axis.legend(
+        handles=legend_handles,
+        loc=SITE_STATE_LEGEND_LOCATION,
+        bbox_to_anchor=SITE_STATE_LEGEND_ANCHOR,
+        fontsize=SITE_STATE_LEGEND_FONT_SIZE,
+        frameon=True,
+        facecolor="#FFFFFF",
+        edgecolor="#707070",
+        framealpha=0.90,
+    )
+    legend.set_zorder(10)
+
+
 def draw_main_panel(axis, matrix, saved_step, metadata, area_summary_shake_mode=None):
     rows, cols = matrix.shape
 
@@ -2004,7 +2100,7 @@ def draw_main_panel(axis, matrix, saved_step, metadata, area_summary_shake_mode=
     axis.set_ylim(-0.5, rows - 0.5)
     axis.set_aspect("equal")
     title = TITLE
-    if RENDER_MODE == "area_summary_dots" and area_summary_shake_mode is not None:
+    if title and RENDER_MODE == "area_summary_dots" and area_summary_shake_mode is not None:
         title = f"{title} - {area_summary_shake_mode.title()} layout"
     if RENDER_MODE == "area_summary_dots":
         concentration_title = {
@@ -2012,9 +2108,10 @@ def draw_main_panel(axis, matrix, saved_step, metadata, area_summary_shake_mode=
             "saved_x_profile": "Saved x-profile",
             "linear_x": "Linear x-profile",
         }.get(str(AREA_SUMMARY_CONCENTRATION_MODE))
-        if concentration_title is not None:
+        if title and concentration_title is not None:
             title = f"{title} - {concentration_title}"
-    axis.set_title(f"{title} (Step: {saved_step})")
+    if title:
+        axis.set_title(f"{title} (Step: {saved_step})")
     axis.set_xlabel(dimension_label_with_pixels(X_LABEL, cols))
     axis.set_ylabel(dimension_label_with_pixels(Y_LABEL, rows))
     apply_l_fraction_ticks(axis, x_length=cols, y_length=rows)
@@ -2054,12 +2151,22 @@ def draw_main_panel(axis, matrix, saved_step, metadata, area_summary_shake_mode=
                 )
             ])
 
+    if SHOW_SITE_STATE_LEGEND:
+        draw_site_state_legend(axis)
+
 
 def draw_concentration_profile(axis, matrix, metadata):
     coordinates, profile, axis_label = compute_profile(matrix, metadata)
     rows, cols = matrix.shape
-    axis.plot(coordinates, profile * 100, color=COLOR_CONCENTRATION_LINE)
-    axis.set_title("Concentration Profile")
+    axis.plot(
+        coordinates,
+        profile * 100,
+        color=COLOR_CONCENTRATION_LINE,
+        clip_on=False,
+        zorder=3,
+    )
+    if SHOW_CONCENTRATION_PROFILE_TITLE:
+        axis.set_title("Concentration Profile")
     profile_pixel_count = cols if PROFILE_AXIS == "x" else rows
     axis.set_xlabel(dimension_label_with_pixels(axis_label, profile_pixel_count))
     axis.set_ylabel("Concentration (%)")
@@ -2132,7 +2239,6 @@ def draw_concentration_profile(axis, matrix, metadata):
             color=PROFILE_SPOT_SHADE_LABEL_COLOR,
         )
 
-
 def draw_net_flux(axis, transport_analysis, saved_step):
     if not transport_analysis:
         axis.text(
@@ -2179,6 +2285,8 @@ def draw_net_flux(axis, transport_analysis, saved_step):
         color=NET_FLUX_COLOR,
         linewidth=1.7,
         label="Net flux",
+        clip_on=False,
+        zorder=3,
     )
     axis.axhline(0, color="#505050", linewidth=0.8)
     axis.axvline(saved_step, color="#000000", linestyle="--", linewidth=1)
@@ -2200,6 +2308,16 @@ def match_side_panel_heights_to_main(fig, axes_by_panel):
             continue
         position = axis.get_position()
         axis.set_position([position.x0, main_position.y0, position.width, main_position.height])
+
+
+def apply_panel_typography(axis):
+    if PANEL_TITLE_FONT_SIZE is not None:
+        axis.title.set_fontsize(PANEL_TITLE_FONT_SIZE)
+    if AXIS_LABEL_FONT_SIZE is not None:
+        axis.xaxis.label.set_fontsize(AXIS_LABEL_FONT_SIZE)
+        axis.yaxis.label.set_fontsize(AXIS_LABEL_FONT_SIZE)
+    if TICK_LABEL_FONT_SIZE is not None:
+        axis.tick_params(axis="both", labelsize=TICK_LABEL_FONT_SIZE)
 
 
 def create_figure(
@@ -2244,6 +2362,9 @@ def create_figure(
             draw_concentration_profile(axis, matrix, metadata)
         elif panel_name == "flux":
             draw_net_flux(axis, transport_analysis, saved_step)
+
+    for axis in fig.axes:
+        apply_panel_typography(axis)
 
     if SHOW_FRAME_SUPTITLE:
         fig.suptitle(f"Saved Frame {frame_index}", fontsize=14)

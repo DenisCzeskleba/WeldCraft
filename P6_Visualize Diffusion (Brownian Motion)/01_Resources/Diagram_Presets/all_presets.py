@@ -21,6 +21,7 @@ BATCH_PRESET_ORDER = (
     "default",
     "two_regions_w_solubility",
     "simple_1_region_source_sink",
+    "simple_concentration_profile",
     "depletion_heatmap",
     "printer_friendly",
     "area_summary",
