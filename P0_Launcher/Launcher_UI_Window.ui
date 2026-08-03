@@ -123,7 +123,7 @@
             </sizepolicy>
            </property>
            <property name="text">
-            <string>Placeholder 1</string>
+            <string>Heat Map</string>
            </property>
           </widget>
          </item>
@@ -136,7 +136,7 @@
             </sizepolicy>
            </property>
            <property name="text">
-            <string>Placeholder 2</string>
+            <string>Reserved P4</string>
            </property>
           </widget>
          </item>
@@ -149,7 +149,7 @@
             </sizepolicy>
            </property>
            <property name="text">
-            <string>Placeholder 3</string>
+            <string>Lattice Visualizer</string>
            </property>
           </widget>
          </item>

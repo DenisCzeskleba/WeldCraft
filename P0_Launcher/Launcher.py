@@ -36,6 +36,8 @@ MAX_LAUNCH_SPLASH_SECONDS = 15.0
 SPLASH_TITLE_BASE = "Firing Up The Forges"
 SPLASH_TITLE_DOTS = [".", "..", "..."]
 SPLASH_STATUS_LAUNCHER = "WeldCraft Launcher"
+WORKSPACE_PYTHON = Path(r"F:\99_Virtual-Environments\02_WeldCraft\Scripts\python.exe")
+PYTHON_EXECUTABLE = str(WORKSPACE_PYTHON) if WORKSPACE_PYTHON.exists() else sys.executable
 
 if WINDOWS:
     USER32 = ctypes.windll.user32
@@ -207,6 +209,11 @@ class Launcher(QMainWindow):
             "Hydrogen Diffusion During Welding is code-only for now. Use the scripts directly; a GUI is planned "
             "later, but not confirmed yet."
         )
+        self.p3_heat_map_info = (
+            "Heat Map is a focused thermal welding simulator for manual heating calibration, temperature-trace "
+            "inspection, and annotated heat-map animations. It is also a practical smaller-scale example of the "
+            "thermal concepts used by the full P2 welding simulation."
+        )
         self.p6_diffusion_info = (
             "Visualize Diffusion (Brownian Motion) visualizes diffusion through Brownian motion. It currently "
             "needs to be launched separately via code; launcher/GUI support is in development."
@@ -224,6 +231,12 @@ class Launcher(QMainWindow):
             REPO_ROOT,
             "P5_Lattice_Visualizer",
             "visualize_lattice.py",
+        )
+        self.path_heat_map = os.path.join(
+            REPO_ROOT,
+            "P3_Heat Map",
+            "03_CodeBase",
+            "heat_map.py",
         )
 
         self.active_processes = {}
@@ -259,7 +272,7 @@ class Launcher(QMainWindow):
         )
 
         if not os.path.exists(py_file) or os.path.getmtime(ui_file) > os.path.getmtime(py_file):
-            subprocess.run([sys.executable, "-m", "PyQt5.uic.pyuic", "-x", ui_file, "-o", py_file], check=True)
+            subprocess.run([PYTHON_EXECUTABLE, "-m", "PyQt5.uic.pyuic", "-x", ui_file, "-o", py_file], check=True)
 
     def replace_buttons_with_hover_buttons(self):
         for button_name in SLOT_IDS:
@@ -317,19 +330,16 @@ class Launcher(QMainWindow):
                     self.start_hydrogen_during_welding,
                 ),
                 self.build_page_entry(
-                    "Placeholder 1",
-                    "Placeholder 1 (maybe Heat Map Simulation?): Write this later!",
-                    partial(
-                        self.show_placeholder_message,
-                        "Placeholder 1 (maybe Heat Map Simulation?): Write this later!",
-                    ),
+                    "Heat Map",
+                    self.p3_heat_map_info,
+                    self.start_heat_map,
                 ),
                 self.build_page_entry(
-                    "Placeholder 2",
-                    "Placeholder 2 (maybe Diffusion Visualization / Brownian Motion?): Write this later!",
+                    "Reserved P4",
+                    "P4 is reserved for a future WeldCraft module.",
                     partial(
                         self.show_placeholder_message,
-                        "Placeholder 2 (maybe Diffusion Visualization / Brownian Motion?): Write this later!",
+                        "P4 is reserved for a future WeldCraft module.",
                     ),
                 ),
                 self.build_page_entry(
@@ -468,7 +478,7 @@ class Launcher(QMainWindow):
             self.raise_()
             self.activateWindow()
 
-    def start_program(self, slot_id, program_args):
+    def start_program(self, slot_id, program_args, *, minimize_launcher=True, show_console=False):
         button = self.slot_buttons.get(slot_id)
         if not button or slot_id in self.active_processes:
             return
@@ -487,9 +497,15 @@ class Launcher(QMainWindow):
         environment[READY_FILE_ENV_VAR] = ready_file_path
 
         try:
-            command = [sys.executable] + program_args
+            command = [PYTHON_EXECUTABLE] + program_args
             working_directory = os.path.dirname(os.path.abspath(program_args[0])) if program_args else BASE_DIR
-            process = subprocess.Popen(command, cwd=working_directory, env=environment)
+            popen_options = {
+                "cwd": working_directory,
+                "env": environment,
+            }
+            if WINDOWS and show_console:
+                popen_options["creationflags"] = subprocess.CREATE_NEW_CONSOLE
+            process = subprocess.Popen(command, **popen_options)
         except Exception as exc:
             self.finish_launch_feedback(slot_id)
             button.setEnabled(True)
@@ -498,7 +514,8 @@ class Launcher(QMainWindow):
 
         self.active_processes[slot_id] = process
         self.pending_launches[slot_id]["process"] = process
-        self.minimize_for_child_launch()
+        if minimize_launcher:
+            self.minimize_for_child_launch()
         QTimer.singleShot(150, partial(self.monitor_program, slot_id, process))
 
     def finish_launch_feedback(self, slot_id):
@@ -582,6 +599,14 @@ class Launcher(QMainWindow):
     def start_hydrogen_during_welding(self):
         self.update_info_text(self.p2_hydrogen_info)
         print(self.p2_hydrogen_info)
+
+    def start_heat_map(self):
+        self.start_program(
+            "pushButton_slot_3",
+            [self.path_heat_map],
+            minimize_launcher=False,
+            show_console=True,
+        )
 
     def start_lattice_visualizer(self):
         self.start_program("pushButton_slot_5", [self.path_lattice_visualizer])

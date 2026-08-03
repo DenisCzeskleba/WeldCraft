@@ -10,6 +10,19 @@ This is a, work-in-progress release. It's meant to get started and provide a bas
 
 Until at least Q4 of 2026, this project will see constant updates, either here or on my local machine. Version 1.0 is expected by the end of Q4 2026.
 
+## Modules
+
+| Module | Name | Purpose |
+| --- | --- | --- |
+| P0 | WeldCraft Launcher | Starts launcher-enabled WeldCraft programs and provides module descriptions. |
+| P1 | Simulate Hydrogen Diffusion | Interactive 1D/2D hydrogen-diffusion and heat-transport simulation with numerical and animation tools. |
+| P2 | Hydrogen Diffusion During Welding | Full code-driven thermal and hydrogen-diffusion welding simulation, including thermal calibration workflows. |
+| P3 | Heat Map | Focused thermal-welding simulation for manual heating calibration, four-point temperature traces, animations, and a practical smaller-scale example of P2 thermal concepts. |
+| P4 | Reserved | Reserved for a future WeldCraft module. |
+| P5 | Lattice Visualizer | Interactive SC, BCC, and FCC lattice visualization with configurable dopants and overlays. |
+| P6 | Visualize Diffusion (Brownian Motion) | Code-driven lattice-scale diffusion visualization and analysis. |
+| P7 | Analysis Tools | Reserved collection for additional WeldCraft analysis utilities. |
+
 ## License
 
 This repository is licensed under the MIT License. 
@@ -24,7 +37,8 @@ For more information, see the [LICENSE](LICENSE) file.
 
 If you like and use this software, please cite the specific version you used.
 
-**WeldCraft v0.4.0**  
+**WeldCraft v0.4.1**
+
 DOI: https://doi.org/10.5281/zenodo.18451838
 
 The Zenodo record provides ready-to-import citation formats

@@ -1,0 +1,17 @@
+# Earlier development iterations and scratch notes are preserved locally only.
+/00_Development_Archive/
+
+# Measurement inputs and workbooks are local only.
+/01_Resources/*
+!/01_Resources/.gitkeep
+
+# Generated datasets, figures, and animations are local only.
+/02_Results/*
+!/02_Results/.gitkeep
+
+# Runtime artifacts.
+__pycache__/
+*.py[cod]
+*.h5
+*.hdf5
+*.mp4
