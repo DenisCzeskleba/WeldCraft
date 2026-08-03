@@ -145,27 +145,29 @@ It separately smooths the local H count and the local available-site count and t
 
 ```text
 smoothed local occupancy = smoothed H count / smoothed available-site count
-displayed deviation = smoothed local occupancy - bulk reference occupancy
+displayed change = smoothed local occupancy - ideal initial-setup occupancy
 ```
 
 This order matters when the spot and bulk have different solubilities. Smoothing the red/blue matrix
 values directly would mix site density with H occupancy and create a misleading edge.
 
-By default, blue means fewer occupied available sites than the corresponding bulk reference, white
-means approximately the bulk value, and red means more. The A and B bulk references are calculated
-after excluding the exact spot and trap masks, so a movable or partly overlapping spot cannot
-contaminate either reference. Smoothing is also performed independently across special-area boundaries;
-an empty high-solubility spot therefore does not manufacture a blue halo merely by being averaged into
-the surrounding bulk. A halo outside the dashed spot outline comes from the saved simulation result.
+By default, blue means the saved occupancy is below the configured ideal initial setup, white means
+approximately unchanged, and red means above it. Smoothing is performed independently across
+special-area boundaries, so an empty high-solubility spot does not manufacture a blue halo merely by
+being averaged into the surrounding bulk. A halo outside the dashed spot outline comes from the saved
+simulation result.
 
 The main controls in `depletion_heatmap.py` are:
 
 ```python
 HEATMAP_SIGMA = 28.0                 # Spatial smoothing radius in matrix cells
-HEATMAP_DEVIATION_LIMIT = 20.0       # Symmetric colour range in percentage points
-HEATMAP_MODE = "deviation"           # Or "occupancy" for absolute local occupancy
+HEATMAP_DEVIATION_RANGE = (-20.0, 20.0)  # Lower/upper percentage-point limits
+HEATMAP_MODE = "change_from_initial_setup"
 HEATMAP_REFERENCE_MODE = "regional_bulk"  # Or "global_bulk"
 ```
+
+The lower and upper limits may be asymmetric, for example `(-10.0, 40.0)`. Zero remains mapped to
+the neutral centre colour.
 
 The heatmap is a derived view, not an additional physical field and not a change to the movement
 model. Fine spatial detail below the smoothing scale is deliberately suppressed.

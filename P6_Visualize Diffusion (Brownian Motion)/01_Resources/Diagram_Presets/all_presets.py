@@ -29,4 +29,5 @@ BATCH_PRESET_ORDER = (
     "area_summary",
     "chapter_2_3_brown_overview",
     "area_summary_transient",
+    "full_sized_1_region",
 )

@@ -15,7 +15,7 @@ import h5py
 import matplotlib.pyplot as plt
 import matplotlib.patheffects as path_effects
 import numpy as np
-from matplotlib.colors import BoundaryNorm, ListedColormap
+from matplotlib.colors import BoundaryNorm, ListedColormap, TwoSlopeNorm
 from matplotlib.patches import Circle, Rectangle, Wedge
 
 with contextlib.redirect_stdout(io.StringIO()):
@@ -34,8 +34,8 @@ with contextlib.redirect_stdout(io.StringIO()):
 # ---------------------- Input Snapshot ---------------------- #
 # Used by ordinary presets. The special "all_presets" mode instead always uses
 # 02_Results/Examples/published_examples_source.h5 for reproducible public examples.
-INPUT_H5_FILENAME = ("O2 V2 narrower version but short time wise.h5")
-SNAPSHOT_INDEX = -1  # HDF5 saved-frame index to plot; -1 means the last saved frame, 0 means first saved frame.
+INPUT_H5_FILENAME = ("random_motion.h5")
+SNAPSHOT_INDEX = 75  # HDF5 saved-frame index to plot; -1 means the last saved frame, 0 means first saved frame.
 
 
 # ---------------------- Output ---------------------- #
@@ -56,6 +56,7 @@ SAVE_DPI = 300
 #   "all_presets"                           - Render every preset from Examples/published_examples_source.h5 into Examples.
 #   "two_regions_w_solubility"              - Pixel matrix emphasizing both regions and solubilities.
 #   "simple_1_region_source_sink"           - Pixel matrix configured for a single-region source/sink view.
+#   "full_sized_1_region"                   - A4-landscape single-region matrix with appendix annotations.
 #   "simple_1_region_source_with_heatmap"   - Purple source/sink matrix paired with the difference heatmap.
 #   "simple_concentration_profile"          - Saved concentration profile without matrix or flux panels.
 #   "concentration_profile_with_heatmap"    - Clean concentration profile paired with the difference heatmap.
@@ -66,7 +67,7 @@ SAVE_DPI = 300
 #   "area_summary_transient"                - Stylized non-overlapping dots using measured area averages, with transient x-profile.
 # When adding a preset, also add it to BATCH_PRESET_ORDER in the "all_presets"
 # preset file. Treat existing entries as append-only to keep public numbering stable.
-DIAGRAM_PRESET = "simple_1_region_source_with_heatmap"  # File stem in 01_Resources/Diagram_Presets.
+DIAGRAM_PRESET = "full_sized_1_region"  # File stem in 01_Resources/Diagram_Presets.
 
 REQUIRED_DIAGRAM_PRESET_KEYS = [
     "PRESET_NAME",
@@ -130,10 +131,13 @@ OPTIONAL_DIAGRAM_PRESET_DEFAULTS = {
     "SITE_STATE_LEGEND_FONT_SIZE": 18,
     "SITE_STATE_LEGEND_MARKER_AREA": 128,
     # Smoothed concentration-map settings.
-    "HEATMAP_MODE": "deviation",  # Options: "deviation", "occupancy"
+    # Options: "deviation", "occupancy", "change_from_initial",
+    # "change_from_initial_setup".
+    "HEATMAP_MODE": "deviation",
+    "HEATMAP_BASELINE_SNAPSHOT_INDEX": 0,
     "HEATMAP_SIGMA": 18.0,
     "HEATMAP_COLORMAP": "RdBu_r",
-    "HEATMAP_DEVIATION_LIMIT": 20.0,
+    "HEATMAP_DEVIATION_RANGE": (-20.0, 20.0),
     "HEATMAP_OCCUPANCY_RANGE": (0.0, 100.0),
     "HEATMAP_REFERENCE_MODE": "regional_bulk",  # Options: "regional_bulk", "global_bulk"
     "HEATMAP_RESPECT_AREA_BOUNDARIES": True,
@@ -143,6 +147,9 @@ OPTIONAL_DIAGRAM_PRESET_DEFAULTS = {
     "HEATMAP_CONTOUR_COLOR": "#303030",
     "HEATMAP_CONTOUR_ALPHA": 0.35,
     "HEATMAP_SHOW_COLORBAR": True,
+    "HEATMAP_COLORBAR_ORIENTATION": "vertical",  # Options: "vertical", "horizontal"
+    "HEATMAP_COLORBAR_LABEL": None,  # None selects the mode-specific default.
+    "HEATMAP_HORIZONTAL_COLORBAR_TICK_COUNT": 5,
     # Printer-friendly, spatially binned occupancy glyphs.
     "GLYPH_BIN_SIZE": 32,
     "GLYPH_MIN_RADIUS_FRACTION": 0.38,
@@ -208,6 +215,14 @@ OPTIONAL_DIAGRAM_PRESET_DEFAULTS = {
     "SPOT_REGION_OUTLINE_COLOR": "#202020",
     "SPOT_REGION_OUTLINE_WIDTH": 1.2,
     "SPOT_REGION_OUTLINE_STYLE": "--",
+    "SHOW_BULK_ANNOTATION": False,
+    "BULK_ANNOTATION_LABEL": "Bulk Average",
+    "BULK_ANNOTATION_POSITION": (0.25, 0.90),
+    "SPOT_ANNOTATION_LABEL": "Spot Concentration",
+    "SPOT_ANNOTATION_VERTICAL_OFFSET_SCALE": 0.90,
+    "SHOW_BULK_SOLUBILITY_IN_ANNOTATION": False,
+    "SHOW_SPOT_SOLUBILITY_IN_ANNOTATION": False,
+    "CUSTOM_TEXT_ANNOTATIONS": (),
     "ANNOTATION_STROKE_COLOR": "#000000",
     "ANNOTATION_STROKE_WIDTH": 2.5,
     "ANNOTATION_BOX_ENABLED": False,
@@ -350,6 +365,25 @@ def load_snapshot_and_context(h5_path, requested_frame_index):
     print(f"Plotting saved-frame index {frame_index}, simulation step {saved_step}")
 
     return matrix, saved_step, frame_index, metadata, transport_analysis
+
+
+def load_heatmap_baseline_matrix(h5_path):
+    """Load the configured comparison snapshot only when the preset needs it."""
+    if HEATMAP_MODE != "change_from_initial":
+        return None
+
+    with h5py.File(h5_path, "r") as hf:
+        if "snapshots" not in hf:
+            raise RuntimeError(f"No 'snapshots' dataset found in {h5_path}")
+        snapshots = hf["snapshots"]
+        baseline_index = normalize_frame_index(
+            HEATMAP_BASELINE_SNAPSHOT_INDEX,
+            snapshots.shape[0],
+        )
+        baseline_matrix = snapshots[baseline_index]
+
+    print(f"Heatmap comparison baseline: saved-frame index {baseline_index}")
+    return baseline_matrix
 
 
 def concentration_percent(matrix, mask):
@@ -629,21 +663,23 @@ def draw_special_region_outlines(axis, matrix_shape, metadata):
         ))
 
 
-def compute_smoothed_occupancy_field(matrix, metadata):
-    """Smooth H/site counts, optionally without bleeding across material boundaries."""
+def compute_smoothed_fraction_field(numerator, active, metadata):
+    """Smooth numerator/active fields without bleeding across material boundaries."""
     from scipy.ndimage import gaussian_filter
 
     sigma = max(0.0, float(HEATMAP_SIGMA))
-    hydrogen = (matrix == 2).astype(np.float32)
-    active = (matrix > 0).astype(np.float32)
-    occupancy = np.full(matrix.shape, np.nan, dtype=np.float32)
+    numerator = np.asarray(numerator, dtype=np.float32)
+    active = np.asarray(active, dtype=np.float32)
+    if numerator.shape != active.shape:
+        raise ValueError("Smoothed heatmap numerator and active fields must match")
+    occupancy = np.full(active.shape, np.nan, dtype=np.float32)
 
     if HEATMAP_RESPECT_AREA_BOUNDARIES:
-        areas = build_visualization_area_masks(matrix.shape, metadata)
+        areas = build_visualization_area_masks(active.shape, metadata)
         if HEATMAP_SEPARATE_BASE_AREAS:
             area_masks = list(areas.values())
         else:
-            bulk_mask = np.zeros(matrix.shape, dtype=bool)
+            bulk_mask = np.zeros(active.shape, dtype=bool)
             area_masks = []
             for name, area_mask in areas.items():
                 if name in {"Area A", "Area B"}:
@@ -653,22 +689,122 @@ def compute_smoothed_occupancy_field(matrix, metadata):
             if np.any(bulk_mask):
                 area_masks.insert(0, bulk_mask)
     else:
-        area_masks = [np.ones(matrix.shape, dtype=bool)]
+        area_masks = [np.ones(active.shape, dtype=bool)]
 
     for area_mask in area_masks:
-        masked_hydrogen = hydrogen * area_mask
+        masked_numerator = numerator * area_mask
         masked_active = active * area_mask
         if sigma > 0:
-            local_hydrogen = gaussian_filter(masked_hydrogen, sigma=sigma, mode="reflect")
+            local_numerator = gaussian_filter(
+                masked_numerator,
+                sigma=sigma,
+                mode="reflect",
+            )
             local_active = gaussian_filter(masked_active, sigma=sigma, mode="reflect")
         else:
-            local_hydrogen = masked_hydrogen
+            local_numerator = masked_numerator
             local_active = masked_active
 
         valid = area_mask & (local_active > 1e-7)
-        occupancy[valid] = local_hydrogen[valid] / local_active[valid]
+        occupancy[valid] = local_numerator[valid] / local_active[valid]
 
     return occupancy
+
+
+def compute_smoothed_occupancy_field(matrix, metadata):
+    """Smooth H/site counts, optionally without bleeding across material boundaries."""
+    return compute_smoothed_fraction_field(
+        matrix == 2,
+        matrix > 0,
+        metadata,
+    )
+
+
+def initial_setup_percentage(metadata, key):
+    """Return one validated initial concentration metadata value as a fraction."""
+    percentage = float(metadata[key])
+    if not np.isfinite(percentage) or percentage < 0 or percentage > 100:
+        raise ValueError(f"{key} must be between 0 and 100")
+    return percentage / 100.0
+
+
+def initial_setup_profile(metadata, key):
+    """Return one validated two-endpoint initial profile as fractions."""
+    profile = metadata[key]
+    if not isinstance(profile, (tuple, list, np.ndarray)) or len(profile) != 2:
+        raise ValueError(f"{key} must contain two percentages")
+    values = np.asarray(profile, dtype=np.float64)
+    if np.any(~np.isfinite(values)) or np.any(values < 0) or np.any(values > 100):
+        raise ValueError(f"{key} percentages must be between 0 and 100")
+    return values / 100.0
+
+
+def compute_initial_setup_reference_field(matrix, metadata):
+    """Return the ideal configured step-0 occupancy on the saved lattice geometry."""
+    rows, cols = matrix.shape
+    mid_x = cols // 2
+    expected_probability = np.empty(matrix.shape, dtype=np.float32)
+
+    if metadata_bool(metadata, "USE_INITIAL_CONCENTRATION_PROFILE"):
+        profile_a = initial_setup_profile(metadata, "concentration_profile_a")
+        profile_b = initial_setup_profile(metadata, "concentration_profile_b")
+        expected_probability[:, :mid_x] = np.linspace(
+            profile_a[0],
+            profile_a[1],
+            mid_x,
+            dtype=np.float32,
+        )
+        expected_probability[:, mid_x:] = np.linspace(
+            profile_b[0],
+            profile_b[1],
+            cols - mid_x,
+            dtype=np.float32,
+        )
+    else:
+        expected_probability[:, :mid_x] = initial_setup_percentage(
+            metadata,
+            "concentration_a",
+        )
+        expected_probability[:, mid_x:] = initial_setup_percentage(
+            metadata,
+            "concentration_b",
+        )
+
+    if metadata_bool(metadata, "USE_SINK_SOURCE"):
+        thickness = int(metadata.get(
+            "sink_source_thickness_used",
+            metadata_int(metadata, "SINK_SOURCE_THICKNESS"),
+        ))
+        thickness = int(np.clip(thickness, 0, cols // 2))
+        if thickness:
+            if metadata_str(metadata, "SOURCE_SIDE") == "left":
+                expected_probability[:, :thickness] = 1.0
+                expected_probability[:, -thickness:] = 0.0
+            else:
+                expected_probability[:, :thickness] = 0.0
+                expected_probability[:, -thickness:] = 1.0
+
+    trap_mask = get_trap_layer_mask(matrix.shape, metadata)
+    if trap_mask is not None:
+        expected_probability[trap_mask] = initial_setup_percentage(
+            metadata,
+            "concentration_trap_layer",
+        )
+
+    spot_mask = get_spot_mask(matrix.shape, metadata)
+    if spot_mask is not None:
+        expected_probability[spot_mask] = initial_setup_percentage(
+            metadata,
+            "concentration_spot",
+        )
+
+    active = matrix > 0
+    expected_hydrogen = active * expected_probability
+    return compute_smoothed_fraction_field(
+        expected_hydrogen,
+        active,
+        metadata,
+    )
 
 
 def compute_bulk_reference_field(matrix, metadata):
@@ -708,32 +844,86 @@ def compute_bulk_reference_field(matrix, metadata):
     return reference, references
 
 
-def draw_concentration_heatmap(axis, matrix, metadata):
+def validated_heatmap_deviation_range():
+    """Return finite lower/upper bounds that strictly bracket neutral zero."""
+    values = HEATMAP_DEVIATION_RANGE
+    if not isinstance(values, (tuple, list, np.ndarray)) or len(values) != 2:
+        raise ValueError(
+            "HEATMAP_DEVIATION_RANGE must contain (lower_limit, upper_limit)"
+        )
+    lower_limit, upper_limit = map(float, values)
+    if (
+        not np.isfinite(lower_limit)
+        or not np.isfinite(upper_limit)
+        or not lower_limit < 0 < upper_limit
+    ):
+        raise ValueError(
+            "HEATMAP_DEVIATION_RANGE must contain finite limits with "
+            "lower_limit < 0 < upper_limit"
+        )
+    return lower_limit, upper_limit
+
+
+def draw_concentration_heatmap(axis, matrix, metadata, baseline_matrix=None):
     occupancy = compute_smoothed_occupancy_field(matrix, metadata)
-    reference, references = compute_bulk_reference_field(matrix, metadata)
+    references = None
+    color_normalization = None
 
     if HEATMAP_MODE == "deviation":
+        reference, references = compute_bulk_reference_field(matrix, metadata)
         displayed = (occupancy - reference) * 100
-        limit = max(0.1, float(HEATMAP_DEVIATION_LIMIT))
-        vmin, vmax = -limit, limit
+        vmin, vmax = validated_heatmap_deviation_range()
+        color_normalization = TwoSlopeNorm(vmin=vmin, vcenter=0.0, vmax=vmax)
         colorbar_label = "Local occupancy minus bulk reference (percentage points)"
     elif HEATMAP_MODE == "occupancy":
+        _, references = compute_bulk_reference_field(matrix, metadata)
         displayed = occupancy * 100
         vmin, vmax = map(float, HEATMAP_OCCUPANCY_RANGE)
         colorbar_label = "Smoothed local H occupancy (%)"
+    elif HEATMAP_MODE == "change_from_initial":
+        if baseline_matrix is None:
+            raise ValueError(
+                "HEATMAP_MODE='change_from_initial' requires a baseline matrix"
+            )
+        if baseline_matrix.shape != matrix.shape:
+            raise ValueError(
+                "Heatmap baseline matrix must have the same shape as the snapshot"
+            )
+        baseline_occupancy = compute_smoothed_occupancy_field(
+            baseline_matrix,
+            metadata,
+        )
+        displayed = (occupancy - baseline_occupancy) * 100
+        vmin, vmax = validated_heatmap_deviation_range()
+        color_normalization = TwoSlopeNorm(vmin=vmin, vcenter=0.0, vmax=vmax)
+        colorbar_label = "ΔH since step 0 (percentage points)"
+    elif HEATMAP_MODE == "change_from_initial_setup":
+        initial_setup = compute_initial_setup_reference_field(matrix, metadata)
+        displayed = (occupancy - initial_setup) * 100
+        vmin, vmax = validated_heatmap_deviation_range()
+        color_normalization = TwoSlopeNorm(vmin=vmin, vcenter=0.0, vmax=vmax)
+        colorbar_label = "ΔH vs. setup (percentage points)"
     else:
-        raise ValueError("HEATMAP_MODE must be 'deviation' or 'occupancy'")
+        raise ValueError(
+            "HEATMAP_MODE must be 'deviation', 'occupancy', "
+            "'change_from_initial', or 'change_from_initial_setup'"
+        )
+
+    if HEATMAP_COLORBAR_LABEL is not None:
+        colorbar_label = str(HEATMAP_COLORBAR_LABEL)
 
     colormap = plt.get_cmap(HEATMAP_COLORMAP).copy()
     colormap.set_bad(COLOR_EMPTY)
-    image = axis.imshow(
-        np.ma.masked_invalid(displayed),
-        origin="lower",
-        interpolation="bilinear",
-        cmap=colormap,
-        vmin=vmin,
-        vmax=vmax,
-    )
+    image_options = {
+        "origin": "lower",
+        "interpolation": "bilinear",
+        "cmap": colormap,
+    }
+    if color_normalization is None:
+        image_options.update({"vmin": vmin, "vmax": vmax})
+    else:
+        image_options["norm"] = color_normalization
+    image = axis.imshow(np.ma.masked_invalid(displayed), **image_options)
 
     if HEATMAP_SHOW_CONTOURS:
         levels = [
@@ -752,25 +942,86 @@ def draw_concentration_heatmap(axis, matrix, metadata):
             )
 
     if HEATMAP_SHOW_COLORBAR:
-        colorbar = axis.figure.colorbar(image, ax=axis, pad=0.02, fraction=0.046)
+        colorbar_orientation = str(HEATMAP_COLORBAR_ORIENTATION)
+        if colorbar_orientation not in {"vertical", "horizontal"}:
+            raise ValueError(
+                "HEATMAP_COLORBAR_ORIENTATION must be 'vertical' or 'horizontal'"
+            )
+        if colorbar_orientation == "horizontal":
+            from mpl_toolkits.axes_grid1 import make_axes_locatable
+
+            divider = make_axes_locatable(axis)
+            colorbar_axis = divider.append_axes("bottom", size="6%", pad=0.75)
+            colorbar = axis.figure.colorbar(
+                image,
+                cax=colorbar_axis,
+                orientation="horizontal",
+            )
+        else:
+            colorbar = axis.figure.colorbar(
+                image,
+                ax=axis,
+                orientation="vertical",
+                pad=0.02,
+                fraction=0.046,
+            )
+        if colorbar_orientation == "horizontal" and vmin < 0 < vmax:
+            tick_count = int(HEATMAP_HORIZONTAL_COLORBAR_TICK_COUNT)
+            if tick_count < 3 or tick_count % 2 == 0:
+                raise ValueError(
+                    "HEATMAP_HORIZONTAL_COLORBAR_TICK_COUNT must be an odd "
+                    "integer of at least 3"
+                )
+            ticks_per_side = (tick_count - 1) // 2
+            # TwoSlopeNorm gives each side half of the bar, so independently
+            # dividing both halves produces evenly spaced visual ticks even
+            # when the numeric limits are asymmetric.
+            colorbar_ticks = np.concatenate([
+                np.linspace(vmin, 0.0, ticks_per_side + 1),
+                np.linspace(0.0, vmax, ticks_per_side + 1)[1:],
+            ])
+        else:
+            automatic_ticks = np.asarray(colorbar.get_ticks(), dtype=np.float64)
+            interior_ticks = automatic_ticks[
+                (automatic_ticks > vmin) & (automatic_ticks < vmax)
+            ]
+            required_ticks = [vmin, vmax]
+            if vmin < 0 < vmax:
+                required_ticks.append(0.0)
+            colorbar_ticks = np.unique(np.concatenate([
+                interior_ticks,
+                np.asarray(required_ticks, dtype=np.float64),
+            ]))
+        colorbar.set_ticks(colorbar_ticks)
+        if colorbar_orientation == "horizontal":
+            from matplotlib.ticker import FuncFormatter
+
+            colorbar.ax.xaxis.set_major_formatter(FuncFormatter(
+                lambda value, _: (
+                    f"{int(round(value))}"
+                    if np.isclose(value, round(value), atol=1e-9)
+                    else f"{value:.1f}"
+                )
+            ))
         colorbar.set_label(colorbar_label)
 
-    reference_text = ", ".join(
-        f"{name}: {value * 100:.1f}%"
-        for name, value in references.items()
-    )
-    axis.text(
-        0.01,
-        0.02,
-        f"Reference occupancy — {reference_text}",
-        transform=axis.transAxes,
-        ha="left",
-        va="bottom",
-        fontsize=8.5,
-        color="#202020",
-        bbox={"facecolor": "#FFFFFF", "edgecolor": "#707070", "alpha": 0.88, "pad": 3},
-        zorder=9,
-    )
+    if references:
+        reference_text = ", ".join(
+            f"{name}: {value * 100:.1f}%"
+            for name, value in references.items()
+        )
+        axis.text(
+            0.01,
+            0.02,
+            f"Reference occupancy — {reference_text}",
+            transform=axis.transAxes,
+            ha="left",
+            va="bottom",
+            fontsize=8.5,
+            color="#202020",
+            bbox={"facecolor": "#FFFFFF", "edgecolor": "#707070", "alpha": 0.88, "pad": 3},
+            zorder=9,
+        )
 
 
 def draw_printer_glyphs(axis, matrix, metadata):
@@ -1158,6 +1409,20 @@ def create_mask_cluster_centers(mask, rng):
     ])
 
 
+def apply_outer_position_inset(mask, inset):
+    """Inset only the matrix border, preserving internal spot/trap boundaries."""
+    inset = max(0, int(inset))
+    if inset == 0:
+        return mask
+
+    inset_mask = mask.copy()
+    inset_mask[:inset, :] = False
+    inset_mask[-inset:, :] = False
+    inset_mask[:, :inset] = False
+    inset_mask[:, -inset:] = False
+    return inset_mask if np.any(inset_mask) else mask
+
+
 def shake_even_positions(
     x_coordinates,
     y_coordinates,
@@ -1261,7 +1526,10 @@ def shake_even_positions(
                     or candidate_y >= mask.shape[0]
                     or not mask[candidate_y, candidate_x]
                 ):
-                    continue
+                    # Trying fresh random directions until one succeeds creates
+                    # a systematic drift away from holes such as a spot. Keep
+                    # the current valid position when a move hits a boundary.
+                    break
 
                 candidate_cell = cell_for(candidate)
                 is_clear = True
@@ -1555,8 +1823,6 @@ def prepare_combined_base_cluster_positions(
 
 def draw_area_summary_dots(axis, matrix, metadata, shake_mode=None):
     """Reconstruct area averages as a clean randomized dot field in matrix space."""
-    from scipy.ndimage import binary_erosion
-
     rows, cols = matrix.shape
     axis.set_facecolor(AREA_SUMMARY_BACKGROUND_COLOR)
     masks, source_sink_ranges = build_stylized_area_masks(matrix.shape, metadata)
@@ -1625,13 +1891,10 @@ def draw_area_summary_dots(axis, matrix, metadata, shake_mode=None):
             combined_base_mask |= masks[base_area_name]
     combined_base_position_mask = combined_base_mask
     if position_inset:
-        inset_combined_mask = binary_erosion(
+        combined_base_position_mask = apply_outer_position_inset(
             combined_base_mask,
-            iterations=position_inset,
-            border_value=0,
+            position_inset,
         )
-        if np.any(inset_combined_mask):
-            combined_base_position_mask = inset_combined_mask
 
     shared_base_cluster_centers = None
     if resolved_shake_mode == "clustered" and cluster_scope == "combined_a_b":
@@ -1669,12 +1932,10 @@ def draw_area_summary_dots(axis, matrix, metadata, shake_mode=None):
         if name in {"Area A", "Area B"}:
             position_mask = combined_base_position_mask & mask
         elif position_inset:
-            inset_mask = binary_erosion(
+            position_mask = apply_outer_position_inset(
                 mask,
-                iterations=position_inset,
-                border_value=0,
+                position_inset,
             )
-            position_mask = inset_mask if np.any(inset_mask) else mask
         else:
             position_mask = mask
         candidate_pixels = np.flatnonzero(position_mask)
@@ -1897,6 +2158,24 @@ def max_solubility_for_x(metadata, x_position, matrix_width):
     return value_to_percent(metadata[key])
 
 
+def formatted_percentage(value):
+    """Format an annotation percentage compactly without losing useful precision."""
+    return f"{float(value):.3g}%"
+
+
+def bulk_solubility_annotation(metadata):
+    """Describe one shared bulk solubility, or both A/B values when they differ."""
+    solubility_a = value_to_percent(metadata["max_sol_a"])
+    solubility_b = value_to_percent(metadata["max_sol_b"])
+    if np.isclose(solubility_a, solubility_b):
+        return f"Bulk Solubility: {formatted_percentage(solubility_a)}"
+    return (
+        "Bulk Solubility: "
+        f"A {formatted_percentage(solubility_a)}, "
+        f"B {formatted_percentage(solubility_b)}"
+    )
+
+
 def build_annotation_regions(matrix_shape, metadata):
     rows, cols = matrix_shape
     mid_x = cols // 2
@@ -1906,6 +2185,30 @@ def build_annotation_regions(matrix_shape, metadata):
     source_side = metadata_str(metadata, "SOURCE_SIDE")
     bulk_left_x = sink_source_thickness if use_sink_source else 0
     bulk_right_x = cols - sink_source_thickness if use_sink_source else cols
+
+    if SHOW_BULK_ANNOTATION:
+        position = np.asarray(BULK_ANNOTATION_POSITION, dtype=np.float64)
+        if position.shape != (2,) or np.any(~np.isfinite(position)):
+            raise ValueError(
+                "BULK_ANNOTATION_POSITION must contain two finite fractions"
+            )
+        bulk_region = {
+            "name": str(BULK_ANNOTATION_LABEL),
+            "mask": rectangle_mask(
+                matrix_shape,
+                bulk_left_x,
+                bulk_right_x,
+            ),
+            "xy": (
+                cols * float(position[0]),
+                rows * float(position[1]),
+            ),
+        }
+        if SHOW_BULK_SOLUBILITY_IN_ANNOTATION:
+            bulk_region["extra_lines"] = [
+                bulk_solubility_annotation(metadata),
+            ]
+        regions.append(bulk_region)
 
     if SHOW_LEFT_RIGHT_ANNOTATIONS:
         regions.extend([
@@ -2007,16 +2310,64 @@ def build_annotation_regions(matrix_shape, metadata):
         })
 
     if SHOW_SPOT_ANNOTATION and spot_settings is not None:
-        regions.append({
-            "name": "Spot Concentration",
+        spot_region = {
+            "name": str(SPOT_ANNOTATION_LABEL),
             "mask": spot_mask,
             "xy": (
                 spot_settings["center_x"],
-                spot_settings["center_y"] + spot_settings["diameter"] * 0.9,
+                spot_settings["center_y"]
+                + spot_settings["diameter"]
+                * float(SPOT_ANNOTATION_VERTICAL_OFFSET_SCALE),
             ),
-        })
+        }
+        if SHOW_SPOT_SOLUBILITY_IN_ANNOTATION:
+            spot_region["extra_lines"] = [
+                "Spot Solubility: "
+                f"{formatted_percentage(value_to_percent(metadata['max_sol_spot']))}",
+            ]
+        regions.append(spot_region)
 
     return regions
+
+
+def draw_styled_annotation(
+    axis,
+    text,
+    xy,
+    *,
+    transform=None,
+    fontsize=None,
+    horizontal_alignment="center",
+    vertical_alignment="center",
+):
+    """Draw one consistently styled matrix annotation."""
+    text_options = {
+        "color": ANNOTATION_COLOR,
+        "fontsize": ANNOTATION_FONT_SIZE if fontsize is None else fontsize,
+        "ha": horizontal_alignment,
+        "va": vertical_alignment,
+        "bbox": (
+            {
+                "facecolor": ANNOTATION_BOX_FACE_COLOR,
+                "edgecolor": ANNOTATION_BOX_EDGE_COLOR,
+                "alpha": ANNOTATION_BOX_ALPHA,
+                "pad": 2.5,
+            }
+            if ANNOTATION_BOX_ENABLED
+            else None
+        ),
+        "zorder": 9,
+    }
+    if transform is not None:
+        text_options["transform"] = transform
+    label = axis.text(xy[0], xy[1], text, **text_options)
+    label.set_path_effects([
+        path_effects.withStroke(
+            linewidth=ANNOTATION_STROKE_WIDTH,
+            foreground=ANNOTATION_STROKE_COLOR,
+        )
+    ])
+    return label
 
 
 def draw_site_state_legend(axis):
@@ -2051,7 +2402,14 @@ def draw_site_state_legend(axis):
     legend.set_zorder(10)
 
 
-def draw_main_panel(axis, matrix, saved_step, metadata, area_summary_shake_mode=None):
+def draw_main_panel(
+    axis,
+    matrix,
+    saved_step,
+    metadata,
+    area_summary_shake_mode=None,
+    heatmap_baseline_matrix=None,
+):
     rows, cols = matrix.shape
 
     draw_special_region_backgrounds(axis, metadata)
@@ -2083,7 +2441,12 @@ def draw_main_panel(axis, matrix, saved_step, metadata, area_summary_shake_mode=
             edgecolors="none",
         )
     elif RENDER_MODE == "concentration_heatmap":
-        draw_concentration_heatmap(axis, matrix, metadata)
+        draw_concentration_heatmap(
+            axis,
+            matrix,
+            metadata,
+            baseline_matrix=heatmap_baseline_matrix,
+        )
     elif RENDER_MODE == "printer_glyphs":
         draw_printer_glyphs(axis, matrix, metadata)
     elif RENDER_MODE == "area_summary_dots":
@@ -2129,31 +2492,29 @@ def draw_main_panel(axis, matrix, saved_step, metadata, area_summary_shake_mode=
                 text = f"{region['name']}: {concentration:.1f}%"
             if "max_solubility" in region:
                 text = f"{text}\nMax. Solubility: {region['max_solubility']:.0f}%"
-            label = axis.text(
-                region["xy"][0],
-                region["xy"][1],
-                text,
-                color=ANNOTATION_COLOR,
-                fontsize=ANNOTATION_FONT_SIZE,
-                ha="center",
-                va="center",
-                bbox=(
-                    {
-                        "facecolor": ANNOTATION_BOX_FACE_COLOR,
-                        "edgecolor": ANNOTATION_BOX_EDGE_COLOR,
-                        "alpha": ANNOTATION_BOX_ALPHA,
-                        "pad": 2.5,
-                    }
-                    if ANNOTATION_BOX_ENABLED
-                    else None
-                ),
+            if region.get("extra_lines"):
+                text = "\n".join([text, *map(str, region["extra_lines"])])
+            draw_styled_annotation(axis, text, region["xy"])
+
+    for custom_annotation in CUSTOM_TEXT_ANNOTATIONS:
+        xy_fraction = np.asarray(
+            custom_annotation["xy_fraction"],
+            dtype=np.float64,
+        )
+        if xy_fraction.shape != (2,) or np.any(~np.isfinite(xy_fraction)):
+            raise ValueError(
+                "Each CUSTOM_TEXT_ANNOTATIONS xy_fraction must contain "
+                "two finite values"
             )
-            label.set_path_effects([
-                path_effects.withStroke(
-                    linewidth=ANNOTATION_STROKE_WIDTH,
-                    foreground=ANNOTATION_STROKE_COLOR,
-                )
-            ])
+        draw_styled_annotation(
+            axis,
+            str(custom_annotation["text"]),
+            tuple(xy_fraction),
+            transform=axis.transAxes,
+            fontsize=custom_annotation.get("fontsize"),
+            horizontal_alignment=custom_annotation.get("ha", "center"),
+            vertical_alignment=custom_annotation.get("va", "center"),
+        )
 
     if SHOW_LEGEND and SHOW_SITE_STATE_LEGEND:
         draw_site_state_legend(axis)
@@ -2244,9 +2605,14 @@ def draw_concentration_profile(axis, matrix, metadata):
         )
 
 
-def draw_heatmap_panel(axis, matrix, metadata):
+def draw_heatmap_panel(axis, matrix, metadata, baseline_matrix=None):
     rows, cols = matrix.shape
-    draw_concentration_heatmap(axis, matrix, metadata)
+    draw_concentration_heatmap(
+        axis,
+        matrix,
+        metadata,
+        baseline_matrix=baseline_matrix,
+    )
     draw_special_region_outlines(axis, matrix.shape, metadata)
     axis.set_xlim(-0.5, cols - 0.5)
     axis.set_ylim(-0.5, rows - 0.5)
@@ -2345,6 +2711,7 @@ def create_figure(
     metadata,
     transport_analysis,
     area_summary_shake_mode=None,
+    heatmap_baseline_matrix=None,
 ):
     panels = []
     if SHOW_MAIN_PANEL:
@@ -2377,11 +2744,17 @@ def create_figure(
                 saved_step,
                 metadata,
                 area_summary_shake_mode=area_summary_shake_mode,
+                heatmap_baseline_matrix=heatmap_baseline_matrix,
             )
         elif panel_name == "profile":
             draw_concentration_profile(axis, matrix, metadata)
         elif panel_name == "heatmap":
-            draw_heatmap_panel(axis, matrix, metadata)
+            draw_heatmap_panel(
+                axis,
+                matrix,
+                metadata,
+                baseline_matrix=heatmap_baseline_matrix,
+            )
         elif panel_name == "flux":
             draw_net_flux(axis, transport_analysis, saved_step)
 
@@ -2568,6 +2941,7 @@ def render_all_diagram_presets():
     saved_paths = []
     for preset_number, preset_name in enumerate(preset_names, start=1):
         apply_diagram_preset(preset_name)
+        heatmap_baseline_matrix = load_heatmap_baseline_matrix(h5_path)
         outputs = requested_area_summary_outputs()
         multiple_variants = len(outputs) > 1
 
@@ -2600,6 +2974,7 @@ def render_all_diagram_presets():
                 metadata,
                 transport_analysis,
                 area_summary_shake_mode=shake_mode,
+                heatmap_baseline_matrix=heatmap_baseline_matrix,
             )
             fig.savefig(
                 output_path,
@@ -2637,6 +3012,7 @@ def main():
         h5_path,
         SNAPSHOT_INDEX,
     )
+    heatmap_baseline_matrix = load_heatmap_baseline_matrix(h5_path)
     figures = []
     output_dir = resolve_output_dir() if SAVE_PNG or SAVE_PDF or SAVE_SVG else None
     for shake_mode, output_variant in requested_area_summary_outputs():
@@ -2649,6 +3025,7 @@ def main():
             metadata,
             transport_analysis,
             area_summary_shake_mode=shake_mode,
+            heatmap_baseline_matrix=heatmap_baseline_matrix,
         )
         figures.append(fig)
 

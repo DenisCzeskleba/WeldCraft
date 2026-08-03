@@ -17,11 +17,11 @@ from fractions import Fraction
 # DEPRECATED "forced_jump": retained for old comparisons only; ignores the area-characteristic physics below.
 
 simulation_mode = "event_driven_wiggle"
-y = 650  # Height (y)
-x = 650  # Width (x)
+x = 1300  # Width (x)
+y = 920  # Height (y)
 
 # Number of simulation steps. For continuation, this is the number of additional steps.
-steps = 10_000_000_000  # use 10_000_000 notation, or 10000000. DO NOT use 100.000.000
+steps = 3_000_000_000  # use 10_000_000 notation, or 10000000. DO NOT use 100.000.000
 max_radius_to_jump = 10
 
 # ---------------------- Matrix Source ---------------------- #
@@ -62,7 +62,7 @@ concentration_profile_b = (50, 0)
 # ---------------------- Layer / Boundary Options ---------------------- #
 USE_SPOT = True
 SPOT_DIAMETER = 120
-SPOT_CENTER_X = 1 * x // 2  # Column position of the spot center
+SPOT_CENTER_X = 2 * x // 3  # Column position of the spot center
 SPOT_CENTER_Y = 1 * y // 2  # Row position of the spot center
 
 USE_TRAP_LAYER = False

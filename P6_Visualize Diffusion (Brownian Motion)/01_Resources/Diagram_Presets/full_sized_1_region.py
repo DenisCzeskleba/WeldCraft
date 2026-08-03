@@ -1,9 +1,9 @@
-"""Purple source/sink matrix compared with the ideal initial setup."""
+"""A4-landscape single-region matrix with appendix annotations."""
 
-PRESET_NAME = "Simple 1 Region Source with Heatmap"
+PRESET_NAME = "Full-Sized 1 Region"
 
 RENDER_MODE = "pixels"
-FIGURE_SIZE = (15, 6)
+FIGURE_SIZE = (11.69, 8.27)
 MATCH_SIDE_PANEL_HEIGHT_TO_MAIN = True
 TITLE = ""
 X_LABEL = "Length"
@@ -31,7 +31,6 @@ DOT_ALPHA_AVAILABLE = 0.8
 DOT_ALPHA_HYDROGEN = 0.95
 
 SHOW_MAIN_PANEL = True
-SHOW_HEATMAP_PANEL = True
 SHOW_CONCENTRATION_PROFILE_PANEL = False
 SHOW_NET_FLUX_PANEL = False
 SHOW_FRAME_SUPTITLE = False
@@ -62,28 +61,24 @@ SHOW_SPOT_ANNOTATION = True
 SHOW_TRAP_LAYER_ANNOTATION = False
 SHOW_BULK_ANNOTATION = True
 BULK_ANNOTATION_LABEL = "Bulk Average"
-BULK_ANNOTATION_POSITION = (0.25, 0.90)
+BULK_ANNOTATION_POSITION = (0.22, 0.88)
 SPOT_ANNOTATION_LABEL = "Spot Average"
-ANNOTATION_FONT_SIZE = 14
+SPOT_ANNOTATION_VERTICAL_OFFSET_SCALE = 1.35
+SHOW_BULK_SOLUBILITY_IN_ANNOTATION = True
+SHOW_SPOT_SOLUBILITY_IN_ANNOTATION = True
+ANNOTATION_FONT_SIZE = 16
 ANNOTATION_COLOR = "#FFFFFF"
 
+CUSTOM_TEXT_ANNOTATIONS = (
+    {
+        "text": (
+            "Transition acceptance probabilities:\n"
+            r"$P_{\mathrm{acc}}(\mathrm{bulk}\!\rightarrow\!\mathrm{spot})"
+            r" = 2\,P_{\mathrm{acc}}(\mathrm{spot}\!\rightarrow\!\mathrm{bulk})$"
+        ),
+        "xy_fraction": (0.50, 0.08),
+        "fontsize": 15,
+    },
+)
+
 CUSTOM_RECT_REGIONS = []
-
-HEATMAP_MODE = "change_from_initial_setup"
-HEATMAP_BASELINE_SNAPSHOT_INDEX = 0
-HEATMAP_SIGMA = 28.0
-HEATMAP_COLORMAP = "RdBu_r"
-HEATMAP_DEVIATION_RANGE = (-30.0, 30.0)
-HEATMAP_REFERENCE_MODE = "regional_bulk"
-HEATMAP_RESPECT_AREA_BOUNDARIES = True
-HEATMAP_SEPARATE_BASE_AREAS = False
-HEATMAP_SHOW_CONTOURS = True
-HEATMAP_CONTOUR_LEVELS = (-30, -20, -10, 10, 20, 30)
-HEATMAP_CONTOUR_COLOR = "#303030"
-HEATMAP_CONTOUR_ALPHA = 0.30
-HEATMAP_SHOW_COLORBAR = True
-
-SHOW_SPECIAL_REGION_OUTLINES = True
-SPECIAL_REGION_OUTLINE_COLOR = "#202020"
-SPECIAL_REGION_OUTLINE_WIDTH = 1.4
-SPECIAL_REGION_OUTLINE_STYLE = "--"
