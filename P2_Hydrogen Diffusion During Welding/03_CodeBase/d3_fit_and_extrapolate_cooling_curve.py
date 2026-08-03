@@ -5,10 +5,10 @@ from pathlib import Path
 
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
-INPUT_CSV = PROJECT_DIR / "01_Resources" / "Curve fit Sub 150 cooling" / "011_prepaired.CSV"
-RESULTS_DIR = PROJECT_DIR / "02_Results"
+INPUT_CSV = PROJECT_DIR / "01_Resources" / "Cooling Curve Fit" / "011_prepaired.CSV"
+RESULTS_DIR = PROJECT_DIR / "02_Results" / "04_Diagrams" / "Cooling Curve Fit"
 OUTPUT_FIGURE = RESULTS_DIR / "cooling_fit_comparison.png"
-RESULTS_DIR.mkdir(exist_ok=True)
+RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
 """
 This part works nicely for the lower temperatures (sub 150?), maybe we can use it for the "cool to room temperature". 

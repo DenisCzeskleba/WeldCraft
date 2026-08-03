@@ -2,27 +2,27 @@
 
 P3 is a focused standalone thermal-welding simulator and visualization tool. It
 is useful for manual heating calibration, experimenting with a moving heat
-source, inspecting temperature traces at four points, fitting cooling behavior
-from measurement data, and creating annotated heat-map animations.
+source, inspecting temperature traces at four points, and creating annotated
+heat-map animations.
 
-Its compact all-in-one implementation also makes P3 a practical smaller-scale
+Its compact three-part implementation also makes P3 a practical smaller-scale
 example of the thermal concepts used in the full P2 welding and hydrogen-
 diffusion simulation. P3 and P2 are independent programs and do not share
 runtime code.
 
 ## Layout and publication boundary
 
-- `01_Resources/` contains raw measurements, converted data, and workbooks. Its
-  measurement contents are local-only; `config_default.py` is the shipped
-  reset template.
+- `01_Resources/` contains the shipped `config_default.py` reset template.
+  Cooling measurements and related workbooks are kept with the P2 cooling-curve
+  analysis.
 - `02_Results/` contains generated HDF5 data, plots, and animations. Its contents
   are local-only; only `.gitkeep` is published.
 - `03_CodeBase/` contains the versioned runnable scripts.
 - `00_Development_Archive/` preserves earlier development iterations and
   scratch notes locally and is ignored in full.
 
-The project-local `.gitignore` enforces these boundaries. Existing local files
-were reorganized without deleting them.
+The project-local `.gitignore` enforces these boundaries. Generated results
+remain workspace-local and are not published.
 
 ## Scripts
 
@@ -32,20 +32,22 @@ loads persistent settings from `03_CodeBase/config.py`, creates it from
 worker, and displays the stored result frames and diagrams. Animation export is
 optional and requires an FFmpeg installation that Matplotlib can use.
 
+The P3 code is split into three roles:
+
+- `config.py` stores the user-editable settings and is recreated from the shipped
+  defaults when missing.
+- `functions.py` contains configuration validation, mesh creation, simulation,
+  HDF5 loading, and plotting helpers.
+- `heat_map.py` contains the GUI, launcher entry point, and CLI dispatch.
+
 For direct scripted execution, run `heat_map.py` or `heat_map.py --cli`.
 Append `--render` to render the configured MP4 after the CLI simulation.
-
-`03_CodeBase/figure_out_cooling.py` reads
-`01_Resources/Curve fit Sub 150 cooling/011_prepaired.CSV` and compares two
-empirical cooling fits with a simple convection calculation. It writes
-`02_Results/cooling_fit_comparison.png`.
 
 From the repository root, use the workspace Python environment:
 
 ```powershell
 & 'F:\99_Virtual-Environments\02_WeldCraft\Scripts\python.exe' '.\P3_Heat Map\03_CodeBase\heat_map.py' --cli
 & 'F:\99_Virtual-Environments\02_WeldCraft\Scripts\python.exe' '.\P3_Heat Map\03_CodeBase\heat_map.py' --gui
-& 'F:\99_Virtual-Environments\02_WeldCraft\Scripts\python.exe' '.\P3_Heat Map\03_CodeBase\figure_out_cooling.py'
 ```
 
 The main WeldCraft launcher also exposes P3 through its **Heat Map** button.
@@ -54,7 +56,6 @@ The main WeldCraft launcher also exposes P3 through its **Heat Map** button.
 
 - Simulation snapshots: `02_Results/simple_heat_map.h5`
 - Rendered animation: `02_Results/heat_map_animation.mp4`
-- Cooling-fit figure: `02_Results/cooling_fit_comparison.png`
 
 Each new heat-map run replaces the standard HDF5 file and animation. Move or
 rename results you want to retain before starting another run.
@@ -84,13 +85,11 @@ faces with different units and geometry.
   radiation, latent heat, and evolving material properties are absent.
 - The reflective boundary helper chooses one nearby interior cell and is intended
   only for non-interacting metal/air boundaries.
-- Geometry, monitoring points, run duration, save rate, and plot limits are
-  hardcoded in the script.
-- The HDF5 output has snapshots and times but no configuration/provenance
-  metadata.
-- The cooling-fit script trims one dataset by hardcoded row numbers and performs
-  an extrapolative empirical fit; it does not establish a unique physical heat
-  transfer coefficient.
+- User-facing geometry, monitoring points, run duration, save rate, and plot
+  limits are stored in `config.py` and exposed through the GUI; solver internals
+  remain code-only or advanced settings.
+- The HDF5 output stores snapshots and times together with the validated
+  configuration and basic format metadata.
 
 Use P3 for focused thermal calibration, experimentation, teaching, and animation
 work. Use P2 when the task requires its full welding geometry, material model,
