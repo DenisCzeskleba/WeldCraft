@@ -209,10 +209,10 @@ class Launcher(QMainWindow):
             "Hydrogen Diffusion During Welding is code-only for now. Use the scripts directly; a GUI is planned "
             "later, but not confirmed yet."
         )
+        self.p3_heat_map_hover = "Open the P3 thermal heat-map simulator."
         self.p3_heat_map_info = (
-            "Heat Map is a focused thermal welding simulator for manual heating calibration, temperature-trace "
-            "inspection, and annotated heat-map animations. It is also a practical smaller-scale example of the "
-            "thermal concepts used by the full P2 welding simulation."
+            "Configure weld geometry and thermal settings, preview the mesh, run a 2D heat simulation, and inspect "
+            "temperature maps, monitoring traces, and optional animation exports."
         )
         self.p6_diffusion_info = (
             "Visualize Diffusion (Brownian Motion) visualizes diffusion through Brownian motion. It currently "
@@ -304,10 +304,11 @@ class Launcher(QMainWindow):
         for slot_id, button in self.slot_buttons.items():
             button.clicked.connect(partial(self.handle_slot_clicked, slot_id))
 
-    def build_page_entry(self, text, hover_text, action, enabled=True, visible=True):
+    def build_page_entry(self, text, hover_text, action, enabled=True, visible=True, info_text=None):
         return {
             "text": text,
             "hover_text": hover_text,
+            "info_text": info_text if info_text is not None else hover_text,
             "action": action,
             "enabled": enabled,
             "visible": visible,
@@ -331,8 +332,9 @@ class Launcher(QMainWindow):
                 ),
                 self.build_page_entry(
                     "Heat Map",
-                    self.p3_heat_map_info,
+                    self.p3_heat_map_hover,
                     self.start_heat_map,
+                    info_text=self.p3_heat_map_info,
                 ),
                 self.build_page_entry(
                     "Reserved P4",
@@ -420,7 +422,7 @@ class Launcher(QMainWindow):
 
             entry = page_entries[slot_index]
             button.setText(entry["text"])
-            button.hovered_text = entry["hover_text"]
+            button.hovered_text = entry.get("info_text", entry["hover_text"])
             button.setToolTip(entry["hover_text"])
             button.setVisible(entry.get("visible", True))
             button.setEnabled(entry.get("enabled", True) and slot_id not in self.active_processes)
@@ -603,9 +605,9 @@ class Launcher(QMainWindow):
     def start_heat_map(self):
         self.start_program(
             "pushButton_slot_3",
-            [self.path_heat_map],
-            minimize_launcher=False,
-            show_console=True,
+            [self.path_heat_map, "--gui"],
+            minimize_launcher=True,
+            show_console=False,
         )
 
     def start_lattice_visualizer(self):

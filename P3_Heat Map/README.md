@@ -13,7 +13,8 @@ runtime code.
 ## Layout and publication boundary
 
 - `01_Resources/` contains raw measurements, converted data, and workbooks. Its
-  contents are local-only; only `.gitkeep` is published.
+  measurement contents are local-only; `config_default.py` is the shipped
+  reset template.
 - `02_Results/` contains generated HDF5 data, plots, and animations. Its contents
   are local-only; only `.gitkeep` is published.
 - `03_CodeBase/` contains the versioned runnable scripts.
@@ -25,10 +26,14 @@ were reorganized without deleting them.
 
 ## Scripts
 
-`03_CodeBase/heat_map.py` runs the 2D thermal simulation, writes
-`02_Results/simple_heat_map.h5`, and normally renders
-`02_Results/heat_map_animation.mp4`. Rendering requires an FFmpeg installation
-that Matplotlib can use.
+`03_CodeBase/heat_map.py --gui` opens the P1-style graphical interface. The GUI
+loads persistent settings from `03_CodeBase/config.py`, creates it from
+`01_Resources/config_default.py` when needed, runs the 2D thermal simulation in a background
+worker, and displays the stored result frames and diagrams. Animation export is
+optional and requires an FFmpeg installation that Matplotlib can use.
+
+For direct scripted execution, run `heat_map.py` or `heat_map.py --cli`.
+Append `--render` to render the configured MP4 after the CLI simulation.
 
 `03_CodeBase/figure_out_cooling.py` reads
 `01_Resources/Curve fit Sub 150 cooling/011_prepaired.CSV` and compares two
@@ -38,7 +43,8 @@ empirical cooling fits with a simple convection calculation. It writes
 From the repository root, use the workspace Python environment:
 
 ```powershell
-& 'F:\99_Virtual-Environments\02_WeldCraft\Scripts\python.exe' '.\P3_Heat Map\03_CodeBase\heat_map.py'
+& 'F:\99_Virtual-Environments\02_WeldCraft\Scripts\python.exe' '.\P3_Heat Map\03_CodeBase\heat_map.py' --cli
+& 'F:\99_Virtual-Environments\02_WeldCraft\Scripts\python.exe' '.\P3_Heat Map\03_CodeBase\heat_map.py' --gui
 & 'F:\99_Virtual-Environments\02_WeldCraft\Scripts\python.exe' '.\P3_Heat Map\03_CodeBase\figure_out_cooling.py'
 ```
 

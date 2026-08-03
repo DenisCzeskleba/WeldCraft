@@ -4,6 +4,7 @@
 # Measurement inputs and workbooks are local only.
 /01_Resources/*
 !/01_Resources/.gitkeep
+!/01_Resources/config_default.py
 
 # Generated datasets, figures, and animations are local only.
 /02_Results/*
@@ -15,3 +16,6 @@ __pycache__/
 *.h5
 *.hdf5
 *.mp4
+
+# User-editable persistent GUI configuration.
+/03_CodeBase/config.py

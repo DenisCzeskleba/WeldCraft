@@ -1,684 +1,764 @@
-"""Focused thermal-only simulator for a moving weld heat map."""
+"""P3 Heat Map GUI and command-line entrypoint."""
 
-from pathlib import Path
+from __future__ import annotations
+
+import argparse
 import sys
+import threading
+from pathlib import Path
 
 import numpy as np
-from numba import jit
-from scipy.ndimage import binary_erosion
-import h5py
-import matplotlib.pyplot as plt
-import matplotlib.colors as mcolors
-import matplotlib.gridspec as gridspec
-from matplotlib.animation import FuncAnimation
-from tqdm import tqdm
-import time
-
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
-RESULTS_DIR = PROJECT_DIR / "02_Results"
-RESULTS_DIR.mkdir(exist_ok=True)
-RESOURCES_DIR = PROJECT_DIR.parent / "Resources"
+REPO_ROOT = PROJECT_DIR.parent
+RESOURCES_DIR = REPO_ROOT / "Resources"
 if str(RESOURCES_DIR) not in sys.path:
     sys.path.insert(0, str(RESOURCES_DIR))
 
-from Common.launch_ready import mark_startup_ready
-
-
-mark_startup_ready()
-
-"""
-The following functions are copies of the current version for the bigger simulation, check there for details!
-
-Essentially I split the space derivate calculation off, for clearity and ease of reading the math.
-The update_u function (the heat diffusion) does not depend on values in another matrix (like how hydrogen diffussion
-depends on the temperature field)
-
-Do not mess with these functions unless you are sure numba can handle the logic. The @jit decorator is pretty fussy.
-"""
-
-
-@jit(nopython=True, cache=True)
-def compute_field_derivatives(field, func_dx2, func_dy2, field_dx2, field_dy2, func_ny, func_nx):
-    """
-    Compute the second spatial derivatives of a given scalar field.
-
-    This function calculates the second derivatives with respect to x and y for
-    each interior point of the field, using central difference. The boundaries
-    are left unchanged.
-
-    Parameters:
-    - field (numpy.ndarray): The 2D array of the scalar field (e.g., temperature, concentration).
-    - dx2 (float): The denominator in the difference formula for the x-direction.
-    - dy2 (float): The denominator in the difference formula for the y-direction.
-    - field_dx2 (numpy.ndarray): The 2D array to store the second derivative with respect to x.
-    - field_dy2 (numpy.ndarray): The 2D array to store the second derivative with respect to y.
-
-    Returns:
-    - tuple of numpy.ndarray: The arrays (field_dx2, field_dy2) containing the second derivatives.
-    - essentially dudx2, dudy2 and dhdx2, dhdy2 respectivly.
-    """
-
-    # Compute derivatives for the interior points, leaving boundaries as is
-    for j in range(1, func_ny - 1):
-        for i in range(1, func_nx - 1):
-            field_dx2[j, i] = (field[j, i + 1] - 2 * field[j, i] + field[j, i - 1]) / func_dx2
-            field_dy2[j, i] = (field[j + 1, i] - 2 * field[j, i] + field[j - 1, i]) / func_dy2
-
-    return field_dx2, field_dy2
-
-
-@jit(nopython=True, cache=True)
-def update_u_with_jit(u, u0, diffusion_matrix, func_dt, func_dudx2, func_dudy2, func_ny, func_nx):
-    """
-    Update the temperature field (u) based on heat diffusion effects over a time step. (Fourier)
-
-    This function computes the new values of the temperature field (u) by applying a
-    diffusion formula according to Fourier's law, which considers the second spatial derivatives
-    in both the x and y directions (dudx2 and dudy2). It integrates the effects of a diffusion
-    coefficient matrix (D) and a time step (dt) to simulate the diffusion process.
-
-    Parameters:
-    - u (numpy.ndarray): The 2D array to be updated, representing the current state of the temperature field.
-    - u0 (numpy.ndarray): The 2D array representing the previous state of the temperature field.
-    - D (numpy.ndarray): The 2D array of diffusion coefficients applicable to each point in the temperature field.
-    - dt (float): The time step for the update.
-    - dudx2 (numpy.ndarray): The 2D array containing the second derivative of the temperature field with respect to x.
-    - dudy2 (numpy.ndarray): The 2D array containing the second derivative of the temperature field with respect to y.
-
-    Returns:
-    - numpy.ndarray: The updated 2D array of the temperature field (u) after applying the heat diffusion update.
-    """
-
-    for j in range(func_ny):
-        for i in range(func_nx):
-            u[j, i] = u0[j, i] + diffusion_matrix[j, i] * func_dt * (func_dudx2[j, i] + func_dudy2[j, i])
-
-    return u
-
-
-def apply_mask(func_diff_matrix, show_boundary=0):
-    """
-    This is a copy of the simplified version of "apply_diffusion_masks".
-
-    It potentially allows multipple valid neighbors inside the area for a point on the boundary. (1)
-    As well as multiple points on the boundary for points in the calculated area. (2)
-    This can obviously lead to undesired interactions, such as sources or sinks depending on (1) or (2).
-
-    ONLY use this for NON-INTERACTIVE boundaries, i.e. between weld sample and air for Neumann BC.("reflective")
-    This might get depreciated, if "apply_diffusion_masks" is efficient enough for complicated geometries.
-
-    This is a complicated bla for what is basically, "find where air is". Might not get used if we do real convection.
-    """
-
-    # Find all the spots where D is greater than 0, mark those spots as True others as False
-    mask_func = func_diff_matrix > 0
-    # Find the edges of that, basically the "simulation area boundary"
-    boundary = mask_func ^ binary_erosion(mask_func, structure=np.ones((3, 3)))  # Find the boundary of the sample
-
-    # Get the location of the boundary pixels
-    boundary_indices_func = np.argwhere(boundary)
-
-    # Compute the inner part by subtracting the boundary from the mask
-    inner_mask = np.logical_and(mask_func, np.logical_not(boundary))
-
-    # Get the location of the inner part - remember that the "edges" are NOT excluded (so first/last row/column!)
-    inner_indices_func = np.argwhere(inner_mask)
-
-    # Create a new list with the same size/dimensions to store the valid neighbors
-    valid_neighbors_indices_func = np.zeros_like(boundary_indices_func)
-
-    # Loop through
-    for index, (i, j) in enumerate(boundary_indices_func):
-
-        # Find the neighboring pixels that are not on the boundary and have a value > 0
-        neighbors = [(i - 1, j), (i + 1, j), (i, j - 1), (i, j + 1)]
-
-        # Are any of them viable? They are good if they have D>0 (mask) and are not on the boundary themselves
-        valid_neighbors = [(x, y) for x, y in neighbors if
-                           0 <= x < func_diff_matrix.shape[0] and 0 <= y < func_diff_matrix.shape[1] and mask_func[
-                               x, y] and not boundary[x, y]]
-
-        # This could still result in a few pixels which are not included. Adaptable range?
-        if not valid_neighbors:
-
-            for radius in range(1, 3):  # max_search_radius = 3
-                valid_neighbors = [(x, y) for x in range(i - radius, i + radius + 1) for y in
-                                   range(j - radius, j + radius + 1) if (
-                                           0 <= x < func_diff_matrix.shape[0] and 0 <= y < func_diff_matrix.shape[1] and
-                                           mask_func[x, y] and not
-                                           boundary[x, y])]
-
-                # Check if any valid neighbors are found
-                if valid_neighbors:
-                    break  # Exit the loop as soon as valid neighbors are found
-
-        # All points on the boundary now have a valid neighbor (corners maybe 2) Save pixel coords and their partner
-        if valid_neighbors:
-            valid_neighbors_indices_func[index] = valid_neighbors[0]
-
-    # For debugging
-    if show_boundary != 0:
-        # For debugging! - Plot D, mask, and calc_area
-        plt.figure(figsize=(12, 4))
-        plt.subplot(131)
-        plt.imshow(func_diff_matrix, cmap='viridis')
-        plt.title('D Matrix')
-
-        plt.subplot(132)
-        plt.imshow(mask_func, cmap='binary')
-        plt.title('Mask (D > 0)')
-
-        plt.subplot(133)
-        plt.imshow(boundary, cmap='binary')
-        plt.title('Boundary')
-
-        plt.show()
-
-    # For some reason they get saved as floats above? tf? - solve later
-    valid_neighbors_indices_func = valid_neighbors_indices_func.astype(int)
-
-    return inner_mask, inner_indices_func, boundary_indices_func, valid_neighbors_indices_func
-
-
-@jit(nopython=True, cache=True)
-def apply_convection(temp_map_func, t_room_func, weld_convection_func, inner_area_func, func_ny, func_nx):
-    """
-    Description here...
-    """
-
-    for j in range(func_ny):
-        for i in range(func_nx):
-            # inner_area_func is a boolean mask so if its not in it, below gets multipied by 0 and nothing changes.
-            temp_map_func[j, i] -= (temp_map_func[j, i] - t_room_func) * weld_convection_func * inner_area_func[j, i]
-
-    return temp_map_func
-
-
-"""
----------------------------------------------------- Dimensions -------------------------------------------------------
-#                       <----- le -------> <- we -> <----- ri ----->
-#                                                                           | fr_ab
-#                                      
-#                                    |----|------|----|  ⅄
-#                                    |    |      |    |  | su_h
-#                                    |    |      |    |  Y
-#                       __________________        _________________                 dim_x,dim_y = total dimensions
-#                      |                  |      |                 |      ⅄         le, ri = width of base metall
-#                      |                  |      |                 |      |         we = weld width
-#                      |                  |      |                 |      | th      th = weld thickness
-#                      |                  |      |                 |      |         su_h = weld support height
-#                      |__________________|      |_________________|      Y         su_w = weld support width
-#                                    |    |      |    |  ⅄                          fr_ab,fr_be = free above/below
-#                                    |    |      |    |  | su_h
-#                                    |____|______|____|  Y                             * [mm]
-#                                                                         | fr_be
-#                       <-- fr_le --><----- su_w -----><-- fr_ri -->
-"""
-
-le = ri = 125
-we = 20
-th = 300
-su_h = 50
-su_w = 120  # 50 width, times 2 plus 20 for weld width
-fr_le = int(le - ((su_w - we) / 2))
-fr_ri = int(ri - ((su_w - we) / 2))
-fr_ab = fr_be = 5
-last_weld_bead = le + int(we / 2)  # this is where our simulated weld bead starts (from the left)
-weld_bead_thickness = int(we / 2)  # the thickness of that weld (make sure that makes sense)
-
-# For visual purposes, space above and below but no free space left and right
-dim_rows = le + ri + we  # The rows have so many many entries in them (1 per mm * the amount of points within 1 mm)
-dim_columns = th + (2 * su_h) + fr_ab + fr_be  # same with columns
-
-# ---------------------------------------- Dimensional step size, gradient --------------------------------------------
-dx = dy = 1  # step size - if not equal, TRIPPLE check everything! This was always meant to be equal!
-dx2 = dx * dx  # partial differential x
-dy2 = dy * dy  # partial differential y
-
-# -------------------- Relevant Starting Conditions - Temperature und Hydrogen concentration --------------------------
-t_cool = 160  # Interpass temperature basically. Used for BCs and/or initialization
-t_hot = 1500  # Weld bead temperature. Adjust as needed
-t_room = 25  # Surrounding temperature. Remember that the graphs display a different color for t_room! -offset!!
-
-# ---------------------------------------- TEMPERATURE diffusion coefficients -----------------------------------------
-diff_coeff_bm = 5.36768  # D = 20 [W/mK] / (8100 [kg/m³] * 460 [J/kgK] = 5.36768 e-6  m²/s = 5.36768 mm²/s  **1
-diff_coeff_wm = 5  # For now just made up numbers
-diff_coeff_haz = 4.5  # For now just made up numbers - picked something inbetween bm and wm
-diff_coeff_air = 0  # no diffusion into air! If != 0, check BCs! right now you have Neumann Boundary Condition!
-highest_diff_coeff = max(diff_coeff_bm, diff_coeff_wm, diff_coeff_haz)
-
-dt = (dx2 * dy2) / (2 * highest_diff_coeff * (dx2 + dy2))  # highest time step to still be stable
-print("dt: " + str(dt))
-
-# -------------------------------- Make initial matrices - temp_map and temp_diff -------------------------------------
-# Make initial "Heat-Matrix":
-nx, ny = int(dim_rows / dx), int(dim_columns / dy)  # for readabilty - x should be horizontal, y vertical
-temp_map = t_cool * np.ones((ny, nx))  # x should be horizontal! But in Python the first entry is no. of rows!
-temp_map[:int(fr_ab / dy), :] = t_room  # Free space ABOVE sample
-temp_map[-int(fr_be / dy):, :] = t_room  # Free space BELOW sample
-temp_map[:int((fr_ab + su_h) / dy), :int(fr_le / dx)] = t_room  # Free space TOP LEFT
-temp_map[:int((fr_ab + su_h) / dy), -int(fr_ri / dx):] = t_room  # Free space TOP RIGHT
-temp_map[-int((fr_be + su_h) / dy):, :int(fr_le / dx)] = t_room  # Free space BOTTOM LEFT
-temp_map[-int((fr_be + su_h) / dy):, -int(fr_ri / dx):] = t_room  # Free space BOTTOM RIGHT
-
-# This is the actual "weld line" where we later simulate heat. Apply some temp offset for visibility?
-temp_map[int(fr_ab / dy):-int(fr_be / dy), int(last_weld_bead / dx):
-                                           int((last_weld_bead + weld_bead_thickness) / dx)] = t_cool - 5 # Weld area
-
-# Make initial "Diffusion-Matrix" based on the Heat-Matrix:
-temp_diffusion = temp_map.copy()  # just copy that matrix
-temp_diffusion[temp_map == t_cool] = diff_coeff_bm  # set the diffusion coefficient to bm value where bm has temperature
-temp_diffusion[temp_map == t_room] = diff_coeff_air  # set the diffusion coefficient 0 every where else
-
-# This is the actual "weld line" where we later simulate heat. Set different diffusion coeff here?
-temp_diffusion[int(fr_ab / dy):-int(fr_be / dy), int(last_weld_bead / dx):
-                                                 int((last_weld_bead + weld_bead_thickness) / dx)] = diff_coeff_wm
-
-# ----------------------------------------------- Weld Setup ----------------------------------------------------------
-weld_length = 350  # [mm] This will be centered around the midle (y-direction)!
-weld_speed = 600  # 600 [mm/min] basically the setting for our SAW machine, will be converted further down!
-weld_temp = t_hot  # Incase you want to set it here
-weld_spot_size = 20  # [mm] the "length" of the weld spot, the "width" results from setup above (last bead for now)
-time_before_weld_start = 5  # [s] not really necessary but makes for nicer animations (can be set to 0)
-weld_start_time = time_before_weld_start  # Rename for clearity, or adjust as needed here
-weld_end_time = weld_start_time + (weld_length / weld_speed) * 60  # Calculate end time
-
-# ----------------------------------------------- Convection Setup ----------------------------------------------------
-
-# Convection: Air is a poor conductor, but has low density thus high diffusivity
-# Air has roughly the same thermal diffusivity as steel.
-# But if caloric:, maybe 10-30 W/m²K should be rightish, BUT this assumes we keep track of the air temp as well!
-# Which is obvously almost always the case, because convection is used in cfd mostly to then simulate the fluid.
-# If we discard air temperature change, which we do, the convection variable will obviously be !much! lower because
-# the air is constantly at room temperature (of ~25°C).
-
-# Parameters
-t_room_conv = t_room  # get room temp, adjust here if you want
-dt = dt  # here just for illustrative purposes, maybe delete for clarity, is set above
-conv_variable = 3.00  # [W/m²K] This is determined / in "figure_out_cooling.py" for example. adjust as needed!
-
-# Specific heat capacity (J/kg·K) for low carbon steel
-c = 486  # 1010 Air, for steel use 486
-# Density (kg/m³) for low carbon steel (if needed)
-rho = 7850  # 1.3 Air, for steel use 7850
-
-# Calculate volume and area, lets work with 1 mm for now?
-thickness = dx * 1e-3  # [m] Thickness of the material layer affected by convection (m)
-area = dx * dy * 1e-6  # [m²] Area of a mesh cell
-V = area * thickness  # [m³] Volume of the material affected (m³)
-
-# q = conv_variable * area * (current_temperature_convection - t_room_conv)  # Rate of heat transfer (W)
-# delta_T = q * dt / (c * rho * V)  # Temperature change
-# delta_T = (conv_variable * area * dt) / (c * rho * V) * (current_temperature_convection - t_room_conv)
-# So most of this is simply a constant, we will call it: weld_convection
-weld_convection = (conv_variable * area * dt) / (c * rho * V)
-print("Weld_convection variable: " + str(weld_convection))
-
-# # Polarer Gigantismus!! Remember that the above is before anything, a geometric description of energy flowing
-# # through an area, leaving a volume. That means if you half dx, you quarter the area, but the volume is 1/8th.
-# # We are not simulating the whole physical geometry, where the area/volume is fixed, regardless of mesh.
-# # Hence, we calibrate this for 1 mm by 1 mm and scale the factor. Which makes sense, since we already put a lot into it.
-# weld_convection = weld_convection / dx
-#
-# print("weld conv * dt = " + str(weld_convection*dt))
-
-# -------------------------------------------------- Simulation Setup -------------------------------------------------
-use_boundary_adjustment = False
-# Total simulation time
-sim_time = 900 * 1 * 1  # 3600 * 1 * 1  # seconds * hours * days
-nsteps = int(sim_time / dt)
-
-# Print some stuff to console for easier check on simulation setup
-print("Array shape:", temp_map.shape)
-print("Mesh points:", temp_map.size)
-
-# ---------- Numerics Mumbo Jumbo ----------
-# Initialize some dhdx2 matrices
-dudx2 = np.zeros_like(temp_map)
-dudy2 = np.zeros_like(temp_map)
-
-# Initialize "old" temp_map. temp_map is the next step and temp_map_0 is the one that is one step "back"
-temp_map_0 = temp_map.copy()
-actual_time = 0  # keep track of simulation time
-
-# find the border stuff
-prev_end_row = 0
-
-# ---------- Precalculate some stuff ----------
-# Find the vertical mid point to center the weld around
-mid_index = int(temp_map.shape[0] // 2)  # Integer division
-start_col = int(last_weld_bead / dx)  # weld bead left border
-end_col = int((last_weld_bead + weld_bead_thickness) / dx)  # weld bead right border
-start_row = mid_index + int((weld_length // 2) / dy) - int((weld_spot_size // 2) / dy)  # weld bead top
-end_row = int(start_row + (weld_spot_size / dy))  # weld bead bottom
-
-# the air/metal boundary above and below, plus some mask and the inner area indices
-inner_mask, inner_area_indices, boundary_indices, valid_neighbors_indices = apply_mask(temp_diffusion, 0)
-
-# Finding indices for the parts that are metal (and are at interpass temperature)
-first_col_indices = np.where(temp_map[:, 0] == t_cool)[0]
-last_col_indices = np.where(temp_map[:, -1] == t_cool)[0]
-
-# Creating boundary indices array for easy manipulation
-boundary_indices_first = np.column_stack((first_col_indices, np.zeros_like(first_col_indices)))
-boundary_indices_last = np.column_stack((last_col_indices, (nx - 1) * np.ones_like(last_col_indices)))
-
-# Combining all indices
-all_boundary_indices = np.vstack([boundary_indices_first, boundary_indices_last])
-
-# ---------- Save matrices ----------
-file_name = RESULTS_DIR / "simple_heat_map.h5"  # File name to save the matrix as
-# Set how ofter you want to save, this, BY FAR, has the biggest impact on performance!!
-save_so_often_per_sec = 0.5  # How often to save per second
-
-if True:  # Change to False if you want to keep the file or mess with the filename
-    if file_name.exists():  # Delete old files
-        file_name.unlink()
-
-save_interval = 1 / save_so_often_per_sec  # Calculate the save interval in seconds
-save_counter = 0  # used in the saving loop
-time_since_last_save = 0  # Time since the last save
-slow_down_beginning = 1  # Used to change the animation speed by adjusting save interval... quick and dirty way, change?
-
-# -------------------------------------------- Actual Simulation Loop -------------------------------------------------
-"""
-Since we already partially optimized the actual calculation to use machine code, I will use this here as well.
-
-Check the bigger simulation for details but basically you do the spacial derivative, then apply the numeric Fourier 
-heat diffusion. I will include the full function here in this all in one script but for clearity, 
-this is the explicit NumPy version:
-
-# Get the second (central) spacial derivative, w/o boundary, which will need to be handled seprately further down:
-    dudx2[1:-1, 1:-1] = (u0[2:, 1:-1] - 2 * u0[1:-1, 1:-1] + u0[:-2, 1:-1]) / dx2
-    dudy2[1:-1, 1:-1] = (u0[1:-1, 2:] - 2 * u0[1:-1, 1:-1] + u0[1:-1, :-2]) / dy2
-
-# Apply Head PDE (Fourier)
-    u = u0 + diff_array * dt * (dudx2 + dudy2)
-"""
-
-for m in tqdm(range(nsteps), desc='Simulating Heat Map'):
-
-    # keep track of time, also for saving frequency
-    actual_time += dt
-    time_since_last_save += dt
-
-    # Compute the second spatial derivatives
-    dudx2, dudy2 = compute_field_derivatives(temp_map, dx2, dy2, dudx2, dudy2, ny, nx)
-
-    # Apply Fourier
-    temp_map = update_u_with_jit(temp_map, temp_map_0, temp_diffusion, dt, dudx2, dudy2, ny, nx)
-
-    # Apply convection
-    temp_map = apply_convection(temp_map, t_room, weld_convection, inner_mask, ny, nx)
-
-    # Apply the weld pool, basically just a spot that moves and has a specific temperature. Adjust as needed.
-    if time_before_weld_start <= actual_time <= weld_end_time:
-        # Calculate the current position of the weld spot
-        distance_moved = int((weld_speed / 60) * (actual_time - time_before_weld_start) / dy)  # Distance the spot moved
-
-        start_row = mid_index + int((weld_length // 2) / dy) - int((weld_spot_size // 2) / dy) - distance_moved
-        end_row = int(start_row + (weld_spot_size / dy))
-        start_col = int(start_col)  # Unnecessary, you precalc this but here for clearity. Little performance impact
-        end_col = int(end_col)  # Unnecessary, you precalc this but here for clearity. Little performance impact
-
-        # If you need to: Figure out the new boundary, apply weld temp and diff coeff
-        if prev_end_row != end_row:
-
-            # Apply the weld temperature to that spot
-            temp_map[start_row:end_row, start_col:end_col] = weld_temp
-
-            # Apply diffusion coefficient to that as well
-            temp_diffusion[start_row:end_row, start_col:end_col] = diff_coeff_bm  # just one diffusion coefficient now
-
-            # Change to True above if metal/air boundary changes during sim. For example if you set diff_coeff = 0
-            if use_boundary_adjustment:
-                inner_mask, inner_area_indices, boundary_indices, valid_neighbors_indices = apply_mask(temp_diffusion)
-                prev_end_row = end_row
-
-    # ----------------------------------------- Take care of the boundaries -------------------------------------------
-    # No diffusion i.e. Neumanns "reflective boundary" for the air/metal boundary
-    temp_map[boundary_indices[:, 0], boundary_indices[:, 1]] =  temp_map_0[
-        valid_neighbors_indices[:, 0], valid_neighbors_indices[:, 1]]
-
-    # Border of the metal on the left and right. Fixed Gradient - Neumann Boundary Condition (here: du/dy | du/dx = 0)
-    # --------- Left boundary ---------
-    temp_map[boundary_indices_first[:, 0], boundary_indices_first[:, 1]] = temp_map[
-        boundary_indices_first[:, 0], boundary_indices_first[:, 1] + 1]
-    # --------- Right boundary ---------
-    temp_map[boundary_indices_last[:, 0], boundary_indices_last[:, 1]] = temp_map[
-        boundary_indices_last[:, 0], boundary_indices_last[:, 1] - 1]
-
-    # quick way to "slow" down the animation during welding (by saving more often)
-    if slow_down_beginning == 1:
-        if actual_time <= 60:
-            save_so_often_per_sec = 4  # How often to save per second
-            save_interval = 1 / save_so_often_per_sec  # Calculate the save interval in seconds
-        else:
-            save_so_often_per_sec = 0.5  # How often to save per second
-            save_interval = 1 / save_so_often_per_sec  # Calculate the save interval in seconds
-
-    # This takes most of the computational power! Consider how often you need to save!
-    # Check if it's time to save again, then save.
-    if time_since_last_save >= save_interval:
-        # name for your temp_map
-
-        temp_map_save_name = f'temp_map_{save_counter:05d}'  # Change at your own risk, this is fiddly af
-        t_save_name = f't_snapshot_{save_counter:05d}'  # Unique name for 'time'
-        save_counter += 1
-        time_since_last_save = 0
-
-        with h5py.File(file_name, 'a') as hf:
-            # Create a dataset with the unique name and store the data
-            hf.create_dataset(temp_map_save_name, data=temp_map)
-            hf.create_dataset(t_save_name, data=actual_time)
-
-    temp_map_0 = temp_map.copy()
-
-# ------------------------------------------------ Visualization ------------------------------------------------------
-"""
-Here because we want an all in one script but this part should probably be seperate. 
-
-For now you can set it on/off here.
-"""
-
-make_animation_here = True
-
-if make_animation_here:
-    loaded_u_arrays = []
-    loaded_t_values = []
-
-    with h5py.File(file_name, 'r') as hf:
-        keys = sorted([key for key in hf.keys() if key.startswith('temp_map_') or key.startswith('t_snapshot_')])
-        for key in tqdm(keys, desc="Loading data"):
-            if key.startswith('temp_map_'):
-                loaded_u_arrays.append(hf[key][:])
-            elif key.startswith('t_snapshot_'):
-                loaded_t_values.append(hf[key][()])
-
-    # Size of the matrices:
-    num_rows, num_cols = loaded_u_arrays[0].shape
-    extent_heat_map = [0, num_cols * dx, num_rows * dy, 0]  # left, right, bottom, top
-
-    fig = plt.figure(figsize=(16, 8))
-    fig.subplots_adjust(left=0.05, right=0.96, top=0.90, bottom=0.1)
-    gs = gridspec.GridSpec(12, 3, width_ratios=[1, 3, 1], wspace=0.04, hspace=1)
-    ax_heatmap = fig.add_subplot(gs[:, 1])  # Main animation in the center column
-
-    # Central heatmap plot - chose a style: "hot", "interval", "jet"
-    style = "hot"
-    if style == "hot":
-        norm = mcolors.Normalize(vmin=50, vmax=800)
-        cmap = plt.get_cmap('hot')
-        im = ax_heatmap.imshow(loaded_u_arrays[0], cmap=cmap, norm=norm, interpolation='nearest',
-                               aspect='equal', extent=extent_heat_map)
-        plt.colorbar(im, ax=ax_heatmap)  # 'pad' is the space between
-    elif style == "interval":
-        boundaries = np.arange(100, 501, 20)  # 25, 75, 125, ..., 825
-        colors = plt.cm.viridis(np.linspace(0, 1, len(boundaries) - 1))  # Generate color indices
-        cmap = mcolors.LinearSegmentedColormap.from_list("CustomMap", colors)
-        norm = mcolors.BoundaryNorm(boundaries, cmap.N, clip=True)
-        im = ax_heatmap.imshow(loaded_u_arrays[0], cmap=cmap, norm=norm, interpolation='nearest', extent=extent_heat_map)
-        plt.colorbar(im, ax=ax_heatmap, boundaries=boundaries[:-1] + 25, ticks=boundaries)
-    elif style == "jet":
-        boundaries = np.arange(100, 301, 10)  # 25, 75, 125, ..., 825
-        cmap = plt.get_cmap('jet')
-        norm = mcolors.BoundaryNorm(boundaries, cmap.N, clip=True)
-        im = ax_heatmap.imshow(loaded_u_arrays[0], cmap=cmap, norm=norm, interpolation='nearest', extent=extent_heat_map)
-        plt.colorbar(im, ax=ax_heatmap, boundaries=boundaries[:-1] + 25, ticks=boundaries)
-
-    ax_heatmap.set_title('Heat Map Animation')
-    ax_heatmap.set_xlabel('X Axis')
-    ax_heatmap.set_ylabel('Y Axis')
-    time_text = ax_heatmap.text(0.35, 1.08, f'Time: {0} s', transform=plt.gca().transAxes, color='black', fontsize=20)
-
-    # Zoomed in on weld spot
-    ax_weld_spot = fig.add_subplot(gs[0:9, 0])  # Main animation in the center column
-    norm = mcolors.Normalize(vmin=25, vmax=t_hot)
-    cmap = plt.get_cmap('hot')
-    #  start/end for rows
-    c_start, c_end = start_col - int(20/dx), end_col + int(20/dx)  # left/right - change numbers as needed
-    #  start/end for columns
-    r_start, r_end = start_row - int(20/dy), end_row + int(20/dy)  # Up/down - change numbers as needed
-    extent = (c_start, c_end, r_end, r_start)
-    im_weld_spot = ax_weld_spot.imshow(loaded_u_arrays[0][r_start:r_end, c_start:c_end],
-                                       cmap=cmap, norm=norm, interpolation='nearest', aspect='equal', extent=extent)
-    plt.colorbar(im_weld_spot, ax=ax_weld_spot)  # colorbar
-    ax_weld_spot.set_title('Weld Spot')
-    ax_weld_spot.set_xlabel('')
-    ax_weld_spot.set_ylabel('')
-
-    # Define the positions for line plots (x, y)
-    x = int((last_weld_bead + weld_bead_thickness) / dx)  # Right side of the last weld bead (left-right coord)
-    y = int((fr_ab + su_h + th) / dy - (30 / dy))  # Change the number as needed the - starts at lower edge of sample
-    distances = [5, 10, 25, 50]
-    point_names = ["A", "B", "C", "D"]
-    monitoring_positions = [(y, int(x + distances[0]/dx)), (y, int(x + distances[1]/dx)), (y, int(x + distances[2]/dx)),
-                            (y, int(x + distances[3]/dx))]  # (y, x)
-    # Contour levels
-    levels = [200, 250, 300, 350, 400, 450, 500]
-
-    # Right side line plots
-    ax_lines_right = [fig.add_subplot(gs[3*i:3*(i+1), 2]) for i in range(len(monitoring_positions))]
-    line_plots = []
-    for i, (ax, pos) in enumerate(zip(ax_lines_right, monitoring_positions)):
-        y_data = [u[pos[0], pos[1]] for u in loaded_u_arrays]
-        line, = ax.plot(loaded_t_values, y_data, label="")
-        line_plots.append(line)
-        ax.set_title(f'Temperature at Point {point_names[i]} ({distances[i]} mm)')
-        ax.set_ylabel('Temperature (°C)')
-        ax.set_xlim(0, loaded_t_values[-1])
-        ax.set_ylim(0, 750)  # Adjust Y scaling on axis as needed
-
-        # Add major grid lines to the line plots
-        ax.grid(True, which='major', linestyle='-', linewidth='0.5', color='gray')
-
-        # Only show x-axis labels and ticks on the last plot
-        if i < len(monitoring_positions) - 1:
-            ax.set_xticklabels([])  # Hide x-axis labels
-            ax.set_xlabel('')  # Clear the x-axis label
-        else:
-            ax.set_xlabel('Time (s)')  # Only set x-axis label for the last subplot
-
-        # Also mark these spots in the heat map animation itself
-        # New method using physical coordinates
-        for name, (row_idx, col_idx) in zip(point_names, monitoring_positions):
-            x_coord = col_idx * dx
-            y_coord = row_idx * dy
-            ax_heatmap.plot(x_coord, y_coord, marker='+', color='black', markersize=10)
-            ax_heatmap.text(x_coord - 8, y_coord - 15, name, color='black', fontsize=12)
-
-    # Left side line plot - "draws" the interpass temperature
-    # Extracting data for point D over all time steps for initial y-axis limits
-    y_data_D = [u[monitoring_positions[3][0], monitoring_positions[3][1]] for u in loaded_u_arrays]
-    y_min, y_max = min(y_data_D), max(y_data_D)
-
-    ax_plot_left = fig.add_subplot(gs[9:12, 0])
-    line, = ax_plot_left.plot(loaded_t_values, y_data_D)
-    ax_plot_left.set_xlim(min(loaded_t_values), max(loaded_t_values))
-    ax_plot_left.set_ylim(y_min * 0.95, y_max * 1.05)  # Give a bit of margin around the min and max
-    dot, = ax_plot_left.plot([], [], 'ko', markersize=5)  # Initial empty plot for the black dot
-
-    ax_plot_left.set_title(f'Interpass Temperature (Point D)')
-    ax_plot_left.set_xlabel('Time (s)')
-    ax_plot_left.set_ylabel('Temperature (°C)')
-    ax_plot_left.grid(True)
-
-    def update(frame):
-        # Update main simulation
-        im.set_data(loaded_u_arrays[frame])
-
-        # Update zoom on weld spot
-        # Calculate the current position of the weld spot
-        real_time = loaded_t_values[frame]  # Directly use the real timestamp
-
-        if real_time <= weld_end_time:
-            distance_moved_update = int((weld_speed / 60) * (real_time - time_before_weld_start) / dy)
-            start_row = mid_index + int((weld_length // 2) / dy) - int((weld_spot_size // 2) / dy) - distance_moved_update
-            r_start_update = start_row - int(10 / dy)
-            r_end_update = r_start_update + int(40 / dy)
-            # Update the extent of the zoomed region
-            extent_update = (c_start, c_end, r_end_update, r_start_update)
-            im_weld_spot.set_extent(extent_update)  # Update the extent for correct axis labels
-            # update the actual data for the zoom on weld spot
-            im_weld_spot.set_data(loaded_u_arrays[frame][r_start_update:r_end_update, c_start:c_end])
-
-        else:  # necessary to keep updating the weld spot data without moving the zoom
-            # Looks complicated, but only the weld_end_time should be different here
-            distance_moved_update = int((weld_speed / 60) * (weld_end_time - time_before_weld_start) / dy)
-            start_row = mid_index + int((weld_length // 2) / dy) - int((weld_spot_size // 2) / dy) - distance_moved_update
-            r_start_update = start_row - int(10 / dy)
-            r_end_update = r_start_update + int(40 / dy)
-            # Update the extent of the zoomed region
-            extent_update = (c_start, c_end, r_end_update, r_start_update)
-            im_weld_spot.set_extent(extent_update)  # Update the extent for correct axis labels
-            # update the actual data for the zoom on weld spot
-            im_weld_spot.set_data(loaded_u_arrays[frame][r_start_update:r_end_update, c_start:c_end])
-
-        for coll in ax_heatmap.collections:  # Remove old contours
-            coll.remove()
-        X, Y = np.meshgrid(np.arange(0, num_cols * dx, dx), np.arange(0, num_rows * dy, dy))
-        cont = ax_heatmap.contour(X, Y, loaded_u_arrays[frame], levels, colors='black', alpha=0.5)
-        plt.clabel(cont, inline=True, fontsize=8, fmt='%2.0f°C')
-
-        real_time = loaded_t_values[frame]  # Directly use the real timestamp
-
-        # Update line data, black dot position
-        line.set_data(loaded_t_values[:frame + 1], y_data_D[:frame + 1])
-        dot.set_data([loaded_t_values[frame]], [y_data_D[frame]])
-
-        if real_time > 18000:
-            time_text.set_text(f'Time: {int(real_time / 3600)} h')
-        elif real_time > 900:
-            time_text.set_text(f'Time: {int(real_time / 60)} min')
-        else:
-            time_text.set_text(f'Time: {int(real_time)} s')
-
-        # Return all artists that need to be updated
-        artists = [im, im_weld_spot, time_text, line, dot]
-        return artists
-
-    print("Creating Animation")
-    ani = FuncAnimation(fig, update, frames=len(loaded_u_arrays), repeat=False, blit=True)
-    # ani = FuncAnimation(fig, update, frames=30, repeat=False, blit=True)  # for testing, just create 1s animations
-
-    # Set up tqdm progress bar
-    pbar = tqdm(total=len(loaded_u_arrays), desc="Saving Animation")
-
-    def tqdm_callback(current_frame: int, total_frames: int):
-        # Update the progress bar
-        pbar.update(1)
-
-    before_save = time.time()
-    animation_file = RESULTS_DIR / "heat_map_animation.mp4"
-    ani.save(str(animation_file), writer='ffmpeg', dpi=200, fps=30, progress_callback=tqdm_callback)
-    after_save = time.time()
-
-    # Close the tqdm progress bar and figure
-    pbar.close()
-    print(f"Saving completed in {after_save - before_save:.2f} seconds.")
-
-    # Chose one, either show the animation after (good for inspecting points) or not
-    plt.close(fig)
-    # plt.show()
-# ---------------------------------------------------------------------------------------------------------------------
+from PyQt5 import QtCore, QtGui, QtWidgets
+from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+from matplotlib.figure import Figure
+
+from Common.launch_ready import StartupReadySignal
+from functions import (
+    ConfigError,
+    RESULTS_DIR,
+    SimulationCancelled,
+    build_initial_fields,
+    compute_derived,
+    create_result_view,
+    ensure_config_file,
+    load_settings,
+    load_snapshots,
+    preview_grid_info,
+    render_animation,
+    restore_default_config,
+    run_simulation,
+    update_result_view,
+    validate_settings,
+    write_settings,
+)
+
+
+APP_NAME = "WeldCraft - Heat Map"
+
+
+FIELD_GROUPS = [
+    (
+        "Geometry",
+        [
+            ("le", "Left base [mm]", "float", False),
+            ("ri", "Right base [mm]", "float", False),
+            ("we", "Weld width [mm]", "float", False),
+            ("th", "Base height [mm]", "float", False),
+            ("su_h", "Support height [mm]", "float", False),
+            ("su_w", "Support width [mm]", "float", False),
+            ("fr_ab", "Free space above [mm]", "float", True),
+            ("fr_be", "Free space below [mm]", "float", True),
+            ("weld_bead_thickness", "Bead thickness [mm]", "float", False),
+            ("dx", "Mesh spacing dx [mm]", "float", True),
+            ("dy", "Mesh spacing dy [mm]", "float", True),
+        ],
+    ),
+    (
+        "Temperature and material",
+        [
+            ("t_cool", "Interpass temperature [°C]", "float", False),
+            ("t_hot", "Initial weld temperature [°C]", "float", False),
+            ("t_room", "Room temperature [°C]", "float", False),
+            ("diff_coeff_bm", "Base-metal diffusivity [mm²/s]", "float", True),
+            ("diff_coeff_wm", "Weld-metal diffusivity [mm²/s]", "float", True),
+            ("diff_coeff_haz", "HAZ diffusivity [mm²/s]", "float", True),
+            ("diff_coeff_air", "Air diffusivity [mm²/s]", "float", True),
+            ("c", "Specific heat capacity", "float", True),
+            ("rho", "Density", "float", True),
+            ("conv_variable", "Cooling coefficient", "float", False),
+        ],
+    ),
+    (
+        "Weld motion",
+        [
+            ("weld_length", "Weld length [mm]", "float", False),
+            ("weld_speed", "Weld speed [mm/min]", "float", False),
+            ("weld_temp", "Heat-source temperature [°C]", "float", False),
+            ("weld_spot_size", "Spot size [mm]", "float", False),
+            ("time_before_weld_start", "Pre-weld delay [s]", "float", False),
+        ],
+    ),
+    (
+        "Simulation and output",
+        [
+            ("sim_time", "Simulation time [s]", "float", False),
+            ("save_so_often_per_sec", "Save rate [snapshots/s]", "float", False),
+            ("slow_down_beginning", "Extra early snapshots", "bool", False),
+            ("h5_filename", "HDF5 file", "filename", False),
+            ("animation_filename", "MP4 file", "filename", False),
+            ("figure_filename", "Figure file", "filename", False),
+            ("disable_overwrite_warning", "Disable overwrite warning", "bool", False),
+        ],
+    ),
+    (
+        "Display",
+        [
+            ("heatmap_style", "Color map", "choice", False),
+            ("heatmap_vmin", "Minimum [°C]", "float", False),
+            ("heatmap_vmax", "Maximum [°C]", "float", False),
+            ("show_contours", "Show contours", "bool", False),
+            ("contour_levels", "Contour levels [°C]", "list_float", False),
+            ("show_monitoring_points", "Show monitoring points", "bool", False),
+            ("show_mesh_lines", "Show mesh", "bool", False),
+            ("monitoring_distances", "Monitoring distances [mm]", "list_float", False),
+            ("monitoring_y_offset", "Monitoring Y offset [mm]", "float", True),
+            ("weld_zoom_margin", "Weld zoom margin [mm]", "float", False),
+            ("animation_fps", "Animation FPS", "int", True),
+            ("animation_dpi", "Animation DPI", "int", True),
+            ("animation_frame_stride", "Animation frame stride", "int", True),
+            ("use_boundary_adjustment", "Recalculate boundary mask while welding", "bool", True),
+        ],
+    ),
+]
+
+
+class SimulationWorker(QtCore.QThread):
+    progress = QtCore.pyqtSignal(float, str)
+    completed = QtCore.pyqtSignal(str)
+    cancelled = QtCore.pyqtSignal()
+    failed = QtCore.pyqtSignal(str)
+
+    def __init__(self, settings, output_path, parent=None):
+        super().__init__(parent)
+        self.settings = settings
+        self.output_path = output_path
+        self.stop_event = threading.Event()
+
+    def request_stop(self):
+        self.stop_event.set()
+
+    def run(self):
+        try:
+            result = run_simulation(
+                self.settings,
+                self.output_path,
+                progress_callback=lambda fraction, message, _time: self.progress.emit(fraction, message),
+                stop_event=self.stop_event,
+            )
+            self.completed.emit(str(result))
+        except SimulationCancelled:
+            self.cancelled.emit()
+        except Exception as exc:
+            self.failed.emit(f"{type(exc).__name__}: {exc}")
+
+
+class AnimationWorker(QtCore.QThread):
+    progress = QtCore.pyqtSignal(float, str)
+    completed = QtCore.pyqtSignal(str)
+    failed = QtCore.pyqtSignal(str)
+
+    def __init__(self, settings, loaded_data, output_path, parent=None):
+        super().__init__(parent)
+        self.settings = settings
+        self.loaded_data = loaded_data
+        self.output_path = output_path
+
+    def run(self):
+        try:
+            result = render_animation(
+                self.settings,
+                self.loaded_data,
+                self.output_path,
+                progress_callback=lambda fraction, message, _frame: self.progress.emit(fraction, message),
+            )
+            self.completed.emit(str(result))
+        except Exception as exc:
+            self.failed.emit(f"{type(exc).__name__}: {exc}")
+
+
+class MainWindow(QtWidgets.QMainWindow):
+    def __init__(self, settings):
+        super().__init__()
+        self.settings = settings
+        self.field_widgets = {}
+        self.field_rows = []
+        self.loading_widgets = True
+        self.simulation_worker = None
+        self.animation_worker = None
+        self.loaded_data = None
+        self.result_view = None
+        self._pending_frame = None
+        self._frame_update_timer = QtCore.QTimer(self)
+        self._frame_update_timer.setSingleShot(True)
+        self._frame_update_timer.setInterval(25)
+        self._frame_update_timer.timeout.connect(self._apply_pending_frame)
+
+        self.setWindowTitle(APP_NAME)
+        self.setWindowIcon(QtGui.QIcon(str(REPO_ROOT / "Resources" / "Images" / "WeldCraft.ico")))
+        self.resize(1500, 920)
+        self._build_ui()
+        self._populate_widgets()
+        self.loading_widgets = False
+        self._connect_widget_signals()
+        self._update_preview()
+        self.startup_ready_signal = StartupReadySignal(self)
+        self.showMaximized()
+
+    def _build_ui(self):
+        self.setStyleSheet(
+            """
+            QGroupBox { font-weight: bold; margin-top: 10px; }
+            QGroupBox::title { subcontrol-origin: margin; left: 8px; padding: 0 4px; }
+            QLineEdit, QComboBox { min-height: 24px; }
+            QPushButton { min-height: 28px; padding: 2px 10px; }
+            """
+        )
+        central = QtWidgets.QWidget(self)
+        self.setCentralWidget(central)
+        root_layout = QtWidgets.QVBoxLayout(central)
+        splitter = QtWidgets.QSplitter(QtCore.Qt.Horizontal)
+        root_layout.addWidget(splitter)
+
+        settings_scroll = QtWidgets.QScrollArea()
+        settings_scroll.setWidgetResizable(True)
+        settings_scroll.setMinimumWidth(380)
+        settings_panel = QtWidgets.QWidget()
+        settings_layout = QtWidgets.QVBoxLayout(settings_panel)
+        self.advanced_toggle = QtWidgets.QCheckBox("Show advanced settings")
+        self.advanced_toggle.setToolTip("Reveal mesh, numerical, boundary, and rendering controls.")
+        self.bam_logo_label = QtWidgets.QLabel()
+        self.bam_logo_label.setAlignment(QtCore.Qt.AlignCenter)
+        self.bam_logo_label.setMaximumHeight(60)
+        bam_logo_path = REPO_ROOT / "Resources" / "Images" / "BAM Logo.png"
+        if bam_logo_path.exists():
+            self.bam_logo_label.setPixmap(QtGui.QPixmap(str(bam_logo_path)))
+        settings_layout.addWidget(self.bam_logo_label)
+        settings_layout.addWidget(self.advanced_toggle)
+
+        for group_name, fields in FIELD_GROUPS:
+            group = QtWidgets.QGroupBox(group_name)
+            group_layout = QtWidgets.QVBoxLayout(group)
+            group_layout.setContentsMargins(8, 6, 8, 8)
+            group_layout.setSpacing(5)
+            for name, label_text, kind, advanced in fields:
+                label = QtWidgets.QLabel(label_text)
+                label.setToolTip(self._tooltip_for(name, "label"))
+                label.setWordWrap(True)
+                label.setMinimumWidth(140)
+                label.setMaximumWidth(220)
+                widget = self._make_widget(kind)
+                widget.setToolTip(self._tooltip_for(name, "input"))
+                row = QtWidgets.QWidget()
+                row_layout = QtWidgets.QHBoxLayout(row)
+                row_layout.setContentsMargins(0, 0, 0, 0)
+                row_layout.setSpacing(6)
+                row_layout.addWidget(label)
+                row_layout.addWidget(widget, 1)
+                group_layout.addWidget(row)
+                self.field_widgets[name] = widget
+                self.field_rows.append((row, advanced))
+            settings_layout.addWidget(group)
+
+        self.restore_button = QtWidgets.QPushButton("Restore shipped defaults")
+        self.restore_button.setToolTip("Replace config.py with the shipped P3 settings.")
+        settings_layout.addWidget(self.restore_button)
+        settings_layout.addStretch(1)
+        settings_scroll.setWidget(settings_panel)
+        right = QtWidgets.QWidget()
+        right_layout = QtWidgets.QVBoxLayout(right)
+        self.tabs = QtWidgets.QTabWidget()
+        right_layout.addWidget(self.tabs)
+        self.setup_tab = QtWidgets.QWidget()
+        setup_layout = QtWidgets.QVBoxLayout(self.setup_tab)
+        self.mesh_display_banner = QtWidgets.QLabel()
+        self.mesh_display_banner.setWordWrap(True)
+        self.mesh_display_banner.setStyleSheet(
+            "QLabel { background: #fff3cd; color: #664d03; border: 2px solid #e0a800; "
+            "border-radius: 4px; padding: 8px; font-weight: 600; }"
+        )
+        self.mesh_display_banner.hide()
+        setup_layout.addWidget(self.mesh_display_banner)
+        self.preview_figure = Figure(figsize=(8, 6))
+        self.preview_canvas = FigureCanvas(self.preview_figure)
+        setup_layout.addWidget(self.preview_canvas, 1)
+        self.derived_label = QtWidgets.QLabel()
+        self.derived_label.setWordWrap(True)
+        setup_layout.addWidget(self.derived_label)
+        setup_buttons = QtWidgets.QHBoxLayout()
+        self.run_button = QtWidgets.QPushButton("Start simulation")
+        self.cancel_button = QtWidgets.QPushButton("Cancel")
+        self.cancel_button.setEnabled(False)
+        self.load_button = QtWidgets.QPushButton("Load existing HDF5")
+        setup_buttons.addWidget(self.run_button)
+        setup_buttons.addWidget(self.cancel_button)
+        setup_buttons.addWidget(self.load_button)
+        setup_layout.addLayout(setup_buttons)
+        self.tabs.addTab(self.setup_tab, "Setup / Mesh")
+
+        self.results_tab = QtWidgets.QWidget()
+        results_layout = QtWidgets.QVBoxLayout(self.results_tab)
+        self.result_figure = Figure(figsize=(10, 7))
+        self.result_canvas = FigureCanvas(self.result_figure)
+        results_layout.addWidget(self.result_canvas, 1)
+        results_toolbar = QtWidgets.QHBoxLayout()
+        results_toolbar.addWidget(QtWidgets.QLabel("Frame:"))
+        self.frame_slider = QtWidgets.QSlider(QtCore.Qt.Horizontal)
+        self.frame_slider.setEnabled(False)
+        results_toolbar.addWidget(self.frame_slider, 1)
+        self.frame_label = QtWidgets.QLabel("No result loaded")
+        results_toolbar.addWidget(self.frame_label)
+        results_layout.addLayout(results_toolbar)
+        export_buttons = QtWidgets.QHBoxLayout()
+        self.export_figure_button = QtWidgets.QPushButton("Export figure")
+        self.export_animation_button = QtWidgets.QPushButton("Render MP4")
+        self.export_figure_button.setEnabled(False)
+        self.export_animation_button.setEnabled(False)
+        export_buttons.addWidget(self.export_figure_button)
+        export_buttons.addWidget(self.export_animation_button)
+        results_layout.addLayout(export_buttons)
+        self.results_tab_index = self.tabs.addTab(self.results_tab, "Results / Animation")
+        self.tabs.setTabVisible(self.results_tab_index, False)
+        splitter.addWidget(right)
+        splitter.addWidget(settings_scroll)
+        splitter.setStretchFactor(0, 1)
+        splitter.setStretchFactor(1, 0)
+        splitter.setSizes([1050, 430])
+
+        self.progress_bar = QtWidgets.QProgressBar()
+        self.progress_bar.setRange(0, 100)
+        self.status_label = QtWidgets.QLabel("Ready")
+        status_layout = QtWidgets.QHBoxLayout()
+        status_layout.addWidget(self.status_label, 1)
+        status_layout.addWidget(self.progress_bar)
+        root_layout.addLayout(status_layout)
+
+    @staticmethod
+    def _make_widget(kind):
+        if kind == "bool":
+            return QtWidgets.QCheckBox()
+        if kind == "choice":
+            widget = QtWidgets.QComboBox()
+            widget.addItems(["hot", "viridis", "plasma", "jet", "inferno"])
+            return widget
+        return QtWidgets.QLineEdit()
+
+    @staticmethod
+    def _tooltip_for(name, target="input"):
+        help_text = {
+            "le": ("Width of the base metal on the left side of the weld.", "Enter a positive length in millimetres."),
+            "ri": ("Width of the base metal on the right side of the weld.", "Enter a positive length in millimetres."),
+            "we": ("Width of the weld region in the cross-section.", "Enter a positive length in millimetres."),
+            "th": ("Height of the base metal below the support region.", "Enter a positive length in millimetres."),
+            "su_h": ("Height of the raised support geometry.", "Enter a positive length in millimetres."),
+            "su_w": ("Width of the raised support geometry.", "Enter a positive length in millimetres."),
+            "fr_ab": ("Extra air space above the sample.", "Advanced geometry setting; use a non-negative length."),
+            "fr_be": ("Extra air space below the sample.", "Advanced geometry setting; use a non-negative length."),
+            "weld_bead_thickness": ("Thickness of the represented weld bead.", "Must be positive and no wider than the weld width."),
+            "dx": ("Horizontal mesh spacing.", "Smaller spacing increases memory and runtime; 1 mm is recommended."),
+            "dy": ("Vertical mesh spacing.", "Keep this equal to dx unless testing an anisotropic mesh."),
+            "t_cool": ("Temperature of the material before welding and between passes.", "Enter a temperature in degrees Celsius."),
+            "t_hot": ("Temperature assigned to the initial weld region.", "Enter a temperature in degrees Celsius."),
+            "t_room": ("Temperature of the surrounding air.", "Enter a temperature in degrees Celsius."),
+            "diff_coeff_bm": ("Thermal diffusivity of the base metal.", "Advanced material value in mm²/s."),
+            "diff_coeff_wm": ("Thermal diffusivity of the weld metal.", "Advanced material value in mm²/s."),
+            "diff_coeff_haz": ("Thermal diffusivity reserved for the HAZ material.", "Advanced material value in mm²/s."),
+            "diff_coeff_air": ("Diffusivity assigned to air cells.", "Normally zero for the current boundary treatment."),
+            "c": ("Specific heat capacity used by cooling.", "Advanced material value."),
+            "rho": ("Density used by cooling.", "Advanced material value."),
+            "conv_variable": ("Strength of the simplified cooling term.", "This is a model coefficient, not a direct surface heat-transfer coefficient."),
+            "weld_length": ("Length travelled by the moving heat source.", "Enter a positive length in millimetres."),
+            "weld_speed": ("Travel speed of the moving heat source.", "Enter a positive speed in millimetres per minute."),
+            "weld_temp": ("Temperature assigned to the moving heat source.", "Enter a temperature in degrees Celsius."),
+            "weld_spot_size": ("Length of the moving heated spot.", "Must be positive and no longer than the weld length."),
+            "time_before_weld_start": ("Time simulated before the heat source starts moving.", "Enter a non-negative delay in seconds."),
+            "sim_time": ("Total simulated time.", "Longer runs require more computation and storage."),
+            "save_so_often_per_sec": ("Number of result snapshots saved per simulated second.", "This controls stored frames, not the internal timestep."),
+            "slow_down_beginning": ("Save extra frames during the first 60 seconds.", "Useful for inspecting the moving weld, but increases file size."),
+            "h5_filename": ("Name of the HDF5 snapshot file.", "Use a filename only; it is saved in P3/02_Results."),
+            "animation_filename": ("Name of the exported MP4 file.", "Use a filename only; FFmpeg is required for export."),
+            "figure_filename": ("Name of the exported figure file.", "Use a filename only; PNG, PDF, and SVG are supported."),
+            "disable_overwrite_warning": ("Skip confirmation before replacing output files.", "Use with care; this applies to HDF5, figures, and MP4 files."),
+            "heatmap_style": ("Color map used for heatmap displays.", "The same map is used for the setup preview and results."),
+            "heatmap_vmin": ("Lower limit of the heatmap color scale.", "Values below this limit use the lowest color."),
+            "heatmap_vmax": ("Upper limit of the heatmap color scale.", "Values above this limit use the highest color."),
+            "show_contours": ("Draw temperature contour lines on the heatmap.", "Toggle contour lines on or off."),
+            "contour_levels": ("Temperatures at which contour lines are drawn.", "Enter comma-separated values, for example: 200, 300, 400."),
+            "show_monitoring_points": ("Mark temperature-monitoring locations on the heatmap.", "Toggle monitoring markers and labels on or off."),
+            "show_mesh_lines": ("Show the computational mesh in the setup preview.", "The grid is displayed at a readable interval; dx and dy remain unchanged."),
+            "monitoring_distances": ("Distances from the weld used for temperature traces.", "Enter comma-separated distances in millimetres."),
+            "monitoring_y_offset": ("Vertical offset of the monitoring line.", "Advanced placement setting in millimetres."),
+            "weld_zoom_margin": ("Extra space around the moving weld in the weld-area view.", "Increase this to show more surrounding material."),
+            "animation_fps": ("Playback frame rate for MP4 export.", "Advanced export setting."),
+            "animation_dpi": ("Resolution used for exported figures and MP4 frames.", "Higher values increase render time and file size."),
+            "animation_frame_stride": ("Number of stored frames skipped between exported frames.", "A value of 1 exports every stored frame."),
+            "use_boundary_adjustment": ("Recalculate the air/metal boundary while the weld moves.", "Advanced experimental solver option."),
+        }
+        label_help, input_help = help_text.get(name, ("P3 simulation setting.", "Enter a valid value."))
+        return label_help if target == "label" else input_help
+
+    def _populate_widgets(self):
+        for name, widget in self.field_widgets.items():
+            value = self.settings[name]
+            if isinstance(widget, QtWidgets.QCheckBox):
+                widget.setChecked(bool(value))
+            elif isinstance(widget, QtWidgets.QComboBox):
+                widget.setCurrentText(str(value))
+            elif isinstance(value, list):
+                widget.setText(", ".join(str(item) for item in value))
+            else:
+                widget.setText(str(value))
+        self._set_advanced_visibility(False)
+
+    def _connect_widget_signals(self):
+        self.advanced_toggle.toggled.connect(self._set_advanced_visibility)
+        self.restore_button.clicked.connect(self._restore_defaults)
+        self.run_button.clicked.connect(self._start_simulation)
+        self.cancel_button.clicked.connect(self._cancel_simulation)
+        self.load_button.clicked.connect(self._load_existing)
+        self.frame_slider.valueChanged.connect(self._draw_result)
+        self.export_figure_button.clicked.connect(self._export_figure)
+        self.export_animation_button.clicked.connect(self._export_animation)
+        for name, widget in self.field_widgets.items():
+            if isinstance(widget, QtWidgets.QLineEdit):
+                widget.editingFinished.connect(lambda _name=name: self._persist_from_widgets(_name))
+            elif isinstance(widget, QtWidgets.QCheckBox):
+                widget.stateChanged.connect(lambda _state, _name=name: self._persist_from_widgets(_name))
+            elif isinstance(widget, QtWidgets.QComboBox):
+                widget.currentTextChanged.connect(lambda _text, _name=name: self._persist_from_widgets(_name))
+
+    def _set_advanced_visibility(self, visible):
+        for row, advanced in self.field_rows:
+            row.setVisible(bool(visible or not advanced))
+
+    def _settings_from_widgets(self):
+        values = dict(self.settings)
+        for name, widget in self.field_widgets.items():
+            kind = next(kind for _group, fields in FIELD_GROUPS for field_name, _label, kind, _advanced in fields if field_name == name)
+            if kind == "bool":
+                values[name] = widget.isChecked()
+            elif kind == "choice":
+                values[name] = widget.currentText()
+            else:
+                text = widget.text().strip()
+                if kind == "float":
+                    values[name] = float(text)
+                elif kind == "int":
+                    values[name] = int(text)
+                elif kind == "list_float":
+                    values[name] = [float(part.strip()) for part in text.split(",") if part.strip()]
+                else:
+                    values[name] = text
+        return validate_settings(values)
+
+    def _persist_from_widgets(self, changed_name=""):
+        if self.loading_widgets:
+            return
+        try:
+            self.settings = write_settings(self._settings_from_widgets())
+            self._clear_error(changed_name)
+            self.status_label.setText(f"Saved {changed_name or 'settings'} to config.py")
+            self._update_preview()
+            if self.loaded_data:
+                self.result_view = None
+                self._render_result_frame(self.frame_slider.value())
+        except Exception as exc:
+            self._mark_error(changed_name)
+            self.status_label.setText(f"Invalid setting: {exc}")
+
+    def _clear_error(self, name):
+        widget = self.field_widgets.get(name)
+        if widget:
+            widget.setStyleSheet("")
+
+    def _mark_error(self, name):
+        widget = self.field_widgets.get(name)
+        if widget:
+            widget.setStyleSheet("border: 1px solid #c62828;")
+
+    def _restore_defaults(self):
+        answer = QtWidgets.QMessageBox.question(
+            self,
+            "Restore defaults",
+            "Replace the current persistent config.py with the shipped P3 defaults?",
+            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+        )
+        if answer != QtWidgets.QMessageBox.Yes:
+            return
+        try:
+            self.settings = restore_default_config()
+            self.loading_widgets = True
+            self._populate_widgets()
+            self.loading_widgets = False
+            self._update_preview()
+            self.result_view = None
+            if self.loaded_data:
+                self._render_result_frame(self.frame_slider.value())
+            self.status_label.setText("Restored shipped defaults")
+        except Exception as exc:
+            QtWidgets.QMessageBox.critical(self, "Restore failed", str(exc))
+
+    def _update_preview(self):
+        try:
+            fields, diffusion, derived = build_initial_fields(self.settings)
+            self.preview_figure.clear()
+            axis = self.preview_figure.add_subplot(111)
+            dx = float(self.settings["dx"])
+            dy = float(self.settings["dy"])
+            extent = [-(dx / 2), (fields.shape[1] - 0.5) * dx, (fields.shape[0] - 0.5) * dy, -(dy / 2)]
+            image = axis.imshow(
+                fields,
+                cmap=self.settings["heatmap_style"],
+                vmin=self.settings["heatmap_vmin"],
+                vmax=self.settings["heatmap_vmax"],
+                interpolation="nearest",
+                aspect="equal",
+                extent=extent,
+            )
+            grid_info = preview_grid_info(fields.shape, dx, dy)
+            if self.settings["show_mesh_lines"]:
+                grid_stride = grid_info["stride"]
+                axis.set_xticks(np.arange(-0.5, fields.shape[1], grid_stride) * dx, minor=True)
+                axis.set_yticks(np.arange(-0.5, fields.shape[0], grid_stride) * dy, minor=True)
+                axis.grid(which="minor", color="#8795a1", alpha=0.55, linewidth=0.45)
+                axis.tick_params(which="minor", bottom=False, left=False)
+            if self.settings["show_mesh_lines"] and grid_info["limited"]:
+                self.mesh_display_banner.setText(grid_info["message"])
+                self.mesh_display_banner.show()
+            else:
+                self.mesh_display_banner.hide()
+            x_values = np.arange(fields.shape[1]) * dx
+            y_values = np.arange(fields.shape[0]) * dy
+            axis.contour(x_values, y_values, diffusion > 0, levels=[0.5], colors="black", linewidths=1.2)
+            self.preview_figure.colorbar(image, ax=axis, label="Temperature [°C]")
+            axis.set_title("Mesh preview")
+            axis.set_xlabel("X [mm]")
+            axis.set_ylabel("Y [mm]")
+            self.preview_canvas.draw_idle()
+            self.derived_label.setText(
+                f"Calculated stable dt: {derived['dt']:.6g} s   |   Mesh: {derived['nx']} x {derived['ny']} "
+                f"({derived['nx'] * derived['ny']:,} cells)   |   Weld ends: {derived['weld_end_time']:.2f} s"
+            )
+        except Exception as exc:
+            self.derived_label.setText(f"Preview unavailable: {exc}")
+
+    def _result_path(self, filename):
+        return RESULTS_DIR / filename
+
+    def _confirm_overwrite(self, path):
+        if not path.exists() or self.settings.get("disable_overwrite_warning", False):
+            return True
+        box = QtWidgets.QMessageBox(self)
+        box.setIcon(QtWidgets.QMessageBox.Warning)
+        box.setWindowTitle("Overwrite existing output?")
+        box.setText(f"The file already exists:\n{path.name}\n\nIt will be replaced.")
+        box.setStandardButtons(QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No)
+        result = box.exec_()
+        return result == QtWidgets.QMessageBox.Yes
+
+    def _start_simulation(self):
+        try:
+            self.settings = write_settings(self._settings_from_widgets())
+        except Exception as exc:
+            QtWidgets.QMessageBox.warning(self, "Cannot start simulation", str(exc))
+            return
+        output = self._result_path(self.settings["h5_filename"])
+        if not self._confirm_overwrite(output):
+            return
+        self.run_button.setEnabled(False)
+        self.cancel_button.setEnabled(True)
+        self.load_button.setEnabled(False)
+        self.progress_bar.setValue(0)
+        self.status_label.setText("Starting simulation...")
+        self.simulation_worker = SimulationWorker(self.settings, output, self)
+        self.simulation_worker.progress.connect(self._worker_progress)
+        self.simulation_worker.completed.connect(self._simulation_completed)
+        self.simulation_worker.cancelled.connect(self._simulation_cancelled)
+        self.simulation_worker.failed.connect(self._worker_failed)
+        self.simulation_worker.finished.connect(self._simulation_thread_finished)
+        self.simulation_worker.start()
+
+    def _cancel_simulation(self):
+        if self.simulation_worker:
+            self.simulation_worker.request_stop()
+            self.status_label.setText("Cancelling simulation...")
+            self.cancel_button.setEnabled(False)
+
+    def _worker_progress(self, fraction, message):
+        self.progress_bar.setValue(min(100, max(0, int(fraction * 100))))
+        self.status_label.setText(message)
+
+    def _simulation_completed(self, path):
+        self.status_label.setText(f"Simulation complete: {Path(path).name}")
+        self.progress_bar.setValue(100)
+        self._load_result_path(Path(path))
+
+    def _simulation_cancelled(self):
+        self.status_label.setText("Simulation cancelled")
+
+    def _simulation_thread_finished(self):
+        self.run_button.setEnabled(True)
+        self.cancel_button.setEnabled(False)
+        self.load_button.setEnabled(True)
+        self.simulation_worker = None
+
+    def _worker_failed(self, message):
+        self.status_label.setText("Operation failed")
+        QtWidgets.QMessageBox.critical(self, "P3 Heat Map error", message)
+
+    def _load_existing(self):
+        self._load_result_path(self._result_path(self.settings["h5_filename"]))
+
+    def _load_result_path(self, path):
+        try:
+            self.loaded_data = load_snapshots(path)
+            self.result_view = None
+            self._pending_frame = None
+            self._frame_update_timer.stop()
+            self.tabs.setTabVisible(self.results_tab_index, True)
+            self.frame_slider.setRange(0, len(self.loaded_data["arrays"]) - 1)
+            self.frame_slider.setValue(0)
+            self.frame_slider.setEnabled(True)
+            self.export_figure_button.setEnabled(True)
+            self.export_animation_button.setEnabled(True)
+            self.tabs.setCurrentWidget(self.results_tab)
+            self._render_result_frame(0)
+            self.status_label.setText(f"Loaded {path.name}: {len(self.loaded_data['arrays'])} frames")
+        except Exception as exc:
+            self.loaded_data = None
+            self.result_view = None
+            self.tabs.setTabVisible(self.results_tab_index, False)
+            self.status_label.setText(f"Could not load result: {exc}")
+            QtWidgets.QMessageBox.warning(self, "Could not load HDF5", str(exc))
+
+    def _draw_result(self, frame):
+        if not self.loaded_data:
+            return
+        self._pending_frame = int(frame)
+        if not self._frame_update_timer.isActive():
+            self._frame_update_timer.start()
+
+    def _apply_pending_frame(self):
+        if self._pending_frame is None:
+            return
+        frame = self._pending_frame
+        self._pending_frame = None
+        self._render_result_frame(frame)
+
+    def _render_result_frame(self, frame):
+        if not self.loaded_data:
+            return
+        try:
+            if self.result_view is None:
+                self.result_view = create_result_view(self.settings, self.loaded_data, figure=self.result_figure)
+            frame = update_result_view(self.result_view, int(frame))
+            self.result_canvas.draw_idle()
+            time_value = self.loaded_data["times"][frame]
+            self.frame_label.setText(f"{int(frame) + 1}/{len(self.loaded_data['arrays'])} ({time_value:.0f} s)")
+        except Exception as exc:
+            self.status_label.setText(f"Could not draw result: {exc}")
+
+    def _export_figure(self):
+        if not self.loaded_data:
+            return
+        path = self._result_path(self.settings["figure_filename"])
+        if not self._confirm_overwrite(path):
+            return
+        try:
+            self.result_figure.savefig(path, dpi=self.settings["animation_dpi"], bbox_inches="tight")
+            self.status_label.setText(f"Exported figure: {path.name}")
+        except Exception as exc:
+            QtWidgets.QMessageBox.critical(self, "Figure export failed", str(exc))
+
+    def _export_animation(self):
+        if not self.loaded_data:
+            return
+        path = self._result_path(self.settings["animation_filename"])
+        if not self._confirm_overwrite(path):
+            return
+        self.export_animation_button.setEnabled(False)
+        self.status_label.setText("Starting animation render...")
+        self.progress_bar.setValue(0)
+        self.animation_worker = AnimationWorker(self.settings, self.loaded_data, path, self)
+        self.animation_worker.progress.connect(self._worker_progress)
+        self.animation_worker.completed.connect(lambda result: self.status_label.setText(f"Exported animation: {Path(result).name}"))
+        self.animation_worker.failed.connect(self._worker_failed)
+        self.animation_worker.finished.connect(lambda: self.export_animation_button.setEnabled(True))
+        self.animation_worker.start()
+
+    def closeEvent(self, event):
+        if self.simulation_worker and self.simulation_worker.isRunning():
+            answer = QtWidgets.QMessageBox.question(
+                self,
+                "Simulation running",
+                "Cancel the running simulation and close P3 Heat Map?",
+                QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+            )
+            if answer != QtWidgets.QMessageBox.Yes:
+                event.ignore()
+                return
+            self.simulation_worker.request_stop()
+            self.simulation_worker.wait(5000)
+        if self.animation_worker and self.animation_worker.isRunning():
+            self.animation_worker.wait(5000)
+        event.accept()
+
+
+def _show_config_failure(app, error):
+    box = QtWidgets.QMessageBox()
+    box.setIcon(QtWidgets.QMessageBox.Critical)
+    box.setWindowTitle("P3 Heat Map configuration error")
+    box.setText("config.py could not be loaded or validated.")
+    box.setInformativeText(str(error))
+    restore = box.addButton("Restore shipped defaults", QtWidgets.QMessageBox.AcceptRole)
+    box.addButton("Exit", QtWidgets.QMessageBox.RejectRole)
+    box.exec_()
+    if box.clickedButton() is restore:
+        try:
+            restore_default_config()
+            return True
+        except Exception as restore_error:
+            QtWidgets.QMessageBox.critical(None, "Restore failed", str(restore_error))
+    return False
+
+
+def launch_gui():
+    app = QtWidgets.QApplication(sys.argv)
+    app.setApplicationName(APP_NAME)
+    try:
+        ensure_config_file()
+        settings = load_settings()
+    except Exception as error:
+        if not _show_config_failure(app, error):
+            return 2
+        try:
+            settings = load_settings()
+        except Exception as second_error:
+            QtWidgets.QMessageBox.critical(None, "Configuration still invalid", str(second_error))
+            return 2
+    window = MainWindow(settings)
+    return app.exec_()
+
+
+def run_cli(render=False):
+    settings = load_settings()
+    output = RESULTS_DIR / settings["h5_filename"]
+    print(f"Running P3 Heat Map: {output}")
+    run_simulation(settings, output, progress_callback=lambda fraction, message, _time: print(f"{fraction * 100:6.2f}% {message}"))
+    if render:
+        data = load_snapshots(output)
+        animation_path = RESULTS_DIR / settings["animation_filename"]
+        render_animation(settings, data, animation_path)
+        print(f"Animation written to {animation_path}")
+    return 0
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description="WeldCraft P3 Heat Map")
+    parser.add_argument("--gui", action="store_true", help="open the PyQt5 GUI")
+    parser.add_argument("--cli", action="store_true", help="run the simulation directly")
+    parser.add_argument("--render", action="store_true", help="render an MP4 after a CLI simulation")
+    args = parser.parse_args(argv)
+    if args.gui:
+        return launch_gui()
+    return run_cli(render=args.render)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
