@@ -1,7 +1,8 @@
 # Lattice Visualizer Standalone Release Builder
 
-This directory contains the canonical local-only builder for standalone Lattice
-Visualizer release assets.
+This directory contains the canonical local-only builder for the complete
+two-window Lattice Visualizer application. The portable release contains the
+PyQt5 toolbox and the PyVista renderer child built from the same source tree.
 
 ## Build command
 
@@ -14,9 +15,9 @@ Run from any directory and always provide the release version:
 ```
 
 The builder validates the interpreter and dependency versions, tests the source
-application, creates a PyInstaller one-folder executable, tests configuration
-discovery in the packaged application, creates both RAR files, and verifies
-their contents.
+renderer, creates coordinated PyInstaller one-folder GUI and renderer
+executables, tests the portable configuration, creates both RAR files, and
+verifies their contents.
 
 For version `0.3`, the final local output is:
 
@@ -26,6 +27,10 @@ dist/v0.3/
 |-- Lattice-Visualizer-v0.3-Script.rar
 `-- Lattice-Visualizer-v0.3-Portable.rar
 ```
+
+The portable folder contains `visualize_lattice.exe` as the toolbox entry
+point, `visualize_lattice_renderer.exe` as its PyVista child, and a fully
+commented persistent `config.py`.
 
 Copy the contents of `Plain Files` into the standalone repository's existing
 `Plain Files` directory when the user explicitly chooses to update it. Upload

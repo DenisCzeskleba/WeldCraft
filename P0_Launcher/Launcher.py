@@ -48,17 +48,18 @@ class HoverButton(QPushButton):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.hovered_text = ""
+        self.hovered_note = ""
 
     def enterEvent(self, event):
         main_window = self.window()
         if hasattr(main_window, "update_info_text"):
-            main_window.update_info_text(self.hovered_text)
+            main_window.update_info_text(self.hovered_text, self.hovered_note)
         super().enterEvent(event)
 
     def leaveEvent(self, event):
         main_window = self.window()
         if hasattr(main_window, "update_info_text"):
-            main_window.update_info_text(main_window.default_text)
+            main_window.update_info_text(main_window.default_text, "")
         super().leaveEvent(event)
 
 
@@ -200,23 +201,19 @@ class Launcher(QMainWindow):
             qt_app.setWindowIcon(QtGui.QIcon(ico_path))
 
         self.main_default_text = (
-            "Hover a module button to see a short description. Some modules are still code-only and not launchable "
-            "from the GUI yet."
+            "Hover over a module button for a short description."
         )
-        self.analysis_default_text = "Choose an analysis tool placeholder or return to the main launcher page."
+        self.analysis_default_text = "Choose an analysis tool or return to the main launcher page."
         self.default_text = self.main_default_text
+        self.gui_beta_note = "Graphical user interface still in beta. More testing needed. Full functionality in direct scripts."
         self.p2_hydrogen_info = (
-            "Hydrogen Diffusion During Welding is code-only for now. Use the scripts directly; a GUI is planned "
-            "later, but not confirmed yet."
+            "Main WeldCraft welding workflow for heat and hydrogen diffusion during welding."
         )
-        self.p3_heat_map_hover = "Open the P3 thermal heat-map simulator."
         self.p3_heat_map_info = (
-            "Configure weld geometry and thermal settings, preview the mesh, run a 2D heat simulation, and inspect "
-            "temperature maps, monitoring traces, and optional animation exports."
+            "Set weld geometry and thermal settings, run a 2D heat simulation, and inspect temperature maps and traces."
         )
         self.p6_diffusion_info = (
-            "Visualize Diffusion (Brownian Motion) visualizes diffusion through Brownian motion. It currently "
-            "needs to be launched separately via code; launcher/GUI support is in development."
+            "Generate Brownian-motion diffusion data and create an animation."
         )
 
         self.launcher_info_text = self.findChild(QTextEdit, "textEdit_info_text")
@@ -230,7 +227,7 @@ class Launcher(QMainWindow):
         self.path_lattice_visualizer = os.path.join(
             REPO_ROOT,
             "P5_Lattice_Visualizer",
-            "visualize_lattice.py",
+            "lattice_visualizer_gui.py",
         )
         self.path_heat_map = os.path.join(
             REPO_ROOT,
@@ -287,7 +284,6 @@ class Launcher(QMainWindow):
             hover_button.setMaximumSize(button.maximumSize())
             hover_button.setFont(button.font())
             hover_button.setStyleSheet(button.styleSheet())
-            hover_button.setToolTip(button.toolTip())
             hover_button.setFocusPolicy(button.focusPolicy())
 
             parent_layout = button.parentWidget().layout()
@@ -304,14 +300,22 @@ class Launcher(QMainWindow):
         for slot_id, button in self.slot_buttons.items():
             button.clicked.connect(partial(self.handle_slot_clicked, slot_id))
 
-    def build_page_entry(self, text, hover_text, action, enabled=True, visible=True, info_text=None):
+    def build_page_entry(
+        self,
+        text,
+        info_text,
+        action,
+        enabled=True,
+        visible=True,
+        status_note="",
+    ):
         return {
             "text": text,
-            "hover_text": hover_text,
-            "info_text": info_text if info_text is not None else hover_text,
+            "info_text": info_text,
             "action": action,
             "enabled": enabled,
             "visible": visible,
+            "status_note": status_note,
         }
 
     def build_page_definitions(self):
@@ -319,47 +323,44 @@ class Launcher(QMainWindow):
             MAIN_PAGE: [
                 self.build_page_entry(
                     "Simulate Hydrogen Diffusion",
-                    (
-                        "WeldCraft - Simulate Hydrogen Diffusion: visual 1D/2D hydrogen diffusion and heat transport "
-                        "simulation with numerical accuracy and animation tools."
-                    ),
+                    "Run 1D/2D hydrogen diffusion and heat-transport simulations with plots and animation tools.",
                     self.start_simulate_hydrogen_diffusion,
                 ),
                 self.build_page_entry(
                     "Hydrogen Diffusion During Welding",
                     self.p2_hydrogen_info,
                     self.start_hydrogen_during_welding,
+                    status_note=self.gui_beta_note,
                 ),
                 self.build_page_entry(
                     "Heat Map",
-                    self.p3_heat_map_hover,
+                    self.p3_heat_map_info,
                     self.start_heat_map,
-                    info_text=self.p3_heat_map_info,
+                    status_note=self.gui_beta_note,
                 ),
                 self.build_page_entry(
-                    "Reserved P4",
-                    "P4 is reserved for a future WeldCraft module.",
+                    "Coming Soon",
+                    "This module is coming soon.",
                     partial(
                         self.show_placeholder_message,
-                        "P4 is reserved for a future WeldCraft module.",
+                        "This module is coming soon.",
                     ),
                 ),
                 self.build_page_entry(
                     "Lattice Visualizer",
-                    (
-                        "Visualize SC, BCC, and FCC crystal lattices with configurable dopants, "
-                        "overlays, and large atom counts."
-                    ),
+                    "Configure and render SC, BCC, and FCC crystal lattices with dopants, overlays, and exports.",
                     self.start_lattice_visualizer,
+                    status_note=self.gui_beta_note,
                 ),
                 self.build_page_entry(
                     "Visualize Diffusion (Brownian Motion)",
                     self.p6_diffusion_info,
                     partial(self.show_placeholder_message, self.p6_diffusion_info),
+                    status_note=self.gui_beta_note,
                 ),
                 self.build_page_entry(
                     "Analysis Tools",
-                    "Open the analysis tools launcher page.",
+                    "Open the analysis tools page.",
                     partial(self.show_page, ANALYSIS_PAGE),
                 ),
             ],
@@ -422,8 +423,8 @@ class Launcher(QMainWindow):
 
             entry = page_entries[slot_index]
             button.setText(entry["text"])
-            button.hovered_text = entry.get("info_text", entry["hover_text"])
-            button.setToolTip(entry["hover_text"])
+            button.hovered_text = entry["info_text"]
+            button.hovered_note = entry.get("status_note", "")
             button.setVisible(entry.get("visible", True))
             button.setEnabled(entry.get("enabled", True) and slot_id not in self.active_processes)
             self.slot_actions[slot_id] = entry["action"] if entry.get("enabled", True) else None
@@ -431,8 +432,32 @@ class Launcher(QMainWindow):
         if reset_info_text:
             self.update_info_text(self.default_text)
 
-    def update_info_text(self, text):
+    def update_info_text(self, text, note=""):
+        if note:
+            note = f"*** {note} ***"
+            text = self.add_bottom_spacing(text, note)
         self.launcher_info_text.setPlainText(text)
+
+    def add_bottom_spacing(self, text, note):
+        viewport_width = max(1, self.launcher_info_text.viewport().width())
+        viewport_height = self.launcher_info_text.viewport().height()
+        font = self.launcher_info_text.font()
+        line_height = QtGui.QFontMetrics(font).lineSpacing()
+
+        document = QtGui.QTextDocument()
+        document.setDefaultFont(font)
+        document.setDocumentMargin(self.launcher_info_text.document().documentMargin())
+
+        previous_blank_lines = 1
+        for blank_lines in range(1, 100):
+            candidate = text + ("\n" * blank_lines) + note
+            document.setPlainText(candidate)
+            document.setTextWidth(viewport_width)
+            if document.size().height() + line_height > viewport_height:
+                break
+            previous_blank_lines = blank_lines
+
+        return text + ("\n" * (previous_blank_lines + 1)) + note
 
     def show_placeholder_message(self, message):
         self.update_info_text(message)

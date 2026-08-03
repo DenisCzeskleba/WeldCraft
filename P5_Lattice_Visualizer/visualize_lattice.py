@@ -4,18 +4,19 @@ Lattice Visualizer — SC/BCC/FCC with dopants (PyVista/VTK)
 This script builds crystalline lattices at scale, optionally places dopants
 (substitutional/interstitial), and renders them efficiently using GPU-instanced
 glyphs when available. It also supports export (meshes/screenshots), unit-cell
-overlays, picking (find Hydrogen), and a YAML/JSON-driven configuration.
-
-Note: The only changes here are documentation strings and comments; no code logic
-has been removed or added.
+overlays, picking (find Hydrogen), and a documented Python configuration.
 """
 
 from dataclasses import dataclass, field, asdict
 from typing import List, Tuple, Dict, Optional, Union
 import argparse
+import ast
+import importlib.util
 import json
 import os
+import pprint
 import sys
+import time
 from pathlib import Path
 import numpy as np
 import pyvista as pv
@@ -39,16 +40,32 @@ except Exception:
         # No hardware instancing available — still keep vtk types for other uses
         from pyvista import _vtk as vtk  # noqa: F401
         HAVE_GLYPH3D_MAPPER = False
-try:
-    import yaml  # optional
-    HAVE_YAML = True
-except Exception:
-    HAVE_YAML = False
-
-# --- Green-arrow / default config support ---
+# --- Persistent documented config support ---
 CONFIG_OVERRIDE: Optional[str] = None
-DEFAULT_CONFIG_BASENAME = "User Input.yaml"
+DEFAULT_CONFIG_BASENAME = "config.py"
+DEFAULT_CONFIG_TEMPLATE = "config_default.py"
 WELDCRAFT_READY_FILE_ENV_VAR = "WELDCRAFT_STARTUP_READY_FILE"
+MAX_TRUE_DOPANT_SPHERES = 500
+
+# These settings change the scene extent, focal point, or explicitly requested
+# camera. Retaining the previous camera for them can leave a one-cell lattice
+# stranded at the focal point of a million-atom scene.
+CAMERA_REFRAME_KEYS = {
+    "target_atoms",
+    "lattice",
+    "lattice_size_behavior",
+    "demo_cell_auto",
+    "demo_cell_force",
+    "r",
+    "camera_preset",
+    "camera_direction",
+    "camera_view_up",
+    "camera_distance_scale",
+    "camera_normalize_demo_atom_size",
+    "camera_parallel_projection",
+    "camera_view_angle",
+    "defaults",
+}
 
 
 def runtime_directory() -> Path:
@@ -75,7 +92,7 @@ def mark_weldcraft_startup_ready() -> bool:
 
 def guess_default_config() -> Optional[str]:
     """
-Search likely locations/env var for a default config file path.
+Search likely locations/env var for the persistent Python config file.
     """
 
     if CONFIG_OVERRIDE:
@@ -92,12 +109,57 @@ Search likely locations/env var for a default config file path.
     if env and Path(env).exists():
         return env
 
-    for name in ("User Input.yaml", "config.yml", "lattice.yaml", "lattice.yml"):
-        for base in (Path.cwd(), runtime_directory()):
+    for name in (DEFAULT_CONFIG_BASENAME,):
+        # The persistent application config lives beside the script/executable.
+        # Prefer it over an unrelated file named config.py in the caller's
+        # working directory. Explicit --config and LATTICE_CONFIG overrides
+        # remain available for code-driven runs.
+        for base in (runtime_directory(), Path.cwd()):
             cand = base / name
             if cand.exists():
                 return str(cand)
     return None
+
+
+def default_config_template_path() -> Path:
+    """Locate the tracked, fully commented default configuration template."""
+
+    candidates = [
+        runtime_directory() / "01_Resources" / DEFAULT_CONFIG_TEMPLATE,
+        runtime_directory() / DEFAULT_CONFIG_TEMPLATE,
+        Path(__file__).resolve().parent / "01_Resources" / DEFAULT_CONFIG_TEMPLATE,
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    raise FileNotFoundError(
+        "Could not locate the documented lattice configuration template: "
+        f"{DEFAULT_CONFIG_TEMPLATE}"
+    )
+
+
+def persistent_config_path() -> Path:
+    """Return the local configuration beside the source or frozen executable."""
+
+    return runtime_directory() / DEFAULT_CONFIG_BASENAME
+
+
+def ensure_config_file() -> Path:
+    """Create the local persistent config from the documented defaults if needed."""
+
+    path = persistent_config_path()
+    if path.exists():
+        return path
+
+    template = default_config_template_path()
+    temporary = path.with_name(path.name + ".tmp")
+    temporary.write_text(
+        template.read_text(encoding="utf-8"),
+        encoding="utf-8",
+        newline="\n",
+    )
+    temporary.replace(path)
+    return path
 
 
 # ------------------ Data models ------------------
@@ -111,7 +173,7 @@ Dataclass for a dopant/secondary species (visual color, size, placement mode, et
     color: str
     # visual radius is computed later from size_scale; keep as internal cache
     radius: Optional[float] = None
-    # YAML no longer provides positions; default to empty list
+    # Persisted config does not require explicit generated positions.
     positions: List[Tuple[float, float, float]] = field(default_factory=list)
 
     mode: str = "substitutional"         # "substitutional" | "interstitial"
@@ -277,6 +339,63 @@ Dataclass for all runtime settings (lattice, sizes, rendering, dopants, overlays
 
     demo_cell_auto: bool = True  # auto-activate if target_atoms <= threshold for the chosen lattice
     demo_cell_force: Optional[bool] = None  # set to True/False to override auto (None = auto)
+    random_seed: Optional[int] = None  # Optional repeatable seed for random dopant placement.
+
+
+def validate_config(cfg: Config) -> None:
+    """Reject invalid or physically impossible settings with clear messages."""
+
+    errors = []
+    lattice = str(cfg.lattice or "").strip().lower().replace("_", " ")
+    if lattice not in {"simple cubic", "sc", "bcc", "fcc"}:
+        errors.append("lattice must be Simple Cubic (SC), BCC, or FCC")
+    if int(cfg.target_atoms) < 1:
+        errors.append("target_atoms must be at least 1")
+    if not math.isfinite(float(cfg.r)) or float(cfg.r) <= 0:
+        errors.append("r must be a positive finite radius")
+    if not math.isfinite(float(cfg.base_radius_scale)) or float(cfg.base_radius_scale) <= 0:
+        errors.append("base_radius_scale must be positive")
+    if int(cfg.stride) < 1:
+        errors.append("stride must be at least 1")
+    if int(cfg.png_scale) < 1:
+        errors.append("png_scale must be at least 1")
+    if len(cfg.window_size) != 2 or any(int(value) < 1 for value in cfg.window_size):
+        errors.append("window_size must contain a positive width and height")
+    if len(cfg.camera_direction) != 3 or not all(
+        math.isfinite(float(value)) for value in cfg.camera_direction
+    ) or math.sqrt(sum(float(value) ** 2 for value in cfg.camera_direction)) <= 1e-12:
+        errors.append("camera_direction must contain three finite values and cannot be zero")
+    if len(cfg.camera_view_up) != 3 or not all(
+        math.isfinite(float(value)) for value in cfg.camera_view_up
+    ) or math.sqrt(sum(float(value) ** 2 for value in cfg.camera_view_up)) <= 1e-12:
+        errors.append("camera_view_up must contain three finite values and cannot be zero")
+    if int(cfg.sphere_theta) < 3 or int(cfg.sphere_phi) < 3:
+        errors.append("sphere_theta and sphere_phi must both be at least 3")
+
+    substitutional_fraction = 0.0
+    for index, species in enumerate(cfg.dopants, start=1):
+        label = species.name.strip() or f"dopant {index}"
+        if not species.name.strip():
+            errors.append(f"dopant {index} must have a name")
+        if species.mode not in {"substitutional", "interstitial"}:
+            errors.append(
+                f"{label}: mode must be 'substitutional' or 'interstitial'"
+            )
+        if not math.isfinite(float(species.size_scale)) or float(species.size_scale) <= 0:
+            errors.append(f"{label}: size_scale must be positive")
+        if not math.isfinite(float(species.fraction)) or not 0.0 <= float(species.fraction) <= 1.0:
+            errors.append(f"{label}: fraction must be between 0 and 1")
+        if int(species.count) < 0:
+            errors.append(f"{label}: count cannot be negative")
+        if species.mode == "substitutional":
+            substitutional_fraction += float(species.fraction)
+    if substitutional_fraction > 1.0 + 1e-12:
+        errors.append(
+            "the combined substitutional concentration cannot exceed 1.0"
+        )
+
+    if errors:
+        raise ValueError("Invalid lattice configuration:\n- " + "\n- ".join(errors))
 
 
 # ------------------ Config I/O ------------------
@@ -307,53 +426,112 @@ Normalize displacement dict keys/values to integer tuples and float triples.
     return out
 
 
-def load_config(path: Optional[str]) -> Config:
-    """
-Load configuration from YAML/JSON and normalize legacy fields.
-    """
+def _default_settings() -> Dict[str, object]:
+    """Return a deep, serializable copy of the dataclass defaults."""
 
-    if path is None:
-        return Config()
-    ext = os.path.splitext(path)[1].lower()
-    with open(path, "r", encoding="utf-8") as f:
-        if ext in (".yaml", ".yml"):
-            if not HAVE_YAML:
-                print("pyyaml not installed; install it or use JSON.", file=sys.stderr)
-                sys.exit(2)
-            raw = yaml.safe_load(f)
-        else:
-            raw = json.load(f)
+    return asdict(Config())
+
+
+def _load_python_settings(path: Path) -> Dict[str, object]:
+    """Load a SETTINGS mapping from a Python config module without importing it globally."""
+
+    module_name = f"weldcraft_p5_config_{abs(hash(str(path.resolve())))}"
+    spec = importlib.util.spec_from_file_location(module_name, path)
+    if spec is None or spec.loader is None:
+        raise ValueError(f"Could not load configuration module: {path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    raw = getattr(module, "SETTINGS", None)
+    if not isinstance(raw, dict):
+        raise ValueError(f"{path.name} must define a SETTINGS dictionary")
+    return dict(raw)
+
+
+def _load_raw_settings(path: Path) -> Dict[str, object]:
+    ext = path.suffix.lower()
+    if ext == ".py":
+        return _load_python_settings(path)
+    if ext == ".json":
+        with path.open("r", encoding="utf-8") as handle:
+            raw = json.load(handle)
+        if not isinstance(raw, dict):
+            raise ValueError(f"{path.name} must contain a JSON object")
+        return raw
+    raise ValueError(
+        f"Unsupported configuration format {path.suffix!r}; use a documented .py config"
+    )
+
+
+def load_config(path: Optional[str]) -> Config:
+    """Load the documented Python configuration and normalize its values."""
+
+    config_path = Path(path) if path else ensure_config_file()
+    if not config_path.is_absolute():
+        for base in (Path.cwd(), runtime_directory()):
+            candidate = base / config_path
+            if candidate.exists():
+                config_path = candidate
+                break
+    if not config_path.exists():
+        raise FileNotFoundError(f"Configuration file not found: {config_path}")
+
+    raw = _default_settings()
+    raw.update(_load_raw_settings(config_path))
 
     dopants = []
     for d in raw.get("dopants", []):
-        # Drop legacy key to avoid TypeError if present
+        if isinstance(d, Species):
+            dopants.append(d)
+            continue
         if isinstance(d, dict) and "interstitial_offset" in d:
             d = {k: v for k, v in d.items() if k != "interstitial_offset"}
         dopants.append(Species(**d))
     raw["dopants"] = dopants
 
-    if "base_displacements" in raw:
-        raw["base_displacements"] = _normalize_base_displacements(raw["base_displacements"])
-
-    return Config(**raw)
+    raw["base_displacements"] = _normalize_base_displacements(
+        raw.get("base_displacements", {})
+    )
+    cfg = Config(**raw)
+    validate_config(cfg)
+    return cfg
 
 
 def apply_visual_preset(cfg: Config) -> None:
-    """Apply optional coordinated appearance settings after loading the YAML."""
+    """Apply optional coordinated appearance settings after loading the config."""
 
     preset = str(cfg.visual_preset or "screen").strip().lower()
-    if preset in ("", "screen", "default", "custom"):
+    if preset in ("", "custom"):
         return
-    if preset not in ("thesis", "publication", "outline"):
+    if preset not in ("screen", "default", "thesis", "publication", "outline"):
         raise ValueError(
             f"Unknown visual_preset {cfg.visual_preset!r}; "
-            "use 'screen', 'thesis', 'publication', or 'outline'."
+            "use 'custom', 'screen', 'thesis', 'publication', or 'outline'."
         )
+
+    if preset in ("screen", "default"):
+        cfg.background = "#FFFFFF"
+        cfg.base_color = "#555555"
+        cfg.base_atom_opacity = 1.0
+        cfg.base_atom_outline = False
+        cfg.overlay_color = "#222222"
+        cfg.overlay_alpha = 0.6
+        cfg.overlay_marker_opacity = 0.55
+        cfg.overlay_marker_specular = 0.0
+        cfg.sphere_specular = 0.0
+        cfg.sphere_ambient = 0.0
+        cfg.sphere_diffuse = 1.0
+        cfg.tetrahedral_color = "#008000"
+        cfg.octahedral_color = "#FFA500"
+        cfg.cubic_color = "#800080"
+        for sp in cfg.dopants:
+            if sp.name.strip().lower().startswith("h"):
+                sp.color = "#0000FF"
+        return
 
     # Thesis palette: neutral steel, muted hydrogen blue, soft green/teal site
     # families, and near-black construction lines. Flatter lighting reproduces
     # cleanly in print and avoids the heavy black Fe spheres of screen mode.
-    cfg.background = "white"
+    cfg.background = "#FFFFFF"
     cfg.base_color = "#9A9FA5"
     cfg.overlay_color = "#202124"
     cfg.overlay_alpha = 0.78
@@ -380,7 +558,7 @@ def apply_visual_preset(cfg: Config) -> None:
 
 
 def apply_camera_preset(cfg: Config) -> None:
-    """Apply an optional camera-only preset after loading the YAML."""
+    """Apply an optional camera-only preset after loading the config."""
 
     preset = str(cfg.camera_preset or "custom").strip().lower().replace("-", "_")
     if preset in ("", "custom", "manual", "none"):
@@ -404,20 +582,94 @@ def apply_camera_preset(cfg: Config) -> None:
     cfg.camera_view_angle = 30.0
 
 
-def dump_config(cfg: Config, path: str):
-    """
-Write the current configuration to a YAML or JSON file.
-    """
+def _settings_for_serialization(cfg: Config) -> Dict[str, object]:
+    """Convert dataclasses into the Python-literal representation used by config.py."""
 
-    d = asdict(cfg)
-    if path.lower().endswith((".yaml", ".yml")):
-        if not HAVE_YAML:
-            raise RuntimeError("pyyaml not installed; cannot dump YAML.")
-        with open(path, "w", encoding="utf-8") as f:
-            yaml.safe_dump(d, f, sort_keys=False)
+    return asdict(cfg)
+
+
+def _source_offset(lines: List[str], line: int, column: int) -> int:
+    return sum(len(item) for item in lines[: line - 1]) + column
+
+
+def _format_dopants_for_config(dopants: List[Dict[str, object]]) -> str:
+    """Format the dynamic dopant list with its explanatory field comments."""
+
+    literal = pprint.pformat(dopants, indent=8, sort_dicts=False, width=112)
+    return (
+        "[\n"
+        "        # Fields available for every species:\n"
+        "        # - name: label used in the display, legend, and individual mesh export.\n"
+        "        # - color: atom color as a hexadecimal value or a standard color name.\n"
+        "        # - radius: derived display radius; normally leave this as None.\n"
+        "        # - positions: optional explicit fractional lattice coordinates; leave []\n"
+        "        #   to generate positions from the placement settings and random seed.\n"
+        "        # - mode: 'substitutional' replaces host sites; 'interstitial' occupies\n"
+        "        #   legal spaces between host atoms.\n"
+        "        # - fraction: host-site fraction used only in substitutional mode (0..1).\n"
+        "        # - count: absolute atom count used only in interstitial mode.\n"
+        "        # - interstitial_site: 'tetra', 'octa', 'cubic', 'any', or a mapping\n"
+        "        #   with separate BCC/FCC/SC choices. Hydrogen commonly uses tetra in\n"
+        "        #   BCC, octa in FCC, and cubic in SC.\n"
+        "        # - forced_interstitial_position: optional exact [x, y, z] site, or a\n"
+        "        #   BCC/FCC/SC mapping. None selects a legal site automatically. Typical\n"
+        "        #   examples are BCC [0.25, 0.0, 0.5], FCC [0.5, 0.0, 0.0], and\n"
+        "        #   SC [0.5, 0.5, 0.5].\n"
+        "        # - size_scale: displayed radius relative to a host atom (0.5 = half).\n"
+        f"{literal[1:-1]}\n"
+        "    ]"
+    )
+
+
+def _render_documented_config(cfg: Config) -> str:
+    template_path = default_config_template_path()
+    source = template_path.read_text(encoding="utf-8")
+    tree = ast.parse(source, filename=str(template_path))
+    settings_node = next(
+        node.value
+        for node in tree.body
+        if isinstance(node, ast.Assign)
+        and any(isinstance(target, ast.Name) and target.id == "SETTINGS" for target in node.targets)
+        and isinstance(node.value, ast.Dict)
+    )
+    values = _settings_for_serialization(cfg)
+    lines = source.splitlines(keepends=True)
+    replacements = []
+    for key_node, value_node in zip(settings_node.keys, settings_node.values):
+        if not isinstance(key_node, ast.Constant) or not isinstance(key_node.value, str):
+            continue
+        key = key_node.value
+        if key not in values:
+            continue
+        start = _source_offset(lines, value_node.lineno, value_node.col_offset)
+        end = _source_offset(lines, value_node.end_lineno, value_node.end_col_offset)
+        if key == "dopants":
+            replacement = _format_dopants_for_config(values[key])
+        else:
+            replacement = pprint.pformat(values[key], sort_dicts=False, width=112)
+        replacements.append((start, end, replacement))
+
+    for start, end, replacement in reversed(replacements):
+        source = source[:start] + replacement + source[end:]
+
+    return source
+
+
+def dump_config(cfg: Config, path: str):
+    """Atomically write the fully commented Python config or an explicit JSON override."""
+
+    validate_config(cfg)
+    destination = Path(path)
+    if destination.suffix.lower() == ".py":
+        payload = _render_documented_config(cfg)
+    elif destination.suffix.lower() == ".json":
+        payload = json.dumps(_settings_for_serialization(cfg), indent=2, default=str)
     else:
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(d, f, indent=2)
+        raise ValueError("Configuration output must use .py or .json")
+
+    temporary = destination.with_name(destination.name + ".tmp")
+    temporary.write_text(payload, encoding="utf-8", newline="\n")
+    temporary.replace(destination)
 
 
 def _normalized_lattice_key(lattice: str) -> str:
@@ -563,7 +815,10 @@ Export base and dopant meshes individually and/or as a merged file.
         if base_mesh is not None and base_mesh.n_points:
             parts.insert(0, base_mesh)
         if parts:
-            merged = pv.append_polydata(parts)
+            # ``append_polydata`` is not part of the pinned PyVista 0.46 API.
+            # Merge without welding coincident points so each sphere keeps its
+            # original topology and the result remains a PolyData export.
+            merged = parts[0].merge(parts[1:], merge_points=False)
             save_mesh(merged, export_merged)
 
 
@@ -889,6 +1144,31 @@ def _elemental_cell_positions(lattice: str) -> np.ndarray:
     raise ValueError(f"Unknown lattice type: {lattice}")
 
 
+def _single_cell_periodic_copies(points: np.ndarray) -> np.ndarray:
+    """Expand canonical boundary sites to all visible one-cell copies."""
+
+    points = np.asarray(points, dtype=np.float32)
+    if not points.size:
+        return np.empty((0, 3), dtype=np.float32)
+    copies = []
+    seen = set()
+    for point in points:
+        canonical = np.mod(point, 1.0)
+        choices = [
+            (0.0, 1.0) if abs(float(value)) < 1e-6 else (float(value),)
+            for value in canonical
+        ]
+        for x_value in choices[0]:
+            for y_value in choices[1]:
+                for z_value in choices[2]:
+                    copy_position = (x_value, y_value, z_value)
+                    key = tuple(int(round(value * 8.0)) for value in copy_position)
+                    if key not in seen:
+                        seen.add(key)
+                        copies.append(copy_position)
+    return np.asarray(copies, dtype=np.float32)
+
+
 def _elemental_threshold(lattice: str) -> int:
     """
 Smallest atom count per lattice used to auto-switch to demo cell.
@@ -902,12 +1182,12 @@ Smallest atom count per lattice used to auto-switch to demo cell.
 
 
 # ------------------ Random placement ------------------
-def _rng() -> np.random.Generator:
+def _rng(seed: Optional[int] = None) -> np.random.Generator:
     """
 Return a NumPy default random Generator.
     """
 
-    return np.random.default_rng()
+    return np.random.default_rng(seed)
 
 
 def _choose_unique_sites(Nx: int, Ny: int, Nz: int, count: int, rng: np.random.Generator) -> np.ndarray:
@@ -959,16 +1239,21 @@ Append random substitutional positions avoiding collisions.
     basis, _ = _basis_and_interstitials(cfg.lattice)
     nbasis = int(basis.shape[0])
     total_sites = cfg.Nx * cfg.Ny * cfg.Nz * nbasis
-    need = int(round(float(sp.fraction) * float(total_sites)))
-    if need <= 0:
-        return
+    requested_total = int(round(float(sp.fraction) * float(total_sites)))
 
     # reserve already fixed positions (round to 1/8 for safe hashing)
     for p in sp.positions:
         t = tuple(int(x) for x in np.rint(np.asarray(p, dtype=np.float32)*8.0))
         taken.add(t)
 
-    rng = _rng()
+    # Existing positions may be intentional fixed sites or positions written by
+    # ``--dump-config``. Fill only the remainder so loading and dumping the same
+    # configuration repeatedly cannot double the substitutional population.
+    need = max(0, requested_total - len(sp.positions))
+    if need <= 0:
+        return
+
+    rng = _rng(cfg.random_seed)
     picks = []
     tries = 0
     while len(picks) < need:
@@ -998,10 +1283,11 @@ def _append_interstitial_random(cfg: Config, sp: Species):
     otherwise "any" samples the union of all families. Avoid collisions with
     Fe basis and already occupied dopant positions.
     """
-    if sp.count <= 0:
+    remaining = max(0, int(sp.count) - len(sp.positions))
+    if remaining <= 0:
         return
 
-    rng = _rng()
+    rng = _rng(cfg.random_seed)
     basis, inter = _basis_and_interstitials(cfg.lattice)
     nbasis = int(basis.shape[0])
 
@@ -1035,17 +1321,18 @@ def _append_interstitial_random(cfg: Config, sp: Species):
         for p in d.positions:
             forbidden.add(tuple(int(x) for x in np.rint(np.asarray(p, dtype=np.float32)*8.0)))
 
-    # We'll greedily try cells until we place sp.count interstitials
+    # Fill the requested total. An explicitly fixed site, when configured,
+    # already occupies one of those slots rather than replacing the count.
     chosen = []
     tries = 0
     # Oversample cells in batches
     cells_batch = np.empty((0, 3), dtype=np.int32)
 
-    while len(chosen) < sp.count and tries < sp.count * 50:
+    while len(chosen) < remaining and tries < remaining * 50:
         tries += 1
         if cells_batch.size == 0:
             # get a new batch of unique cells
-            need = max(128, sp.count - len(chosen))
+            need = max(128, remaining - len(chosen))
             cells_batch = _choose_unique_sites(cfg.Nx, cfg.Ny, cfg.Nz, min(need, cfg.Nx*cfg.Ny*cfg.Nz), rng)
 
         cell = cells_batch[-1].astype(np.float32); cells_batch = cells_batch[:-1]
@@ -1071,9 +1358,13 @@ def _append_interstitial_random(cfg: Config, sp: Species):
         forbidden.add(key)
         chosen.append(tuple(float(x) for x in pos))
 
-    if len(chosen) < sp.count:
+    if len(chosen) < remaining:
         # We placed as many as possible without collision
-        print(f"[warn] placed {len(chosen)} / {sp.count} interstitials for {sp.name} due to site conflicts.")
+        placed_total = len(sp.positions) + len(chosen)
+        print(
+            f"[warn] placed {placed_total} / {sp.count} interstitials "
+            f"for {sp.name} due to site conflicts."
+        )
 
     sp.positions = list(sp.positions) + chosen
 
@@ -1175,7 +1466,7 @@ Populate dopants with random positions per their mode and counts.
         if sp.mode == "substitutional":
             _append_substitutional_random(cfg, sp, taken_sub)
         elif _assign_forced_interstitial_position(cfg, sp):
-            continue
+            _append_interstitial_random(cfg, sp)
         else:
             _append_interstitial_random(cfg, sp)
 
@@ -1199,9 +1490,9 @@ Render fast point impostors as spheres for huge scenes.
     """
 
     if points_world.size == 0:
-        return
+        return None
     cloud = pv.PolyData(points_world)
-    pl.add_points(cloud, color=color, render_points_as_spheres=True, point_size=size_px)
+    return pl.add_points(cloud, color=color, render_points_as_spheres=True, point_size=size_px)
 
 
 # ------------------ Instanced rendering helpers ------------------
@@ -1338,6 +1629,9 @@ Create a VTK instanced glyph actor (hardware instancing path).
     actor.GetProperty().SetAmbient(float(ambient))
     actor.GetProperty().SetDiffuse(float(diffuse))
     actor.GetProperty().SetOpacity(float(opacity))
+    # The source is retained by the live renderer so the visual radius can be
+    # changed without rebuilding the window or replacing the actor.
+    actor._weldcraft_glyph_source = sphere
     return actor
 
 
@@ -1482,6 +1776,8 @@ Def '_add_markers'.
         world = world_from_lattice(lat, cfg.a)
         mesh = glyph_spheres(world, r_mark, cfg.sphere_theta, cfg.sphere_phi)
         if mesh is not None and mesh.n_points:
+            if hasattr(pl, "_weldcraft_radius_meshes"):
+                pl._weldcraft_radius_meshes.append((mesh, world.copy()))
             pl.add_mesh(
                 mesh,
                 color=color,
@@ -1583,26 +1879,47 @@ Def '_add_markers'.
 
 
 # ------------------ Scene construction ------------------
+def _remove_lattice_positions(base_pts_lat: np.ndarray, to_remove) -> np.ndarray:
+    """Remove exact eighth-lattice positions from a lattice-center array."""
+
+    if not to_remove or not base_pts_lat.size:
+        return base_pts_lat
+
+    # Pack the eighth-lattice coordinates into one compact integer and let
+    # NumPy perform the membership test in compiled code. The former tuple/set
+    # loop was slow and memory-heavy for hundreds of thousands of dopants.
+    base_keys = np.rint(base_pts_lat * 8.0).astype(np.int64, copy=False)
+    remove_keys = np.rint(np.asarray(to_remove, dtype=np.float32) * 8.0).astype(
+        np.int64, copy=False
+    )
+    minimum = np.minimum(base_keys.min(axis=0), remove_keys.min(axis=0))
+    maximum = np.maximum(base_keys.max(axis=0), remove_keys.max(axis=0))
+    spans = maximum - minimum + 1
+
+    def _pack(keys):
+        shifted = keys - minimum
+        return (shifted[:, 0] * spans[1] + shifted[:, 1]) * spans[2] + shifted[:, 2]
+
+    packed_base = _pack(base_keys)
+    packed_remove = np.unique(_pack(remove_keys))
+    keep_mask = ~np.isin(
+        packed_base,
+        packed_remove,
+        assume_unique=True,
+        kind="sort",
+    )
+    return np.ascontiguousarray(base_pts_lat[keep_mask], dtype=np.float32)
+
+
 def remove_base_sites_for_substitutionals(base_pts_lat: np.ndarray, dopants: List[Species]) -> np.ndarray:
-    """
-Def 'remove_base_sites_for_substitutionals'.
-    """
+    """Remove lattice centers occupied by substitutional species."""
 
     to_remove = []
     for sp in dopants:
         if sp.mode != "substitutional" or not sp.positions:
             continue
-        for p in sp.positions:
-            to_remove.append(tuple(int(x) for x in np.rint(np.asarray(p, dtype=np.float32)*8.0)))
-    if not to_remove:
-        return base_pts_lat
-    remove_set = set(to_remove)
-    keys = np.rint(base_pts_lat * 8.0).astype(np.int32, copy=False)
-    keep_mask = np.array(
-        [tuple(int(v) for v in xyz) not in remove_set for xyz in keys],
-        dtype=bool
-    )
-    return np.ascontiguousarray(base_pts_lat[keep_mask], dtype=np.float32)
+        to_remove.extend(sp.positions)
+    return _remove_lattice_positions(base_pts_lat, to_remove)
 
 
 def build_scene_points(cfg: Config):
@@ -1610,8 +1927,16 @@ def build_scene_points(cfg: Config):
 Def 'build_scene_points'.
     """
 
-    if getattr(cfg, "_demo_cell_active", False):
+    demo_cell_active = getattr(cfg, "_demo_cell_active", False)
+    if demo_cell_active:
         base_lat = _elemental_cell_positions(cfg.lattice)
+        displayed_substitutionals = []
+        for species in cfg.dopants:
+            if species.mode == "substitutional" and species.positions:
+                displayed_substitutionals.extend(
+                    _single_cell_periodic_copies(species.positions).tolist()
+                )
+        base_lat = _remove_lattice_positions(base_lat, displayed_substitutionals)
     else:
         base_idx = generate_lattice_sites(cfg.Nx, cfg.Ny, cfg.Nz, cfg.lattice)
         base_idx = apply_stride_and_slab_indices(base_idx, cfg.stride, cfg.slab)
@@ -1626,8 +1951,13 @@ Def 'build_scene_points'.
         if not sp.positions:
             dop_meshes.append((None, sp)); continue
         pos_lat = np.asarray(sp.positions, dtype=np.float32)
-        if (
-            getattr(cfg, "_demo_cell_active", False)
+        if demo_cell_active and sp.mode == "substitutional":
+            # Corner and face sites have periodic copies on the opposite cell
+            # boundaries. Display all copies so a substitution truly recolors
+            # the one-cell lattice rather than sitting on top of a host atom.
+            pos_lat = _single_cell_periodic_copies(pos_lat)
+        elif (
+            demo_cell_active
             and sp.mode == "interstitial"
             and str(cfg.interstitial_site_view or "").strip().lower() == "picture"
         ):
@@ -1642,7 +1972,17 @@ Def 'build_scene_points'.
                 dtype=np.float32,
             )
         dop_world = world_from_lattice(pos_lat, cfg.a)
-        dop_mesh = glyph_spheres(dop_world, sp.radius, cfg.sphere_theta, cfg.sphere_phi)
+        # True expanded sphere meshes preserve the historical small-scene
+        # result, but scale catastrophically with a large concentration. Large
+        # species are kept as centers and rendered through vtkGlyph3DMapper.
+        dop_mesh = None
+        if dop_world.shape[0] <= MAX_TRUE_DOPANT_SPHERES:
+            dop_mesh = glyph_spheres(
+                dop_world,
+                sp.radius,
+                cfg.sphere_theta,
+                cfg.sphere_phi,
+            )
         dop_meshes.append((dop_mesh, sp))
         dopant_world_centers.append((sp, dop_world, float(sp.radius)))
 
@@ -1735,8 +2075,10 @@ Def '_pick_world_point'.
         # note: if sensitivity == 1.0, alpha==0 -> no motion
         _zoom_toward(target, factor)
 
-    pl.iren.add_observer("MouseWheelForwardEvent", lambda o, e: _on_wheel(o, e, True))
-    pl.iren.add_observer("MouseWheelBackwardEvent", lambda o, e: _on_wheel(o, e, False))
+    pl._weldcraft_zoom_observer_tags = (
+        pl.iren.add_observer("MouseWheelForwardEvent", lambda o, e: _on_wheel(o, e, True)),
+        pl.iren.add_observer("MouseWheelBackwardEvent", lambda o, e: _on_wheel(o, e, False)),
+    )
 
 
 # ------------------ Toast helpers (robust) ------------------
@@ -1932,8 +2274,144 @@ def enable_picker(plotter: pv.Plotter, cfg: Config,
 
 
 # ------------------ Render ------------------
+def _camera_snapshot(plotter: pv.Plotter):
+    camera = plotter.camera
+    return {
+        "position": tuple(camera.GetPosition()),
+        "focal_point": tuple(camera.GetFocalPoint()),
+        "view_up": tuple(camera.GetViewUp()),
+        "parallel": bool(camera.GetParallelProjection()),
+        "view_angle": float(camera.GetViewAngle()),
+    }
+
+
+def _restore_camera_snapshot(plotter: pv.Plotter, snapshot) -> None:
+    if not snapshot:
+        return
+    camera = plotter.camera
+    camera.SetPosition(*snapshot["position"])
+    camera.SetFocalPoint(*snapshot["focal_point"])
+    camera.SetViewUp(*snapshot["view_up"])
+    camera.SetParallelProjection(snapshot["parallel"])
+    camera.SetViewAngle(snapshot["view_angle"])
+
+
+def _update_base_radius_in_place(plotter: pv.Plotter, new_radius: float) -> bool:
+    """Update the host-atom radius while retaining the existing scene/window."""
+
+    old_radius = getattr(plotter, "_weldcraft_base_radius", None)
+    if old_radius is None or old_radius <= 0 or new_radius <= 0:
+        return False
+
+    # Instanced spheres have a shared sphere source. Changing that source grows
+    # every sphere around its own center and therefore preserves all lattice
+    # coordinates.
+    ratio = float(new_radius) / float(old_radius)
+    changed = False
+    for actor in getattr(plotter, "_weldcraft_base_glyph_actors", []):
+        source = getattr(actor, "_weldcraft_glyph_source", None)
+        if source is not None:
+            source.SetRadius(float(source.GetRadius()) * ratio)
+            source.Modified()
+            changed = True
+
+    # Outlined host atoms, dopants, and site markers use merged sphere meshes.
+    # PyVista emits each source sphere's points as one contiguous block, so the
+    # mesh can be resized around its recorded atom/site center without moving
+    # that center or scaling the actor around the world origin.
+    for mesh, centers in getattr(plotter, "_weldcraft_radius_meshes", []):
+        centers = np.asarray(centers, dtype=float)
+        if centers.ndim != 2 or centers.shape[1] != 3 or centers.shape[0] == 0:
+            continue
+        points = np.asarray(mesh.points)
+        if points.shape[0] % centers.shape[0] != 0:
+            continue
+        points_per_sphere = points.shape[0] // centers.shape[0]
+        grouped = points.reshape(centers.shape[0], points_per_sphere, 3)
+        resized = centers[:, None, :] + (grouped - centers[:, None, :]) * ratio
+        mesh.points = resized.reshape(-1, 3)
+        mesh.Modified()
+        changed = True
+
+    if changed:
+        plotter._weldcraft_base_radius = float(new_radius)
+        plotter.render()
+    return changed
+
+
+def _control_signature(path: Optional[str]):
+    if not path:
+        return None
+    try:
+        stat = os.stat(path)
+        return stat.st_mtime_ns, stat.st_size
+    except OSError:
+        return None
+
+
+def _install_live_control(plotter: pv.Plotter, config_path: Optional[str],
+                          control_file: Optional[str]) -> None:
+    """Poll the small command file used by the toolbox process."""
+
+    if not config_path or not control_file or not hasattr(plotter, "iren"):
+        return
+
+    state = {"signature": _control_signature(control_file)}
+
+    def _poll(_step=0):
+        signature = _control_signature(control_file)
+        if signature is None or signature == state["signature"]:
+            return
+        state["signature"] = signature
+        try:
+            with open(control_file, "r", encoding="utf-8") as handle:
+                command = json.load(handle)
+            if command.get("action") != "update":
+                return
+
+            new_cfg = load_config(config_path)
+            apply_visual_preset(new_cfg)
+            apply_camera_preset(new_cfg)
+            normalize_physical_config(new_cfg)
+            assign_random_positions(new_cfg, new_cfg.dopants)
+            changed = set(command.get("changed", []))
+
+            # Radius changes are frequent while dragging the basic slider, so
+            # use the inexpensive actor/source update whenever possible.
+            if changed == {"base_radius_scale"} and _update_base_radius_in_place(
+                plotter, float(new_cfg.base_radius)
+            ):
+                plotter._weldcraft_live_config = new_cfg
+                return
+
+            snapshot = (
+                None
+                if changed.intersection(CAMERA_REFRAME_KEYS)
+                else _camera_snapshot(plotter)
+            )
+            plot(
+                new_cfg,
+                export_dir=None,
+                export_merged=None,
+                screenshot=None,
+                no_show=True,
+                plotter=plotter,
+                preserve_camera=snapshot,
+            )
+            plotter._weldcraft_live_config = new_cfg
+        except Exception as exc:
+            print(f"[warning] display update failed: {exc}")
+
+    # Keep the poll callable on the plotter. The display loop below calls it
+    # between PyVista event updates; this avoids version-dependent VTK timer
+    # behavior on Windows.
+    plotter._weldcraft_live_poll = _poll
+
+
 def plot(cfg: Config, export_dir: Optional[str], export_merged: Optional[str],
-         screenshot: Optional[str], no_show: bool):
+         screenshot: Optional[str], no_show: bool, plotter: Optional[pv.Plotter] = None,
+         config_path: Optional[str] = None, control_file: Optional[str] = None,
+         preserve_camera=None):
     """
     Assemble scene, choose render path, handle overlay/picking, and show/export.
     """
@@ -1958,6 +2436,8 @@ def plot(cfg: Config, export_dir: Optional[str], export_merged: Optional[str],
             export_merged=None,
             screenshot=None,
             no_show=False,
+            config_path=config_path,
+            control_file=control_file,
         )
         return
 
@@ -1974,11 +2454,35 @@ def plot(cfg: Config, export_dir: Optional[str], export_merged: Optional[str],
     if (export_dir or export_merged) and (n_atoms <= cfg.max_atoms_for_true_spheres):
         base_mesh = glyph_spheres(base_world, cfg.base_radius, cfg.sphere_theta, cfg.sphere_phi)
 
-    # Plotter
-    pl = pv.Plotter(
+    # Reuse the existing plotter for live updates. Clearing actors is much
+    # faster and, importantly, leaves the native render window and interactor
+    # alive. The camera is restored by the caller for these updates.
+    created_plotter = plotter is None
+    pl = plotter or pv.Plotter(
         off_screen=no_show and (screenshot is not None),
         window_size=tuple(int(v) for v in cfg.window_size),
     )
+    if not created_plotter:
+        try:
+            pl.disable_picking()
+        except Exception:
+            pass
+        for tag in getattr(pl, "_weldcraft_zoom_observer_tags", ()):
+            try:
+                pl.iren.remove_observer(tag)
+            except Exception:
+                pass
+        pl._weldcraft_zoom_observer_tags = ()
+        pl.clear()
+        pl._weldcraft_base_radius_actors = []
+        pl._weldcraft_base_glyph_actors = []
+        pl._weldcraft_radius_meshes = []
+        pl._weldcraft_base_radius = float(cfg.base_radius)
+
+    pl._weldcraft_base_radius = float(cfg.base_radius)
+    pl._weldcraft_base_radius_actors = []
+    pl._weldcraft_base_glyph_actors = []
+    pl._weldcraft_radius_meshes = []
     pl.set_background(cfg.background)
     aa_type = str(cfg.anti_aliasing).strip().lower()
     if aa_type in ("", "none", "off", "false"):
@@ -1997,7 +2501,11 @@ def plot(cfg: Config, export_dir: Optional[str], export_merged: Optional[str],
     # Base atoms. The outline preset uses true geometry so PyVista can derive
     # camera-aware silhouettes; large scenes fall back to translucent instancing
     # rather than materializing an impractically large merged mesh.
-    use_base_outlines = bool(cfg.base_atom_outline and n_atoms <= cfg.max_atoms_for_outlines)
+    use_base_outlines = bool(
+        cfg.base_atom_outline
+        and not use_impostor
+        and n_atoms <= cfg.max_atoms_for_outlines
+    )
     if use_base_outlines:
         outlined_base = glyph_spheres(
             base_world,
@@ -2006,7 +2514,8 @@ def plot(cfg: Config, export_dir: Optional[str], export_merged: Optional[str],
             cfg.sphere_phi,
         )
         if outlined_base.n_points:
-            pl.add_mesh(
+            pl._weldcraft_radius_meshes.append((outlined_base, base_world.copy()))
+            base_actor = pl.add_mesh(
                 outlined_base,
                 color=cfg.base_color,
                 opacity=float(cfg.base_atom_opacity),
@@ -2015,6 +2524,7 @@ def plot(cfg: Config, export_dir: Optional[str], export_merged: Optional[str],
                 ambient=cfg.sphere_ambient,
                 diffuse=cfg.sphere_diffuse,
             )
+            pl._weldcraft_base_radius_actors.append(base_actor)
             silhouette_actor = pl.add_silhouette(
                 outlined_base,
                 color=cfg.base_atom_outline_color,
@@ -2030,8 +2540,11 @@ def plot(cfg: Config, export_dir: Optional[str], export_merged: Optional[str],
             silhouette_actor.GetProperty().SetRenderLinesAsTubes(
                 bool(cfg.base_atom_outline_as_tubes)
             )
+            pl._weldcraft_base_radius_actors.append(silhouette_actor)
     elif use_impostor:
-        add_points_impostor(pl, base_world, cfg.base_color, cfg.points_impostor_size)
+        base_actor = add_points_impostor(pl, base_world, cfg.base_color, cfg.points_impostor_size)
+        if base_actor is not None:
+            pl._weldcraft_base_radius_actors.append(base_actor)
     elif use_instanced:
         theta, phi = adaptive_base_res(n_atoms, cfg)
         chunks = (chunk_points_z(base_world, cfg.chunk_target_atoms, cfg.chunk_max_actors)
@@ -2050,11 +2563,13 @@ def plot(cfg: Config, export_dir: Optional[str], export_merged: Optional[str],
             )
             if actor is not None:
                 pl.renderer.AddActor(actor)
+                pl._weldcraft_base_glyph_actors.append(actor)
     else:
         if n_atoms <= cfg.max_atoms_for_true_spheres:
             baked = glyph_spheres(base_world, cfg.base_radius, cfg.sphere_theta, cfg.sphere_phi)
             if baked is not None and baked.n_points:
-                pl.add_mesh(
+                pl._weldcraft_radius_meshes.append((baked, base_world.copy()))
+                base_actor = pl.add_mesh(
                     baked,
                     color=cfg.base_color,
                     opacity=float(cfg.base_atom_opacity),
@@ -2063,15 +2578,32 @@ def plot(cfg: Config, export_dir: Optional[str], export_merged: Optional[str],
                     ambient=cfg.sphere_ambient,
                     diffuse=cfg.sphere_diffuse,
                 )
+                pl._weldcraft_base_radius_actors.append(base_actor)
         else:
             print("[info] vtkGlyph3DMapper not available; falling back to impostor points for large scene.")
-            add_points_impostor(pl, base_world, cfg.base_color, cfg.points_impostor_size)
+            base_actor = add_points_impostor(pl, base_world, cfg.base_color, cfg.points_impostor_size)
+            if base_actor is not None:
+                pl._weldcraft_base_radius_actors.append(base_actor)
 
-    # Dopants as true spheres
+    # Small dopant populations retain true sphere meshes for exact historical
+    # appearance. Large concentrations use the same GPU-instanced mapper as the
+    # host lattice, avoiding multi-gigabyte expanded meshes.
     hydrogen_centers_world = np.empty((0, 3), dtype=float)
     hydrogen_radius = 0.0
+    total_scene_atoms = n_atoms + sum(
+        int(centers.shape[0]) for _species, centers, _radius in dopant_world_centers
+    )
+    dopant_theta, dopant_phi = adaptive_base_res(total_scene_atoms, cfg)
     for mesh, sp in dop_meshes:
+        centers = next(
+            (centers for species, centers, _radius in dopant_world_centers if species is sp),
+            None,
+        )
+        if centers is None or not len(centers):
+            continue
         if mesh is not None and mesh.n_points:
+            if len(centers):
+                pl._weldcraft_radius_meshes.append((mesh, np.asarray(centers).copy()))
             pl.add_mesh(
                 mesh,
                 color=sp.color,
@@ -2080,6 +2612,34 @@ def plot(cfg: Config, export_dir: Optional[str], export_merged: Optional[str],
                 ambient=cfg.sphere_ambient,
                 diffuse=cfg.sphere_diffuse,
             )
+        elif use_impostor or not HAVE_GLYPH3D_MAPPER:
+            add_points_impostor(
+                pl,
+                np.asarray(centers),
+                sp.color,
+                max(1.0, float(cfg.points_impostor_size) * float(sp.size_scale)),
+            )
+        else:
+            chunks = (
+                chunk_points_z(centers, cfg.chunk_target_atoms, cfg.chunk_max_actors)
+                if cfg.chunking_enabled
+                else [centers]
+            )
+            for chunk in chunks:
+                actor = make_instanced_actor(
+                    np.asarray(chunk),
+                    float(sp.radius),
+                    sp.color,
+                    dopant_theta,
+                    dopant_phi,
+                    specular=cfg.sphere_specular,
+                    ambient=cfg.sphere_ambient,
+                    diffuse=cfg.sphere_diffuse,
+                    opacity=1.0,
+                )
+                if actor is not None:
+                    pl.renderer.AddActor(actor)
+                    pl._weldcraft_base_glyph_actors.append(actor)
     # Collect H centers for picking feedback
     for sp, centers_w, rad in dopant_world_centers:
         if sp.mode == "interstitial" and sp.name.lower().startswith("h") and centers_w.size:
@@ -2127,16 +2687,29 @@ def plot(cfg: Config, export_dir: Optional[str], export_merged: Optional[str],
         draw_unit_cell_overlay(pl, cfg)
 
     # Picking (right click)
-    if cfg.enable_picking and not no_show:
+    if cfg.enable_picking and (not no_show or not created_plotter):
         enable_picker(pl, cfg, hydrogen_centers_world, hydrogen_radius)
 
     # Numbered axes with tick marks (math-style). Add this after all geometry so
     # later actors cannot make PyVista replace the zero-based display range with
     # the negative/positive sphere-surface bounds.
     if cfg.show_axes:
-        Lx = float(np.max(base_world[:, 0]) - np.min(base_world[:, 0]))
-        Ly = float(np.max(base_world[:, 1]) - np.min(base_world[:, 1]))
-        Lz = float(np.max(base_world[:, 2]) - np.min(base_world[:, 2]))
+        # Substitutional atoms are still lattice sites. Include them when
+        # determining the coordinate span so the axes remain stable as host
+        # atoms are recolored, including the valid 100%-substitution case where
+        # no host centers remain.
+        lattice_center_parts = [base_world] if base_world.size else []
+        lattice_center_parts.extend(
+            centers
+            for species, centers, _radius in dopant_world_centers
+            if species.mode == "substitutional" and centers.size
+        )
+        if lattice_center_parts:
+            lattice_centers = np.vstack(lattice_center_parts)
+            lengths = np.ptp(lattice_centers, axis=0)
+        else:
+            lengths = extent.astype(float)
+        Lx, Ly, Lz = (float(value) for value in lengths)
 
         # exact 0 on the left; round the max to avoid fp-noise
         def _rng(L): return (0.0, round(L, 6))
@@ -2191,8 +2764,43 @@ def plot(cfg: Config, export_dir: Optional[str], export_merged: Optional[str],
         )
         pl.close()
     elif not no_show:
-        mark_weldcraft_startup_ready()
-        pl.show()
+        if control_file and config_path:
+            _install_live_control(pl, config_path, control_file)
+        if control_file and config_path:
+            # Non-blocking mode leaves the native window alive while this
+            # process services both interaction events and toolbox updates.
+            pl.show(auto_close=False, interactive_update=True)
+            interactor = pl.iren.interactor
+            # A plotter used for the configured PNG is closed immediately
+            # before this interactive plotter is created. On Windows/VTK the
+            # new interactor can occasionally inherit a completed state and
+            # make the display loop exit as soon as the window appears.
+            interactor.SetDone(0)
+            mark_weldcraft_startup_ready()
+            try:
+                while interactor.GetDone() == 0:
+                    pl._weldcraft_live_poll()
+                    pl.update(25)
+                    time.sleep(0.025)
+            except Exception as exc:
+                print(f"[info] display loop ended: {exc}")
+            finally:
+                try:
+                    pl.close()
+                except Exception:
+                    pass
+        else:
+            mark_weldcraft_startup_ready()
+            pl.show()
+    elif not created_plotter:
+        _restore_camera_snapshot(pl, preserve_camera)
+        # Recalculate near/far clipping planes after every live rebuild. This
+        # is essential when switching between a large lattice and a one-cell
+        # example: retaining the former scene's clipping distances can hide
+        # the much smaller replacement even though its camera and focal point
+        # are otherwise correct.
+        pl.reset_camera_clipping_range()
+        pl.render()
     else:
         pl.close()
 
@@ -2241,12 +2849,15 @@ Define/parse command-line arguments for the viewer.
     """
 
     p = argparse.ArgumentParser(description="Simple-cubic lattice visualizer (PyVista) with config + export")
-    p.add_argument("--config", type=str, default=None, help="Path to YAML/JSON config (optional)")
-    p.add_argument("--dump-config", type=str, default=None, help="Write current config to file (YAML/JSON)")
+    p.add_argument("--config", type=str, default=None, help="Path to a Python or JSON config override")
+    p.add_argument("--dump-config", type=str, default=None, help="Write current config to a documented .py or .json file")
     p.add_argument("--export-dir", type=str, default=None, help="Directory to save base/species meshes as .vtp")
     p.add_argument("--export-merged", type=str, default=None, help="Path to save merged mesh (.vtp/.ply/.obj/.stl)")
     p.add_argument("--screenshot", type=str, default=None, help="Path to save a screenshot (PNG)")
     p.add_argument("--no-show", action="store_true", help="Do not open an interactive window (batch/export)")
+    p.add_argument("--force-display", action="store_true", help="Open the interactive display even when config disables it")
+    p.add_argument("--control-file", type=str, default=None,
+                   help="Command file used by the toolbox for live display updates")
     return p.parse_args()
 
 
@@ -2258,7 +2869,9 @@ Entry point wiring: config, normalization, placements, optional dump, run plot.
     args = parse_args()
 
     config_path = args.config or guess_default_config()
-    cfg = load_config(config_path) if config_path else Config()
+    if config_path is None:
+        config_path = str(ensure_config_file())
+    cfg = load_config(config_path)
     apply_visual_preset(cfg)
     apply_camera_preset(cfg)
 
@@ -2273,7 +2886,7 @@ Entry point wiring: config, normalization, placements, optional dump, run plot.
             )
     if screenshot is not None and cfg.png_avoid_overwrite:
         screenshot = next_available_output_path(screenshot)
-    no_show = bool(args.no_show or not cfg.display_window)
+    no_show = bool(args.no_show or (not args.force_display and not cfg.display_window))
 
     # Enforce physical sizing from (target_atoms, r, lattice)
     normalize_physical_config(cfg)
@@ -2295,7 +2908,9 @@ Entry point wiring: config, normalization, placements, optional dump, run plot.
          export_dir=args.export_dir,
          export_merged=args.export_merged,
          screenshot=screenshot,
-         no_show=no_show)
+         no_show=no_show,
+         config_path=config_path,
+         control_file=args.control_file)
 
 
 if __name__ == "__main__":

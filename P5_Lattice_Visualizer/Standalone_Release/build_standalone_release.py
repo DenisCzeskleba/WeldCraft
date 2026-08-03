@@ -4,17 +4,17 @@ from __future__ import annotations
 
 import argparse
 import ast
+import copy
 import hashlib
+import importlib.util
 import importlib.metadata
 import os
+import pprint
 import re
 import shutil
 import subprocess
 import sys
 from pathlib import Path
-
-import yaml
-
 
 EXPECTED_INTERPRETER = Path(
     r"F:\99_Virtual-Environments\02_WeldCraft\Scripts\python.exe"
@@ -22,13 +22,17 @@ EXPECTED_INTERPRETER = Path(
 REQUIRED_PACKAGES = {
     "numpy": "2.0.2",
     "pyvista": "0.46.5",
-    "PyYAML": "6.0.3",
+    "PyQt5": "5.15.11",
+    "PyQt5-Qt5": "5.15.2",
+    "PyQt5_sip": "12.15.0",
     "pyinstaller": "6.21.0",
 }
 STANDALONE_REQUIREMENTS = (
     "numpy==2.0.2\n"
     "pyvista==0.46.5\n"
-    "PyYAML==6.0.3\n"
+    "PyQt5==5.15.11\n"
+    "PyQt5-Qt5==5.15.2\n"
+    "PyQt5_sip==12.15.0\n"
 )
 VERSION_PATTERN = re.compile(r"^v?(\d+\.\d+(?:\.\d+)?)$")
 
@@ -36,21 +40,28 @@ STANDALONE_DIR = Path(__file__).resolve().parent
 P5_DIR = STANDALONE_DIR.parent
 REPO_ROOT = P5_DIR.parent
 SOURCE_PATH = P5_DIR / "visualize_lattice.py"
-CONFIG_PATH = P5_DIR / "User Input.yaml"
+GUI_SOURCE_PATH = P5_DIR / "lattice_visualizer_gui.py"
+DEFAULT_CONFIG_PATH = P5_DIR / "01_Resources" / "config_default.py"
+BAM_LOGO_PATH = P5_DIR / "01_Resources" / "Images" / "BAM Logo.png"
 README_PATH = P5_DIR / "ReadMe.txt"
 REQUIREMENTS_PATH = P5_DIR / "requirements.txt"
 LICENSE_PATH = REPO_ROOT / "LICENSE"
 SPEC_PATH = STANDALONE_DIR / "lattice_visualizer.spec"
+RENDERER_SPEC_PATH = STANDALONE_DIR / "lattice_visualizer_renderer.spec"
 BUILD_DIR = STANDALONE_DIR / "build"
 STAGING_DIR = STANDALONE_DIR / "staging"
 DIST_DIR = STANDALONE_DIR / "dist"
 
 PLAIN_FILE_NAMES = {
     "ReadMe.txt",
-    "User Input.yaml",
+    "config.py",
+    "config_default.py",
+    "lattice_visualizer_gui.py",
     "visualize_lattice.py",
     "requirements.txt",
     "LICENSE",
+    "01_Resources\\config_default.py",
+    "01_Resources\\Images\\BAM Logo.png",
 }
 
 
@@ -145,11 +156,14 @@ def find_rar_executable() -> Path:
 def validate_inputs() -> None:
     required_paths = [
         SOURCE_PATH,
-        CONFIG_PATH,
+        GUI_SOURCE_PATH,
+        DEFAULT_CONFIG_PATH,
+        BAM_LOGO_PATH,
         README_PATH,
         REQUIREMENTS_PATH,
         LICENSE_PATH,
         SPEC_PATH,
+        RENDERER_SPEC_PATH,
     ]
     missing = [str(path) for path in required_paths if not path.is_file()]
     if missing:
@@ -157,9 +171,18 @@ def validate_inputs() -> None:
 
     ast.parse(SOURCE_PATH.read_text(encoding="utf-8"), filename=str(SOURCE_PATH))
 
-    config = yaml.safe_load(CONFIG_PATH.read_text(encoding="utf-8"))
-    if not isinstance(config, dict):
-        raise ValueError(f"{CONFIG_PATH} must contain a YAML mapping.")
+    ast.parse(GUI_SOURCE_PATH.read_text(encoding="utf-8"), filename=str(GUI_SOURCE_PATH))
+    default_tree = ast.parse(
+        DEFAULT_CONFIG_PATH.read_text(encoding="utf-8"),
+        filename=str(DEFAULT_CONFIG_PATH),
+    )
+    settings_assignments = [
+        node for node in default_tree.body
+        if isinstance(node, ast.Assign)
+        and any(isinstance(target, ast.Name) and target.id == "SETTINGS" for target in node.targets)
+    ]
+    if not settings_assignments:
+        raise ValueError(f"{DEFAULT_CONFIG_PATH} must define SETTINGS.")
 
     requirements = REQUIREMENTS_PATH.read_text(encoding="utf-8")
     if requirements != STANDALONE_REQUIREMENTS:
@@ -170,6 +193,55 @@ def validate_inputs() -> None:
     license_text = LICENSE_PATH.read_text(encoding="utf-8")
     if "MIT License" not in license_text or "Permission is hereby granted" not in license_text:
         raise ValueError(f"{LICENSE_PATH} is not the expected MIT license.")
+
+
+def load_default_settings() -> dict:
+    spec = importlib.util.spec_from_file_location("p5_release_config_default", DEFAULT_CONFIG_PATH)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"Could not load {DEFAULT_CONFIG_PATH}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    settings = getattr(module, "SETTINGS", None)
+    if not isinstance(settings, dict):
+        raise ValueError(f"{DEFAULT_CONFIG_PATH} must define a SETTINGS dictionary")
+    return copy.deepcopy(settings)
+
+
+def write_config_module(path: Path, settings: dict) -> None:
+    """Write a config using the documented template and preserve its comments."""
+
+    template = DEFAULT_CONFIG_PATH.read_text(encoding="utf-8")
+    tree = ast.parse(template, filename=str(DEFAULT_CONFIG_PATH))
+    assignment = next(
+        node for node in tree.body
+        if isinstance(node, ast.Assign)
+        and any(isinstance(target, ast.Name) and target.id == "SETTINGS" for target in node.targets)
+    )
+    if not isinstance(assignment.value, ast.Dict):
+        raise ValueError("The default config SETTINGS must be a dictionary literal")
+
+    lines = template.splitlines(keepends=True)
+    starts = []
+    offset = 0
+    for line in lines:
+        starts.append(offset)
+        offset += len(line)
+
+    def position(line, column):
+        return starts[line - 1] + column
+
+    replacements = []
+    for key_node, value_node in zip(assignment.value.keys, assignment.value.values):
+        if not isinstance(key_node, ast.Constant) or key_node.value not in settings:
+            continue
+        start = position(value_node.lineno, value_node.col_offset)
+        end = position(value_node.end_lineno, value_node.end_col_offset)
+        replacements.append(
+            (start, end, pprint.pformat(settings[key_node.value], sort_dicts=False, width=112))
+        )
+    for start, end, replacement in reversed(replacements):
+        template = template[:start] + replacement + template[end:]
+    path.write_text(template, encoding="utf-8", newline="\n")
 
 
 def run_checked(command: list[str], *, cwd: Path) -> subprocess.CompletedProcess[str]:
@@ -192,7 +264,7 @@ def validate_source_import() -> None:
 
 
 def create_small_test_config(path: Path) -> None:
-    config = yaml.safe_load(CONFIG_PATH.read_text(encoding="utf-8"))
+    config = load_default_settings()
     config["target_atoms"] = 1
     config["demo_cell_force"] = True
     # Smoke tests validate startup/rendering without leaving user-output
@@ -202,11 +274,7 @@ def create_small_test_config(path: Path) -> None:
     config["Nx"] = 1
     config["Ny"] = 1
     config["Nz"] = 1
-    path.write_text(
-        yaml.safe_dump(config, sort_keys=False),
-        encoding="utf-8",
-        newline="\n",
-    )
+    write_config_module(path, config)
 
 
 def smoke_test_source(small_config_path: Path) -> None:
@@ -225,6 +293,12 @@ def smoke_test_source(small_config_path: Path) -> None:
 def test_source_config_discovery() -> None:
     unrelated_directory = STAGING_DIR / "unrelated-working-directory"
     unrelated_directory.mkdir(parents=True, exist_ok=True)
+    # A generic config.py in the caller's directory must not override P5's
+    # persistent config beside the source script.
+    (unrelated_directory / "config.py").write_text(
+        "SETTINGS = {'lattice': 'unrelated'}\n",
+        encoding="utf-8",
+    )
     code = "\n".join(
         [
             "import importlib.util",
@@ -233,8 +307,9 @@ def test_source_config_discovery() -> None:
             "spec = importlib.util.spec_from_file_location('lattice_config_check', source)",
             "module = importlib.util.module_from_spec(spec)",
             "spec.loader.exec_module(module)",
+            "module.ensure_config_file()",
             "found = Path(module.guess_default_config()).resolve()",
-            f"expected = Path({str(CONFIG_PATH)!r}).resolve()",
+            "expected = Path(module.persistent_config_path()).resolve()",
             "assert found == expected, f'expected {expected}, found {found}'",
         ]
     )
@@ -244,15 +319,26 @@ def test_source_config_discovery() -> None:
 def prepare_plain_files(plain_files_dir: Path) -> None:
     plain_files_dir.mkdir(parents=True, exist_ok=True)
     shutil.copy2(README_PATH, plain_files_dir / "ReadMe.txt")
-    shutil.copy2(CONFIG_PATH, plain_files_dir / "User Input.yaml")
+    shutil.copy2(DEFAULT_CONFIG_PATH, plain_files_dir / "config.py")
+    shutil.copy2(DEFAULT_CONFIG_PATH, plain_files_dir / "config_default.py")
+    resources_dir = plain_files_dir / "01_Resources"
+    images_dir = resources_dir / "Images"
+    images_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(DEFAULT_CONFIG_PATH, resources_dir / "config_default.py")
+    shutil.copy2(BAM_LOGO_PATH, images_dir / "BAM Logo.png")
+    shutil.copy2(GUI_SOURCE_PATH, plain_files_dir / "lattice_visualizer_gui.py")
     shutil.copy2(SOURCE_PATH, plain_files_dir / "visualize_lattice.py")
     shutil.copy2(REQUIREMENTS_PATH, plain_files_dir / "requirements.txt")
     shutil.copy2(LICENSE_PATH, plain_files_dir / "LICENSE")
 
 
 def run_pyinstaller() -> Path:
-    pyinstaller_dist = STAGING_DIR / "pyinstaller-dist"
-    pyinstaller_dist.mkdir(parents=True, exist_ok=True)
+    gui_dist = STAGING_DIR / "gui-pyinstaller-dist"
+    renderer_dist = STAGING_DIR / "renderer-pyinstaller-dist"
+    gui_work = BUILD_DIR / "gui"
+    renderer_work = BUILD_DIR / "renderer"
+    for path in (gui_dist, renderer_dist, gui_work, renderer_work):
+        path.mkdir(parents=True, exist_ok=True)
     run_checked(
         [
             sys.executable,
@@ -261,40 +347,74 @@ def run_pyinstaller() -> Path:
             "--noconfirm",
             "--clean",
             "--distpath",
-            str(pyinstaller_dist),
+            str(gui_dist),
             "--workpath",
-            str(BUILD_DIR),
+            str(gui_work),
             str(SPEC_PATH),
         ],
         cwd=STANDALONE_DIR,
     )
 
-    portable_dir = pyinstaller_dist / "visualize_lattice"
+    run_checked(
+        [
+            sys.executable,
+            "-m",
+            "PyInstaller",
+            "--noconfirm",
+            "--clean",
+            "--distpath",
+            str(renderer_dist),
+            "--workpath",
+            str(renderer_work),
+            str(RENDERER_SPEC_PATH),
+        ],
+        cwd=STANDALONE_DIR,
+    )
+
+    gui_dir = gui_dist / "visualize_lattice"
+    renderer_dir = renderer_dist / "visualize_lattice_renderer"
+    portable_dir = STAGING_DIR / "pyinstaller-dist" / "visualize_lattice"
+    if portable_dir.exists():
+        shutil.rmtree(portable_dir)
+    shutil.copytree(gui_dir, portable_dir)
     expected_exe = portable_dir / "visualize_lattice.exe"
+    renderer_exe = renderer_dir / "visualize_lattice_renderer.exe"
     internal_dir = portable_dir / "_internal"
-    if not expected_exe.is_file() or not internal_dir.is_dir():
-        raise FileNotFoundError(
-            "PyInstaller did not create the expected one-folder distribution."
-        )
+    if not expected_exe.is_file() or not renderer_exe.is_file() or not internal_dir.is_dir():
+        raise FileNotFoundError("PyInstaller did not create the coordinated GUI/renderer distribution.")
+    shutil.copy2(renderer_exe, portable_dir / renderer_exe.name)
     return portable_dir
 
 
 def add_portable_support_files(portable_dir: Path) -> None:
     shutil.copy2(README_PATH, portable_dir / "ReadMe.txt")
-    shutil.copy2(CONFIG_PATH, portable_dir / "User Input.yaml")
+    shutil.copy2(DEFAULT_CONFIG_PATH, portable_dir / "config.py")
+    resources_dir = portable_dir / "01_Resources"
+    resources_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(DEFAULT_CONFIG_PATH, resources_dir / "config_default.py")
+    images_dir = resources_dir / "Images"
+    images_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(BAM_LOGO_PATH, images_dir / "BAM Logo.png")
     shutil.copy2(REQUIREMENTS_PATH, portable_dir / "requirements.txt")
     shutil.copy2(LICENSE_PATH, portable_dir / "LICENSE")
 
 
 def smoke_test_portable(portable_dir: Path, small_config_path: Path) -> None:
-    portable_config = portable_dir / "User Input.yaml"
+    portable_config = portable_dir / "config.py"
     original_config = portable_config.read_bytes()
     unrelated_directory = STAGING_DIR / "portable-unrelated-working-directory"
     unrelated_directory.mkdir(parents=True, exist_ok=True)
     try:
         shutil.copy2(small_config_path, portable_config)
         run_checked(
-            [str(portable_dir / "visualize_lattice.exe"), "--no-show"],
+            [str(portable_dir / "visualize_lattice_renderer.exe"), "--no-show"],
+            cwd=unrelated_directory,
+        )
+        # Exercise the GUI executable's own frozen-mode path resolution. This
+        # verifies that it can locate and launch the sibling renderer, rather
+        # than merely proving that the renderer works when invoked directly.
+        run_checked(
+            [str(portable_dir / "visualize_lattice.exe"), "--smoke-test-renderer"],
             cwd=unrelated_directory,
         )
     finally:
@@ -313,6 +433,7 @@ def create_rar(
             str(rar_executable),
             "a",
             "-ma5",
+            "-r",
             "-idq",
             str(archive_path),
             source_name,
@@ -341,11 +462,21 @@ def list_rar_entries(rar_executable: Path, archive_path: Path) -> set[str]:
 
 def validate_script_archive(rar_executable: Path, archive_path: Path) -> None:
     entries = list_rar_entries(rar_executable, archive_path)
-    if entries != PLAIN_FILE_NAMES:
+    # Recursive RAR creation includes explicit directory records. Validate the
+    # files as the release contract and allow only the two expected resource
+    # directories in addition to them.
+    expected_directories = {"01_Resources", "01_Resources\\Images"}
+    files = entries - expected_directories
+    unexpected_directories = {
+        entry for entry in entries
+        if entry not in PLAIN_FILE_NAMES and entry not in expected_directories
+    }
+    if files != PLAIN_FILE_NAMES or unexpected_directories:
         raise RuntimeError(
             "Script archive contents differ from the release contract.\n"
             f"Expected: {sorted(PLAIN_FILE_NAMES)}\n"
-            f"Actual: {sorted(entries)}"
+            f"Actual files: {sorted(files)}\n"
+            f"Unexpected directories: {sorted(unexpected_directories)}"
         )
 
 
@@ -354,10 +485,13 @@ def validate_portable_archive(rar_executable: Path, archive_path: Path) -> None:
     prefix = "visualize_lattice\\"
     required = {
         prefix + "ReadMe.txt",
-        prefix + "User Input.yaml",
+        prefix + "config.py",
+        prefix + "01_Resources\\config_default.py",
+        prefix + "01_Resources\\Images\\BAM Logo.png",
         prefix + "requirements.txt",
         prefix + "LICENSE",
         prefix + "visualize_lattice.exe",
+        prefix + "visualize_lattice_renderer.exe",
     }
     missing = required - entries
     unexpected = {
@@ -365,6 +499,8 @@ def validate_portable_archive(rar_executable: Path, archive_path: Path) -> None:
         for entry in entries
         if entry != "visualize_lattice"
         and entry != prefix + "_internal"
+        and entry != prefix + "01_Resources"
+        and entry != prefix + "01_Resources\\Images"
         and not entry.startswith(prefix + "_internal\\")
         and entry not in required
     }
@@ -410,7 +546,7 @@ def main() -> None:
 
     print(f"Building Lattice Visualizer standalone assets for {version}...")
 
-    small_config_path = STAGING_DIR / "small-test-config.yaml"
+    small_config_path = STAGING_DIR / "small-test-config.py"
     create_small_test_config(small_config_path)
     validate_source_import()
     smoke_test_source(small_config_path)

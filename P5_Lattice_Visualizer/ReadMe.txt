@@ -1,167 +1,101 @@
-ReadMe - Lattice Visualization Tool
-===================================
+ReadMe - WeldCraft P5 Lattice Visualizer
+=======================================
 
 What this program does
 ----------------------
-This program visualizes basic crystalline lattices such as Simple Cubic (SC),
-Body-Centered Cubic (BCC), and Face-Centered Cubic (FCC). You can view small
-unit cells to understand the geometry, or you can scale up to very large
-systems to illustrate how rare events (like parts-per-million dopant atoms)
-look in a crystal structure.
+P5 visualizes Simple Cubic (SC), Body-Centered Cubic (BCC), and Face-Centered
+Cubic (FCC) lattices. It supports substitutional and interstitial dopants,
+single-cell teaching views, very large atom counts, unit-cell overlays,
+Hydrogen picking, screenshots, and mesh export.
 
-It allows you to:
-- Explore how atoms are arranged in different lattice types.
-- Insert dopants (different atom types) at substitutional or interstitial
-  positions to simulate impurities.
-- Adjust visualization style, colors, overlays, and rendering options to
-  highlight features of interest.
-- Create large-scale structures to illustrate very small dopant fractions
-  (ppm scale) in an intuitive visual way.
-
-How to use the program
-----------------------
-1. Install Python 3.10 and the required libraries with:
+How to use the application
+--------------------------
+1. Install Python 3.10 and the required libraries:
 
    python -m pip install -r requirements.txt
 
-2. Open the file "User Input.yaml". This is where you control everything the
-   program does.
-3. Edit parameters in User Input.yaml to set the lattice, dopants, overlays,
-   and visualization style.
-4. Run the program with:
+2. Open the WeldCraft launcher and select Lattice Visualizer.
+3. Configure the floating toolbox.
+4. Settings are saved immediately to the fully commented `config.py`.
+5. Use Open Display to open the separate PyVista display window. The button is
+   called Update Display while that window is open. Slider and field changes are
+   also applied automatically without closing the display or resetting its view.
+
+The toolbox is intentionally separate from the renderer. This keeps VTK's
+specialized interaction stable while allowing the settings window to remain a
+convenient floating control panel.
+
+Persistent configuration
+------------------------
+`config.py` is the local, persistent, human-readable configuration. It exposes
+the `SETTINGS` mapping and `get_value(name)` function. The GUI writes it
+atomically after valid edits and applies changes to the open display window.
+
+`01_Resources/config_default.py` is the tracked reset template. It contains the
+full explanations that used to be stored as comments in `User Input.yaml`.
+Those explanations are retained in generated `config.py` files and are also
+represented by GUI tooltips and this document.
+
+Basic controls
+--------------
+The normal view contains the settings needed for routine lattice illustrations:
+
+- crystal structure and approximate host-atom count;
+- lattice-size behavior and host-atom size;
+- substitutional concentrations and sizes for species A and B;
+- hydrogen count and size;
+- visible interstitial-site copies, marker size, and marker visibility;
+- an optional random seed for repeatable random placement.
+
+Continuous visual values use a slider and an editable number field. Counts use
+number fields because their useful range is too large for an accurate slider.
+Lattice size behavior is deliberately visible in both Basic and Advanced. It
+can use one cell automatically for small examples, always respect the requested
+atom count, or deliberately show one conventional cell.
+
+Advanced controls
+-----------------
+Advanced options replaces the basic page with six focused tabs:
+
+- Structure: physical host radius, host colour, and lattice-size behavior.
+- Dopants: named species, colour, substitutional/interstitial placement,
+  concentration or count, relative size, site family, and an optional fixed
+  fractional position.
+- Appearance: coordinated presets, background, host visibility, outlines, and
+  surface lighting.
+- Guides & Camera: unit-cell and lattice guides, site colours, legend,
+  interaction, camera, projection, and numbered axes.
+- Quality: lattice sampling, edge smoothing, sphere smoothness, and automatic
+  simplification of very large lattices.
+- Output: PNG file name, resolution, transparency, overwrite behavior, and
+  display dimensions.
+
+The renderer's safe internal limits remain documented in `config.py`, but are
+not presented as normal visual controls that users would have to coordinate.
+
+Direct renderer usage
+---------------------
+The renderer remains fully usable without the toolbox. Edit the documented
+`config.py` and run:
 
    python visualize_lattice.py
 
-   It will read User Input.yaml and display the structure.
+This follows `display_window`, `save_png`, and all other settings in the same
+configuration used by the GUI. It opens the normal interactive PyVista window
+when display output is enabled.
 
-Editing the User Input.yaml
------------------------
-All important settings are in User Input.yaml. You don’t need to touch the Python
-file itself. Here are the key options in simple terms:
+For batch work without a display window, run:
 
-- lattice: Choose "SC", "BCC", or "FCC" to pick the crystal type.
-- target_atoms: Roughly how many atoms to show. The program adjusts the cell
-  counts to get close to this number.
-- Nx, Ny, Nz: Manual number of unit cells in x, y, and z. Normally overridden
-  by target_atoms unless you force demo_cell.
-- r: The atomic radius (in nm). Defines spacing between atoms.
-- base_color: The color of the base atoms (iron by default). Example: "#555555".
-- dopants: A list of additional atoms you want to insert. For each dopant:
-  * name: Label for the dopant (e.g., "H").
-  * color: Visual color (e.g., "blue").
-  * mode: "substitutional" (replace base atoms) or "interstitial" (fit into
-    holes in the lattice).
-  * fraction: For substitutional dopants, fraction of sites to replace (0.01 = 1%).
-  * count: For interstitial dopants, number of atoms to add.
-  * interstitial_site: Restrict placement to a catalogue family. This may be
-    one value or a lattice-aware mapping, for example:
-        interstitial_site:
-          BCC: tetra
-          FCC: octa
-          SC: cubic
-  * forced_interstitial_position: Optional exact position in fractional
-    conventional-cell coordinates. It may be one legacy [x, y, z] coordinate,
-    or a lattice-aware mapping such as:
-        forced_interstitial_position:
-          BCC: [0.25, 0.0, 0.5]
-          FCC: [0.5, 0.5, 0.5]
-          SC: [0.5, 0.5, 0.5]
-    The selected coordinate must belong to the chosen interstitial family.
-    A missing/null entry falls back to random placement instead of crashing
-    after the lattice type is changed.
-  * size_scale: How big dopant atoms look relative to the base atoms.
-  * positions: Optionally give explicit coordinates (advanced use).
+   python visualize_lattice.py --no-show
 
-- sphere_theta / sphere_phi: Control how smooth the spheres look. Higher values
-  = smoother but slower. Lower values = blocky but faster.
-- window_size: Interactive window and screenshot size in pixels.
-- display_window / save_png: Select interactive display only, PNG output only,
-  both, or neither. If both are true, the configured camera view is saved first
-  and then a separate normal-resolution interactive window opens. Interactive
-  rotations made afterward do not alter that PNG.
-- png_path / png_scale: Set the lossless PNG destination and saved-resolution
-  multiplier. With window_size [1600, 1200] and png_scale 2, the PNG is
-  3200 x 2400 while the displayed window remains 1600 x 1200. Relative paths
-  are anchored to the visualizer/executable directory, not VS Code's current
-  working directory.
-- png_include_lattice_name: Adds the active lattice before the extension, for
-  example lattice_visualization FCC.png.
-- png_avoid_overwrite: When true, an existing name.png is preserved and the new
-  image is saved as name (1).png, then name (2).png, and so forth. With the
-  lattice suffix this becomes lattice_visualization FCC (1).png, etc.
-- png_transparent_background: Save the PNG with transparency instead of the
-  configured solid background.
-- deduplicate_axis_zero_labels: Shows a single shared-origin zero label while
-  retaining all nonzero X/Y/Z ticks.
-- axis_font_size / axis_line_width: Control the publication-scale numbered-axis
-  text and line thickness. The defaults are enlarged for figures that will be
-  reduced on a page.
-- base_atom_outline_depth_offset / base_atom_outline_as_tubes: Keep outline
-  contours solid and slightly in front of translucent Fe surfaces, avoiding
-  depth-fighting stipple and white fringe pixels at overlapping edges.
-- camera_preset: "custom" uses camera_direction and the other explicit camera
-  settings; "isometric" uses the original equal-axis view; "low_isometric"
-  reproduces the lower-elevation perspective reconstructed from the reference
-  screenshot. Camera presets are independent of visual_preset.
-- camera_normalize_demo_atom_size: Uses one BCC-derived camera distance for
-  one-cell SC/BCC/FCC comparisons. Fe spheres with the same configured radius
-  therefore retain the same on-page size while the physical axis lengths still
-  reflect each lattice constant.
-- anti_aliasing: Edge smoothing. "fxaa" is recommended for the translucent
-  outline preset because MSAA can produce white/colored fringe pixels where
-  transparent surfaces and silhouettes overlap. "msaa" remains crisp for
-  opaque presets; "ssaa" is softer because it downsamples the whole frame.
-- sphere_specular: Controls reflective highlights; 0.0 gives a matte surface.
-- visual_preset: "screen" preserves the configured colors; "thesis" and
-  "publication" apply the thesis palette (silver Fe, blue H, green/teal site
-  families, near-black lines) and flatter lighting. "outline" retains that
-  palette but draws Fe as translucent shells with solid, camera-aware outlines,
-  which helps reveal atoms hidden by an isometric projection.
-- adaptive_resolution and res_cap_1/2/3: Keep very large instanced scenes
-  responsive by capping base-sphere smoothness at the configured thresholds.
-- render_mode: "auto" (smart choice), "spheres" (full spheres), or
-  "impostor_points" (fast, simplified spheres).
-- stride: Keep every nth atom. For example stride=2 shows half the atoms.
+Use `--config path_to_config.py` for an explicit Python settings module,
+`--dump-config path_to_config.py` to write a documented configuration, and the
+existing export/screenshot options for scripted output.
 
-Overlays:
-- show_unit_cell_overlay: Draws the outline of the conventional unit cell.
-- draw_bravais_overlay: Draws extra lines for BCC/FCC to highlight the
-  structure.
-- overlay_color: Color of the overlay lines.
-- overlay_alpha: Transparency of the overlay lines.
-- overlay_marker_scale: Adjusts size of overlay markers.
-- overlay_marker_opacity / overlay_marker_specular: Control marker transparency
-  and shininess.
-- interstitial_site_view: "all" shows both periodic faces; "canonical" folds
-  duplicate boundary sites into [0,1); "picture" uses the equivalent faces
-  selected by picture_site_faces. This controls the single-cell
-  overlay wherever it is enabled; in demo mode, "picture" also moves a boundary
-  dopant to its selected equivalent periodic image.
-- picture_site_faces: May be one [x, y, z] face selection or separate BCC/FCC/SC
-  selections. An occupied interstitial replaces the candidate-site marker at
-  the same periodic coordinate instead of drawing two overlapping spheres.
-- overlay_periodic: Choose whether overlays repeat on both faces or just the
-  canonical unit cell. This is the legacy name for interstitial_site_view.
-- show_overlay_legend: Adds a legend for overlays.
-- overlay_legend_loc: Where the legend appears.
-- overlay_legend_text_color / overlay_legend_padding: Control the legend's
-  neutral text color and internal spacing independently of its colored dots.
-- overlay_legend_font_size: Controls the structured legend heading and row
-  text size.
-- overlay_legend_x_offset: Moves the structured legend horizontally as a
-  fraction of the viewport width; positive values move right.
-
-Demo mode:
-- demo_cell_force: If true, only show one conventional unit cell.
-- demo_cell_auto: Automatically turn on demo mode if atom count is small.
-
-Tips:
------
-- Use demo_cell_force for teaching to clearly show one unit cell.
-- For ppm illustrations, set target_atoms very high (1e6) and add a small
-  dopant fraction. This creates a big lattice with a few impurities.
-- If the program is slow, lower sphere_theta and sphere_phi, or switch
-  render_mode to "impostor_points".
-
-That’s it! Edit User Input.yaml, run visualize_lattice.py, and enjoy exploring
-crystal lattices interactively.
+Tips
+----
+- Choose Show one-cell example under Lattice size behavior for teaching or
+  clean SC/BCC/FCC comparisons.
+- For ppm illustrations, choose a high host-atom count and a small dopant concentration.
+- If a large scene is slow, increase Lattice sampling step, lower Sphere
+  smoothness, or enable Simplify very large lattices.

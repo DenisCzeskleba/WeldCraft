@@ -5,34 +5,27 @@ from pathlib import Path
 from PyInstaller.utils.hooks import collect_all
 
 
-APP_NAME = "visualize_lattice"
+APP_NAME = "visualize_lattice_renderer"
 
 STANDALONE_DIR = Path(SPEC).resolve().parent
 P5_DIR = STANDALONE_DIR.parent
-ENTRY_SCRIPT = P5_DIR / "lattice_visualizer_gui.py"
+ENTRY_SCRIPT = P5_DIR / "visualize_lattice.py"
 
 pyvista_datas, pyvista_binaries, pyvista_hiddenimports = collect_all("pyvista")
 vtk_datas, vtk_binaries, vtk_hiddenimports = collect_all("vtkmodules")
-pyqt_datas, pyqt_binaries, pyqt_hiddenimports = collect_all("PyQt5")
 
 a = Analysis(
     [str(ENTRY_SCRIPT)],
     pathex=[str(P5_DIR)],
-    binaries=pyvista_binaries + vtk_binaries + pyqt_binaries,
-    datas=(
-        pyvista_datas
-        + vtk_datas
-        + pyqt_datas
-        + [
-            (str(P5_DIR / "01_Resources" / "config_default.py"), "01_Resources"),
-            (str(P5_DIR / "01_Resources" / "Images" / "BAM Logo.png"), "01_Resources/Images"),
-        ]
-    ),
-    hiddenimports=pyvista_hiddenimports + vtk_hiddenimports + pyqt_hiddenimports,
+    binaries=pyvista_binaries + vtk_binaries,
+    datas=pyvista_datas + vtk_datas + [
+        (str(P5_DIR / "01_Resources" / "config_default.py"), "01_Resources")
+    ],
+    hiddenimports=pyvista_hiddenimports + vtk_hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=["PySide2", "PySide6"],
+    excludes=["PyQt5", "PySide2", "PySide6"],
     noarchive=False,
     optimize=0,
 )
@@ -49,7 +42,7 @@ exe = EXE(
     strip=False,
     upx=True,
     upx_exclude=[],
-    console=False,
+    console=True,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
