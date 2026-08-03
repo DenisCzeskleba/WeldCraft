@@ -235,6 +235,12 @@ class Launcher(QMainWindow):
             "03_CodeBase",
             "heat_map.py",
         )
+        self.path_brownian_motion = os.path.join(
+            REPO_ROOT,
+            "P6_Visualize Diffusion (Brownian Motion)",
+            "03_CodeBase",
+            "p6_gui.py",
+        )
 
         self.active_processes = {}
         self.pending_launches = {}
@@ -355,7 +361,7 @@ class Launcher(QMainWindow):
                 self.build_page_entry(
                     "Visualize Diffusion (Brownian Motion)",
                     self.p6_diffusion_info,
-                    partial(self.show_placeholder_message, self.p6_diffusion_info),
+                    self.start_brownian_motion,
                     status_note=self.gui_beta_note,
                 ),
                 self.build_page_entry(
@@ -637,6 +643,9 @@ class Launcher(QMainWindow):
 
     def start_lattice_visualizer(self):
         self.start_program("pushButton_slot_5", [self.path_lattice_visualizer])
+
+    def start_brownian_motion(self):
+        self.start_program("pushButton_slot_6", [self.path_brownian_motion])
 
     def center(self):
         qr = self.frameGeometry()

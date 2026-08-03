@@ -15,7 +15,10 @@ import h5py
 import matplotlib.pyplot as plt
 import matplotlib.patheffects as path_effects
 import numpy as np
+from matplotlib.backends.backend_agg import FigureCanvasAgg
+from matplotlib.collections import LineCollection, PatchCollection
 from matplotlib.colors import BoundaryNorm, ListedColormap, TwoSlopeNorm
+from matplotlib.figure import Figure
 from matplotlib.patches import Circle, Rectangle, Wedge
 
 with contextlib.redirect_stdout(io.StringIO()):
@@ -1039,56 +1042,92 @@ def draw_printer_glyphs(axis, matrix, metadata):
     x_edges = np.rint(np.linspace(0, cols, x_bin_count + 1)).astype(int)
     y_edges = np.rint(np.linspace(0, rows, y_bin_count + 1)).astype(int)
 
-    for y_start, y_end in zip(y_edges[:-1], y_edges[1:]):
-        for x_start, x_end in zip(x_edges[:-1], x_edges[1:]):
-            block = matrix[y_start:y_end, x_start:x_end]
-            active_count = int(np.sum(block > 0))
-            if active_count == 0:
-                continue
+    active = (matrix > 0).astype(np.int32, copy=False)
+    hydrogen = (matrix == 2).astype(np.int32, copy=False)
 
-            area = block.size
-            capacity = active_count / area
-            occupancy = float(np.sum(block == 2)) / active_count
-            compressed_capacity = capacity ** capacity_gamma
-            radius_scale = radius_floor + (
-                radius_ceiling - radius_floor
-            ) * compressed_capacity
-            radius = 0.5 * min(x_end - x_start, y_end - y_start) * radius_scale
-            center = ((x_start + x_end - 1) / 2, (y_start + y_end - 1) / 2)
+    def binned_sums(values):
+        row_sums = np.add.reduceat(values, y_edges[:-1], axis=0)
+        return np.add.reduceat(row_sums, x_edges[:-1], axis=1)
 
-            axis.add_patch(Circle(
-                center,
-                radius,
-                facecolor=COLOR_AVAILABLE_SPOT,
-                edgecolor="none",
-                alpha=DOT_ALPHA_AVAILABLE,
-                zorder=2,
-            ))
-            if occupancy > 0:
-                axis.add_patch(Wedge(
-                    center,
-                    radius,
-                    90,
-                    90 + 360 * occupancy,
-                    facecolor=COLOR_HYDROGEN,
-                    edgecolor="none",
-                    alpha=DOT_ALPHA_HYDROGEN,
-                    zorder=3,
-                ))
-            axis.add_patch(Circle(
-                center,
-                radius,
-                fill=False,
-                edgecolor=GLYPH_EDGE_COLOR,
-                linewidth=GLYPH_EDGE_WIDTH,
-                zorder=4,
-            ))
+    active_counts = binned_sums(active)
+    hydrogen_counts = binned_sums(hydrogen)
+    bin_areas = np.multiply.outer(np.diff(y_edges), np.diff(x_edges))
+    valid = active_counts > 0
+    capacities = np.zeros_like(active_counts, dtype=np.float64)
+    occupancies = np.zeros_like(active_counts, dtype=np.float64)
+    capacities[valid] = active_counts[valid] / bin_areas[valid]
+    occupancies[valid] = hydrogen_counts[valid] / active_counts[valid]
+
+    x_centers = (x_edges[:-1] + x_edges[1:] - 1) / 2
+    y_centers = (y_edges[:-1] + y_edges[1:] - 1) / 2
+    centers_x, centers_y = np.meshgrid(x_centers, y_centers)
+    maximum_radii = 0.5 * np.minimum.outer(np.diff(y_edges), np.diff(x_edges))
+    radius_scales = radius_floor + (
+        radius_ceiling - radius_floor
+    ) * np.power(capacities, capacity_gamma)
+    radii = maximum_radii * radius_scales
+
+    valid_y, valid_x = np.nonzero(valid)
+    glyphs = [
+        Circle((centers_x[y, x], centers_y[y, x]), radii[y, x])
+        for y, x in zip(valid_y, valid_x)
+    ]
+    if glyphs:
+        axis.add_collection(PatchCollection(
+            glyphs,
+            facecolor=COLOR_AVAILABLE_SPOT,
+            edgecolor="none",
+            alpha=DOT_ALPHA_AVAILABLE,
+            zorder=2,
+        ))
+
+    occupied_bins = valid & (occupancies > 0)
+    occupied_y, occupied_x = np.nonzero(occupied_bins)
+    occupied_sectors = [
+        Wedge(
+            (centers_x[y, x], centers_y[y, x]),
+            radii[y, x],
+            90,
+            90 + 360 * occupancies[y, x],
+        )
+        for y, x in zip(occupied_y, occupied_x)
+    ]
+    if occupied_sectors:
+        axis.add_collection(PatchCollection(
+            occupied_sectors,
+            facecolor=COLOR_HYDROGEN,
+            edgecolor="none",
+            alpha=DOT_ALPHA_HYDROGEN,
+            zorder=3,
+        ))
+
+    if glyphs:
+        outlines = [
+            Circle((centers_x[y, x], centers_y[y, x]), radii[y, x])
+            for y, x in zip(valid_y, valid_x)
+        ]
+        axis.add_collection(PatchCollection(
+            outlines,
+            facecolor="none",
+            edgecolor=GLYPH_EDGE_COLOR,
+            linewidth=GLYPH_EDGE_WIDTH,
+            zorder=4,
+        ))
 
     if GLYPH_SHOW_GRID:
-        for x_position in x_edges:
-            axis.axvline(x_position - 0.5, color=GLYPH_GRID_COLOR, linewidth=0.25, zorder=1)
-        for y_position in y_edges:
-            axis.axhline(y_position - 0.5, color=GLYPH_GRID_COLOR, linewidth=0.25, zorder=1)
+        grid_segments = [
+            ((x_position - 0.5, -0.5), (x_position - 0.5, rows - 0.5))
+            for x_position in x_edges
+        ] + [
+            ((-0.5, y_position - 0.5), (cols - 0.5, y_position - 0.5))
+            for y_position in y_edges
+        ]
+        axis.add_collection(LineCollection(
+            grid_segments,
+            colors=GLYPH_GRID_COLOR,
+            linewidths=0.25,
+            zorder=1,
+        ))
 
     if GLYPH_SHOW_EXPLANATION:
         explanation_lines = [
@@ -2712,6 +2751,7 @@ def create_figure(
     transport_analysis,
     area_summary_shake_mode=None,
     heatmap_baseline_matrix=None,
+    managed=True,
 ):
     panels = []
     if SHOW_MAIN_PANEL:
@@ -2726,12 +2766,23 @@ def create_figure(
     if not panels:
         raise ValueError("At least one diagram panel must be enabled.")
 
-    fig, axes_array = plt.subplots(
-        1,
-        len(panels),
-        figsize=FIGURE_SIZE,
-        gridspec_kw={"width_ratios": [panel[1] for panel in panels], "wspace": 0.35},
-    )
+    subplot_options = {
+        "gridspec_kw": {
+            "width_ratios": [panel[1] for panel in panels],
+            "wspace": 0.35,
+        },
+    }
+    if managed:
+        fig, axes_array = plt.subplots(
+            1,
+            len(panels),
+            figsize=FIGURE_SIZE,
+            **subplot_options,
+        )
+    else:
+        fig = Figure(figsize=FIGURE_SIZE)
+        FigureCanvasAgg(fig)
+        axes_array = fig.subplots(1, len(panels), **subplot_options)
     axes_array = np.atleast_1d(axes_array)
     axes_by_panel = {}
 

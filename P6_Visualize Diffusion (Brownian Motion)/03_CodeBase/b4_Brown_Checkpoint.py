@@ -7,7 +7,7 @@ import h5py
 import numpy as np
 
 
-CHECKPOINT_SCHEMA = "brownian_exact_restart_v1"
+CHECKPOINT_SCHEMA = "brownian_exact_restart_v2"
 
 # These settings affect motion after the starting matrix has been loaded. Initial
 # matrix-generation settings are intentionally absent because their result is
@@ -158,7 +158,7 @@ def load_resume_state(source_path: Path) -> dict:
             checkpoint is not None
             and checkpoint.attrs.get("schema") == CHECKPOINT_SCHEMA
             and bool(checkpoint.attrs.get("complete", False))
-            and hf.attrs.get("run_status") == "complete"
+            and hf.attrs.get("run_status") in ("complete", "cancelled")
         )
 
         if exact:
@@ -297,7 +297,7 @@ def restore_ordered_hydrogen_site_ids(
     hydrogen_site_ids[:] = saved
 
 
-def write_final_checkpoint(
+def write_exact_checkpoint(
     hf: h5py.File,
     *,
     step: int,
@@ -310,8 +310,12 @@ def write_final_checkpoint(
     event_pending_wait_steps: int | None = None,
     event_fenwick_tree: np.ndarray | None = None,
     event_total_transition_weight: float | None = None,
+    run_status: str | None = None,
 ) -> None:
-    checkpoint = hf.create_group("checkpoint")
+    staging_name = "checkpoint_staging"
+    if staging_name in hf:
+        del hf[staging_name]
+    checkpoint = hf.create_group(staging_name)
     checkpoint.attrs["schema"] = CHECKPOINT_SCHEMA
     checkpoint.attrs["step"] = np.int64(step)
     checkpoint.attrs["snapshot_index"] = np.int64(snapshot_index)
@@ -341,9 +345,22 @@ def write_final_checkpoint(
             event_total_transition_weight
         )
 
-    # A reader only treats the checkpoint as exact after these markers have been
-    # flushed. Interrupted files therefore fall back to statistical continuation.
+    # Publish through a staging group. A reader never sees a partly written
+    # replacement checkpoint, and cancelled GUI runs can retain the last fully
+    # committed scheduled snapshot.
     hf.flush()
     checkpoint.attrs["complete"] = True
-    hf.attrs["run_status"] = "complete"
     hf.flush()
+    if "checkpoint" in hf:
+        del hf["checkpoint"]
+    hf.move(staging_name, "checkpoint")
+    if run_status is not None:
+        hf.attrs["run_status"] = run_status
+    hf.flush()
+
+
+def write_final_checkpoint(
+    hf: h5py.File,
+    **kwargs,
+) -> None:
+    write_exact_checkpoint(hf, run_status="complete", **kwargs)

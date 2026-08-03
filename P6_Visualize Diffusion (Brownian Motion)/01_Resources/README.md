@@ -3,6 +3,27 @@
 This resource README describes the simulation choices available to P6 users. It is separate from the
 WeldCraft repository README.
 
+## Graphical interface
+
+Open P6 from the WeldCraft launcher to configure and run the supported random-matrix,
+`event_driven_wiggle` workflow. The Setup tab provides the simulation length, exact snapshot interval,
+matrix and concentration geometry, area affinity/mobility, source/sink behavior, reproducibility, and
+output settings. Valid edits are saved back to `03_CodeBase/b2_Brown_Config.py`, so they remain available
+to both the GUI and direct scripts.
+
+When a run completes, its committed HDF5 frames open in the Results tab. Existing compatible P6 files
+can also be loaded there. The viewer provides frame playback, every ordinary still-diagram preset,
+preset-aware presentation controls, PNG/PDF/SVG export, and explicit MP4 rendering. GUI output names
+must be plain filenames and are always written directly to `02_Results`.
+
+New GUI-capable files receive an exact rolling checkpoint at every scheduled saved frame. Cancelling a
+run discards work after its last scheduled frame and leaves that frame exactly resumable. The GUI only
+offers Continue for files whose new checkpoint format passes complete integrity validation; older files
+remain viewable, while their statistical continuation path stays available to direct-script users.
+
+Movement modes, jump-radius/probability controls, buffer internals, image/lattice sources, and encoder
+details intentionally remain code-only power-user settings.
+
 P6 provides three supported wiggle-derived movement modes plus the deprecated `forced_jump` legacy mode.
 They share the same matrix initialization, concentration settings, spot/layer topology, HDF5 snapshot
 format, and plotting tools. The supported modes differ in how molecular movement is executed.

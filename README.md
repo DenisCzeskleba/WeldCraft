@@ -20,7 +20,7 @@ Until at least Q4 of 2026, this project will see constant updates, either here o
 | P3 | Heat Map | Focused thermal-welding simulation for manual heating calibration, four-point temperature traces, animations, and a practical smaller-scale example of P2 thermal concepts. |
 | P4 | Reserved | Reserved for a future WeldCraft module. |
 | P5 | Lattice Visualizer | Interactive SC, BCC, and FCC lattice visualization with configurable dopants and overlays. |
-| P6 | Visualize Diffusion (Brownian Motion) | Code-driven lattice-scale diffusion visualization and analysis. |
+| P6 | Visualize Diffusion (Brownian Motion) | GUI and code-driven lattice-scale diffusion simulation, visualization, and analysis. |
 | P7 | Analysis Tools | Reserved collection for additional WeldCraft analysis utilities. |
 
 ## License

@@ -1,3 +1,9 @@
+import os
+import sys
+import json
+from fractions import Fraction
+from pathlib import Path
+
 import h5py
 import numpy as np
 from tqdm import tqdm
@@ -10,11 +16,36 @@ from b4_Brown_Checkpoint import (
     restore_compact_hydrogen_order,
     restore_ordered_hydrogen_site_ids,
     validate_resume_config,
+    write_exact_checkpoint,
     write_final_checkpoint,
 )
 
 
 cfg = load_brown_config()
+gui_run = os.environ.get("WELDCRAFT_P6_GUI_RUN") == "1"
+gui_stop_file = os.environ.get("WELDCRAFT_P6_STOP_FILE", "").strip()
+gui_settings_json = os.environ.get("WELDCRAFT_P6_SETTINGS_JSON", "").strip()
+if gui_settings_json:
+    gui_settings = json.loads(gui_settings_json)
+    for fraction_name in ("max_sol_a", "max_sol_b", "max_sol_spot", "max_sol_trap_layer"):
+        if fraction_name in gui_settings:
+            gui_settings[fraction_name] = Fraction(gui_settings[fraction_name])
+    for setting_name, setting_value in gui_settings.items():
+        setattr(cfg, setting_name, setting_value)
+
+
+def gui_stop_requested():
+    return bool(gui_stop_file and Path(gui_stop_file).exists())
+
+
+def report_gui_progress(completed, total, committed_frames, message):
+    if not gui_run:
+        return
+    fraction = 1.0 if total <= 0 else min(1.0, max(0.0, completed / total))
+    print(
+        f"P6_GUI_PROGRESS|{fraction:.12f}|{int(completed)}|{int(committed_frames)}|{message}",
+        flush=True,
+    )
 compact_wiggle_modes = ("random_sequential_wiggle", "event_driven_wiggle")
 wiggle_modes = ("molecular_wiggle", *compact_wiggle_modes)
 if cfg.SOURCE_SIDE not in ("left", "right"):
@@ -648,30 +679,60 @@ with h5py.File(h5_filename, "w") as hf:
             if use_random_sequential_lane
             else "Event-driven uniformized steps"
         )
+        cancelled = False
 
-        with tqdm(total=steps, desc=progress_description) as progress:
+        with tqdm(total=steps, desc=progress_description, disable=gui_run) as progress:
             for frame_index, saved_step in enumerate(saved_steps):
                 steps_to_run = int(saved_step - previous_saved_step)
                 if steps_to_run > 0:
-                    (
-                        compact_hydrogen_count,
-                        total_transition_weight,
-                        disp_stats,
-                        completed_work,
-                        completed_activity_count,
-                        event_pending_wait_steps,
-                    ) = run_compact_wiggle_work(
-                        compact_hydrogen_count,
-                        total_transition_weight,
-                        steps_to_run,
-                        event_pending_wait_steps,
+                    disp_stats = np.zeros((num_regions, 3), dtype=np.float64)
+                    completed_in_interval = 0
+                    chunk_size = min(
+                        1_000_000,
+                        max(10_000, int(cfg.save_every_steps) // 100),
                     )
-                    if use_event_driven_lane and completed_work != steps_to_run:
-                        raise RuntimeError(
-                            "event_driven_wiggle failed to complete its uniformized steps"
+                    while completed_in_interval < steps_to_run:
+                        work_count = min(
+                            chunk_size,
+                            steps_to_run - completed_in_interval,
                         )
-                    compact_progress_count += completed_activity_count
-                    progress.update(steps_to_run)
+                        (
+                            compact_hydrogen_count,
+                            total_transition_weight,
+                            chunk_stats,
+                            completed_work,
+                            completed_activity_count,
+                            event_pending_wait_steps,
+                        ) = run_compact_wiggle_work(
+                            compact_hydrogen_count,
+                            total_transition_weight,
+                            work_count,
+                            event_pending_wait_steps,
+                        )
+                        if use_event_driven_lane and completed_work != work_count:
+                            raise RuntimeError(
+                                "event_driven_wiggle failed to complete its uniformized steps"
+                            )
+                        completed_in_interval += completed_work
+                        compact_progress_count += completed_activity_count
+                        disp_stats += chunk_stats
+                        progress.update(completed_work)
+                        completed_total = (
+                            previous_saved_step
+                            - segment_start_step
+                            + completed_in_interval
+                        )
+                        report_gui_progress(
+                            completed_total,
+                            steps,
+                            frame_index,
+                            f"Simulating step {segment_start_step + completed_total:,}",
+                        )
+                        if gui_stop_requested():
+                            cancelled = True
+                            break
+                    if cancelled:
+                        break
                 else:
                     disp_stats = np.zeros((num_regions, 3), dtype=np.float64)
 
@@ -690,11 +751,57 @@ with h5py.File(h5_filename, "w") as hf:
 
                 previous_saved_step = int(saved_step)
                 hf.attrs["frames_written"] = np.int64(frame_index + 1)
+                write_exact_checkpoint(
+                    hf,
+                    step=int(saved_step),
+                    snapshot_index=frame_index,
+                    simulation_mode=cfg.simulation_mode,
+                    random_seed_used=random_seed_used,
+                    rng_state=molecular_rng_state,
+                    ordered_hydrogen_site_ids=(
+                        hydrogen_site_ids[:compact_hydrogen_count].copy()
+                    ),
+                    event_pending_wait_steps=(
+                        event_pending_wait_steps if use_event_driven_lane else None
+                    ),
+                    event_fenwick_tree=(
+                        hydrogen_probability_tree if use_event_driven_lane else None
+                    ),
+                    event_total_transition_weight=(
+                        total_transition_weight if use_event_driven_lane else None
+                    ),
+                )
                 hf.flush()
+                report_gui_progress(
+                    int(saved_step) - segment_start_step,
+                    steps,
+                    frame_index + 1,
+                    f"Committed frame {frame_index + 1}/{num_saved_frames} at step {int(saved_step):,}",
+                )
+        if cancelled:
+            hf.attrs["run_status"] = "cancelled"
+            hf.flush()
+            committed_frames = int(hf.attrs.get("frames_written", 0))
+            committed_step = (
+                int(hf["saved_steps"][committed_frames - 1])
+                if committed_frames
+                else segment_start_step
+            )
+            report_gui_progress(
+                committed_step - segment_start_step,
+                steps,
+                committed_frames,
+                f"Cancelled; retained exact checkpoint at step {committed_step:,}",
+            )
+            print(
+                f"P6_GUI_CANCELLED: retained {committed_frames} frame(s) through step {committed_step}",
+                flush=True,
+            )
+            raise SystemExit(2)
     else:
         completed_step = segment_start_step
         molecular_epoch = 0
-        with tqdm(total=steps, desc="Simulation steps") as progress:
+        with tqdm(total=steps, desc="Simulation steps", disable=gui_run) as progress:
             for frame_index, saved_step in enumerate(saved_steps):
                 steps_to_run = int(saved_step - completed_step)
                 interval_transport_stats = np.zeros(
