@@ -4,10 +4,10 @@
 
 # Optional user-edited runtime configuration.
 /03_CodeBase/config.py
+/03_CodeBase/.config.py.*.tmp
 
 # Python and test/runtime artifacts.
 **/__pycache__/
 *.py[cod]
 *.h5
 *.hdf5
-

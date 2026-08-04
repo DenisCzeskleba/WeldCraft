@@ -9,12 +9,12 @@ import sys
 
 from permeation_cases import (
     MODULE_ROOT,
+    RUNTIME_CONFIG_PATH,
     build_atlas_cases,
     list_presets,
     load_preset,
     load_settings,
 )
-from permeation_diagrams import render_figures
 from permeation_persistence import load_atlas_hdf5, save_atlas_hdf5
 
 
@@ -33,6 +33,9 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Generate normalized 1D hydrogen-permeation response atlases."
     )
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--gui", action="store_true", help="open the PyQt5 graphical interface")
+    mode.add_argument("--cli", action="store_true", help="explicitly use the command-line workflow")
     parser.add_argument("--preset", help="Shipped diagram preset; defaults to overview for new runs.")
     parser.add_argument("--list-presets", action="store_true", help="List shipped presets and exit.")
     parser.add_argument("--config", type=Path, help="Optional Python configuration override.")
@@ -70,9 +73,19 @@ def _print_presets() -> None:
 def main(argv=None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
+    if args.gui:
+        from permeation_gui import launch_gui
+
+        return launch_gui(
+            config_path=args.config or RUNTIME_CONFIG_PATH,
+            results_dir=args.output_dir,
+        )
     if args.list_presets:
         _print_presets()
         return 0
+
+    from permeation_diagrams import render_figures
+    from permeation_gui_support import build_result_metadata
 
     settings = load_settings(args.config)
     diagram = settings["diagram"]
@@ -83,6 +96,14 @@ def main(argv=None) -> int:
         [item.strip() for item in args.formats.split(",") if item.strip()]
         if args.formats
         else diagram["formats"]
+    )
+    diagram.update(
+        {
+            "normalization": normalization,
+            "time_axis": time_axis,
+            "response_metric": response_metric,
+            "formats": formats,
+        }
     )
 
     if args.rerender:
@@ -98,7 +119,7 @@ def main(argv=None) -> int:
         figures = preset["figures"]
         print(f"Simulating preset '{preset_name}' ...")
         results, metadata = build_atlas_cases(settings, figures)
-        metadata.update({"preset": preset_name, "result_name": args.result_name})
+        metadata.update(build_result_metadata(settings, preset_name, figures, args.result_name))
         hdf5_path = args.output_dir / f"{args.result_name}.h5"
         save_atlas_hdf5(hdf5_path, results, metadata)
         print(f"Saved {len(results)} numerical cases to {hdf5_path}")
@@ -115,6 +136,7 @@ def main(argv=None) -> int:
         formats=formats,
         dpi=int(diagram["dpi"]),
         show=args.show,
+        style=diagram,
     )
     for path in figure_paths:
         print(f"Saved {path}")

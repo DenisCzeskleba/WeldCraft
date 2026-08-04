@@ -34,6 +34,10 @@ class SimulationError(RuntimeError):
     """Raised when a requested explicit calculation is invalid or unstable."""
 
 
+class SimulationCancelled(SimulationError):
+    """Raised when a cooperative GUI cancellation request is observed."""
+
+
 @dataclass(frozen=True)
 class SurfaceHistory:
     """Effective entry-side concentration history in units of C_ref."""
@@ -315,7 +319,7 @@ def _total_hydrogen(
     return total * dx
 
 
-@njit(cache=True)
+@njit(cache=True, nogil=True)
 def _age_uniform_prefill(
     n_nodes: int,
     length: float,
@@ -325,6 +329,7 @@ def _age_uniform_prefill(
     diffusion_safety: float,
     maximum_time: float,
     max_steps: int,
+    cancel_flag: np.ndarray,
 ) -> tuple[np.ndarray, float, int, int]:
     dx = length / (n_nodes - 1)
     dt_limit = diffusion_safety * dx * dx / diffusivity
@@ -338,6 +343,8 @@ def _age_uniform_prefill(
     center = n_nodes // 2
 
     while concentration[center] > target_fraction:
+        if steps % 4096 == 0 and cancel_flag[0] != 0:
+            return concentration, age_time, steps, 2
         if steps >= max_steps or age_time >= maximum_time:
             return concentration, age_time, steps, 1
         dt = min(dt_limit, maximum_time - age_time)
@@ -369,7 +376,7 @@ def _age_uniform_prefill(
     return concentration, age_time, steps, 0
 
 
-@njit(cache=True)
+@njit(cache=True, nogil=True)
 def _run_explicit(
     initial_concentration: np.ndarray,
     initial_occupancy: float,
@@ -389,6 +396,7 @@ def _run_explicit(
     diffusion_safety: float,
     reaction_safety: float,
     max_steps: int,
+    cancel_flag: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, int, int]:
     n_output = output_times.size
     n_nodes = initial_concentration.size
@@ -427,8 +435,28 @@ def _run_explicit(
     tolerance = 1.0e-10
 
     for output_index in range(1, n_output):
+        if cancel_flag[0] != 0:
+            return (
+                mobile_history,
+                trap_history,
+                flux_history,
+                inlet_history,
+                total_history,
+                steps,
+                3,
+            )
         target_time = output_times[output_index]
         while time_now < target_time - 1.0e-15:
+            if steps % 4096 == 0 and cancel_flag[0] != 0:
+                return (
+                    mobile_history,
+                    trap_history,
+                    flux_history,
+                    inlet_history,
+                    total_history,
+                    steps,
+                    3,
+                )
             if steps >= max_steps:
                 return (
                     mobile_history,
@@ -553,10 +581,15 @@ def calculate_metrics(result: SimulationResult) -> Dict[str, float]:
 def simulate_case(
     config: SimulationConfig,
     output_times: Optional[Iterable[float]] = None,
+    cancel_flag: Optional[np.ndarray] = None,
 ) -> SimulationResult:
     """Run one explicit numerical case and return time-resolved flux/fields."""
 
     validate_config(config)
+    if cancel_flag is None:
+        cancel_flag = np.zeros(1, dtype=np.int8)
+    if cancel_flag[0] != 0:
+        raise SimulationCancelled("Simulation cancelled.")
     if output_times is None:
         times = mixed_output_times(config.end_time_ref, config.n_output)
     else:
@@ -581,7 +614,10 @@ def simulate_case(
             config.diffusion_safety,
             config.prefill.maximum_age_time_ref,
             config.max_internal_steps,
+            cancel_flag,
         )
+        if age_status == 2:
+            raise SimulationCancelled("Simulation cancelled during prefill ageing.")
         if age_status != 0:
             raise SimulationError(
                 "Prefill aging did not reach the target centre concentration within the configured limit."
@@ -621,7 +657,10 @@ def simulate_case(
         config.diffusion_safety,
         config.reaction_safety,
         config.max_internal_steps,
+        cancel_flag,
     )
+    if status == 3:
+        raise SimulationCancelled("Simulation cancelled.")
     if status == 1:
         raise SimulationError("Explicit solver exceeded max_internal_steps.")
     if status == 2:

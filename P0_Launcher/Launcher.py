@@ -213,8 +213,8 @@ class Launcher(QMainWindow):
             "Set weld geometry and thermal settings, run a 2D heat simulation, and inspect temperature maps and traces."
         )
         self.p4_permeation_flux_info = (
-            "Generate black-and-white 1D hydrogen-permeation flux response atlases for ideal diffusion, "
-            "surface changes, kinetic trapping, and residual prefilling. GUI coming soon."
+            "Configure, simulate, inspect, and export 1D hydrogen-permeation flux responses for ideal diffusion, "
+            "surface changes, kinetic trapping, and residual prefilling."
         )
         self.p6_diffusion_info = (
             "Generate Brownian-motion diffusion data and create an animation."
@@ -238,6 +238,12 @@ class Launcher(QMainWindow):
             "P3_Heat Map",
             "03_CodeBase",
             "heat_map.py",
+        )
+        self.path_permeation_flux = os.path.join(
+            REPO_ROOT,
+            "P4_Hydrogen Permeation Flux",
+            "03_CodeBase",
+            "permeation_atlas.py",
         )
         self.path_brownian_motion = os.path.join(
             REPO_ROOT,
@@ -351,10 +357,8 @@ class Launcher(QMainWindow):
                 self.build_page_entry(
                     "Hydrogen Permeation Flux",
                     self.p4_permeation_flux_info,
-                    partial(
-                        self.show_placeholder_message,
-                        self.p4_permeation_flux_info,
-                    ),
+                    self.start_permeation_flux,
+                    status_note=self.gui_beta_note,
                 ),
                 self.build_page_entry(
                     "Lattice Visualizer",
@@ -641,6 +645,14 @@ class Launcher(QMainWindow):
         self.start_program(
             "pushButton_slot_3",
             [self.path_heat_map, "--gui"],
+            minimize_launcher=True,
+            show_console=False,
+        )
+
+    def start_permeation_flux(self):
+        self.start_program(
+            "pushButton_slot_4",
+            [self.path_permeation_flux, "--gui"],
             minimize_launcher=True,
             show_console=False,
         )

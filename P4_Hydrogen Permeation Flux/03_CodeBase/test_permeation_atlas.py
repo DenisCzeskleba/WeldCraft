@@ -288,12 +288,14 @@ class IntegrationSmokeTests(unittest.TestCase):
         self.assertIn("trapping", completed.stdout)
         self.assertIn("annex", completed.stdout)
 
-    def test_launcher_slot_four_names_p4_and_stays_informational(self):
+    def test_launcher_slot_four_names_and_launches_gui(self):
         repository = Path(__file__).resolve().parents[2]
         launcher_text = (repository / "P0_Launcher" / "Launcher.py").read_text(encoding="utf-8")
         self.assertIn('"Hydrogen Permeation Flux"', launcher_text)
-        self.assertIn("GUI coming soon", launcher_text)
-        self.assertNotIn("P4_Placeholder", launcher_text)
+        self.assertIn('"P4_Hydrogen Permeation Flux"', launcher_text)
+        self.assertIn("self.start_permeation_flux", launcher_text)
+        self.assertIn('[self.path_permeation_flux, "--gui"]', launcher_text)
+        self.assertNotIn("GUI coming soon", launcher_text)
 
 
 if __name__ == "__main__":

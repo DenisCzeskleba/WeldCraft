@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Dict, Iterable, List, Mapping, Sequence, Tuple
+from typing import Callable, Dict, Iterable, List, Mapping, Sequence, Tuple
 
 import matplotlib.pyplot as plt
 from matplotlib.patches import FancyArrowPatch, Rectangle
 import numpy as np
 
-from permeation_model import SimulationError, SimulationResult
+from permeation_model import SimulationCancelled, SimulationError, SimulationResult
 
 
 LINE_STYLES: Sequence[Tuple[object, str]] = (
@@ -22,26 +22,71 @@ LINE_STYLES: Sequence[Tuple[object, str]] = (
 )
 
 
+THESIS_STYLE = {
+    "font.family": "serif",
+    "font.size": 9.0,
+    "axes.linewidth": 0.8,
+    "axes.edgecolor": "black",
+    "axes.labelcolor": "black",
+    "text.color": "black",
+    "xtick.color": "black",
+    "ytick.color": "black",
+    "grid.color": "0.78",
+    "grid.linewidth": 0.5,
+    "grid.linestyle": ":",
+    "legend.frameon": False,
+    "figure.facecolor": "white",
+    "axes.facecolor": "white",
+    "savefig.facecolor": "white",
+}
+
+
 def apply_thesis_style() -> None:
-    plt.rcParams.update(
-        {
-            "font.family": "serif",
-            "font.size": 9.0,
-            "axes.linewidth": 0.8,
-            "axes.edgecolor": "black",
-            "axes.labelcolor": "black",
-            "text.color": "black",
-            "xtick.color": "black",
-            "ytick.color": "black",
-            "grid.color": "0.78",
-            "grid.linewidth": 0.5,
-            "grid.linestyle": ":",
-            "legend.frameon": False,
-            "figure.facecolor": "white",
-            "axes.facecolor": "white",
-            "savefig.facecolor": "white",
-        }
-    )
+    """Apply the shipped style globally for legacy direct renderer callers."""
+
+    plt.rcParams.update(THESIS_STYLE)
+
+
+def _apply_publication_style(figure, style: Mapping[str, object] | None) -> None:
+    values = dict(style or {})
+    figure_scale = float(values.get("figure_scale", 1.0))
+    font_scale = float(values.get("font_scale", 1.0))
+    line_scale = float(values.get("line_width_scale", 1.0))
+    marker_scale = float(values.get("marker_scale", 1.0))
+    grid_visible = bool(values.get("grid_visible", True))
+    grid_style = str(values.get("grid_style", ":"))
+    legend_mode = str(values.get("legend_mode", "original"))
+
+    if figure_scale != 1.0:
+        width, height = figure.get_size_inches()
+        figure.set_size_inches(width * figure_scale, height * figure_scale, forward=True)
+    for text in figure.findobj(match=lambda artist: hasattr(artist, "get_fontsize")):
+        try:
+            text.set_fontsize(float(text.get_fontsize()) * font_scale)
+        except (TypeError, ValueError):
+            pass
+    for axis in figure.axes:
+        axis.grid(grid_visible, linestyle=grid_style)
+        for line in axis.lines:
+            line.set_linewidth(line.get_linewidth() * line_scale)
+            line.set_markersize(line.get_markersize() * marker_scale)
+        legend = axis.get_legend()
+        if legend is None:
+            continue
+        if legend_mode == "hidden":
+            legend.remove()
+        elif legend_mode == "best":
+            legend.set_loc("best")
+        elif legend_mode == "outside":
+            legend.set_loc("upper left")
+            legend.set_bbox_to_anchor((1.02, 1.0))
+
+    title = getattr(figure, "_suptitle", None)
+    if title is not None:
+        title.set_visible(bool(values.get("show_title", True)))
+        override = str(values.get("title_override", "")).strip()
+        if override:
+            title.set_text(override)
 
 
 def _select(results: Mapping[str, SimulationResult], prefix: str) -> List[Tuple[str, SimulationResult]]:
@@ -1701,25 +1746,18 @@ RENDERERS = {
 }
 
 
-def render_figures(
+def build_figure(
     results: Mapping[str, SimulationResult],
-    figure_names: Iterable[str],
-    output_directory: Path | str,
-    result_name: str,
+    figure_name: str,
     normalization: str = "common_reference",
     time_axis: str = "reference",
     response_metric: str = "t50",
     comparison_window_ref: float | None = None,
-    formats: Iterable[str] = ("pdf", "svg", "png"),
-    dpi: int = 300,
-    show: bool = False,
-) -> List[Path]:
-    apply_thesis_style()
-    destination = Path(output_directory)
-    destination.mkdir(parents=True, exist_ok=True)
-    figure_paths: List[Path] = []
-    open_figures = []
-    for figure_name in figure_names:
+    style: Mapping[str, object] | None = None,
+):
+    """Build one P4 figure for both the CLI exporter and Qt preview."""
+
+    with plt.rc_context(THESIS_STYLE):
         if figure_name == "response_map":
             figure = render_response_map(results, response_metric)
         else:
@@ -1732,7 +1770,50 @@ def render_figures(
                 time_axis,
                 comparison_window_ref,
             )
+        _apply_publication_style(figure, style)
+    return figure
+
+
+def render_figures(
+    results: Mapping[str, SimulationResult],
+    figure_names: Iterable[str],
+    output_directory: Path | str,
+    result_name: str,
+    normalization: str = "common_reference",
+    time_axis: str = "reference",
+    response_metric: str = "t50",
+    comparison_window_ref: float | None = None,
+    formats: Iterable[str] = ("pdf", "svg", "png"),
+    dpi: int = 300,
+    show: bool = False,
+    style: Mapping[str, object] | None = None,
+    progress_callback: Callable[[int, int, str], None] | None = None,
+    cancel_flag=None,
+) -> List[Path]:
+    destination = Path(output_directory)
+    destination.mkdir(parents=True, exist_ok=True)
+    figure_paths: List[Path] = []
+    open_figures = []
+    names = list(figure_names)
+    total = len(names)
+    for index, figure_name in enumerate(names):
+        if cancel_flag is not None and cancel_flag[0] != 0:
+            raise SimulationCancelled("Figure rendering cancelled.")
+        if progress_callback:
+            progress_callback(index, total, f"Rendering {figure_name}")
+        figure = build_figure(
+            results,
+            figure_name,
+            normalization=normalization,
+            time_axis=time_axis,
+            response_metric=response_metric,
+            comparison_window_ref=comparison_window_ref,
+            style=style,
+        )
         for extension in formats:
+            if cancel_flag is not None and cancel_flag[0] != 0:
+                plt.close(figure)
+                raise SimulationCancelled("Figure rendering cancelled.")
             extension = str(extension).lower().lstrip(".")
             if extension not in {"pdf", "svg", "png"}:
                 raise ValueError(f"Unsupported figure format: {extension}")
@@ -1742,6 +1823,8 @@ def render_figures(
         open_figures.append(figure)
         if not show:
             plt.close(figure)
+        if progress_callback:
+            progress_callback(index + 1, total, f"Rendered {figure_name}")
     if show:
         plt.show()
         for figure in open_figures:

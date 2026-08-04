@@ -6,7 +6,7 @@ from copy import deepcopy
 import json
 from pathlib import Path
 import runpy
-from typing import Any, Dict, Iterable, Mapping, Tuple
+from typing import Any, Callable, Dict, Iterable, Mapping, Optional, Tuple
 
 from permeation_model import (
     PrefillConfig,
@@ -14,7 +14,9 @@ from permeation_model import (
     SimulationResult,
     SurfaceHistory,
     TrapConfig,
+    SimulationCancelled,
     simulate_case,
+    validate_config,
 )
 
 
@@ -23,6 +25,9 @@ RESOURCE_DIR = MODULE_ROOT / "01_Resources"
 DEFAULT_CONFIG_PATH = RESOURCE_DIR / "config_default.py"
 RUNTIME_CONFIG_PATH = Path(__file__).resolve().parent / "config.py"
 PRESET_DIR = RESOURCE_DIR / "Diagram_Presets"
+
+ProgressCallback = Callable[[int, int, str], None]
+CaseRunner = Callable[[str, SimulationConfig], SimulationResult]
 
 
 def _deep_merge(base: Dict[str, Any], override: Mapping[str, Any]) -> Dict[str, Any]:
@@ -53,7 +58,146 @@ def load_settings(config_path: Path | str | None = None) -> Dict[str, Any]:
         chosen_path = None
     if chosen_path is not None and chosen_path.resolve() != DEFAULT_CONFIG_PATH.resolve():
         _deep_merge(settings, _read_python_config(chosen_path))
-    return settings
+    return validate_settings(settings)
+
+
+def _number_list(values: Any, name: str, *, positive: bool = True) -> list[float]:
+    if not isinstance(values, (list, tuple)) or not values:
+        raise ValueError(f"{name} must be a non-empty list.")
+    converted = [float(value) for value in values]
+    if positive and any(value <= 0.0 for value in converted):
+        raise ValueError(f"Every value in {name} must be positive.")
+    return converted
+
+
+def validate_settings(settings: Mapping[str, Any]) -> Dict[str, Any]:
+    """Return a normalized, fully validated P4 settings dictionary."""
+
+    checked = deepcopy(dict(settings))
+    required = {"simulation", "ideal", "surface", "trapping", "prefill", "diagram"}
+    missing = sorted(required.difference(checked))
+    if missing:
+        raise ValueError(f"Missing P4 configuration section(s): {', '.join(missing)}")
+
+    simulation = checked["simulation"]
+    if not isinstance(simulation, dict):
+        raise ValueError("simulation must be a dictionary.")
+    simulation["n_nodes"] = int(simulation["n_nodes"])
+    simulation["n_output"] = int(simulation["n_output"])
+    simulation["max_internal_steps"] = int(simulation["max_internal_steps"])
+    for name in (
+        "end_time_ref", "diffusion_safety", "reaction_safety",
+        "reference_length_mm", "reference_diffusivity_mm2_s",
+    ):
+        simulation[name] = float(simulation[name])
+    concentration = simulation.get("reference_concentration_mol_mm3")
+    simulation["reference_concentration_mol_mm3"] = (
+        None if concentration in (None, "") else float(concentration)
+    )
+    validate_config(SimulationConfig(**simulation))
+    if simulation["reference_length_mm"] <= 0.0 or simulation["reference_diffusivity_mm2_s"] <= 0.0:
+        raise ValueError("Reference length and diffusivity must be positive.")
+    if simulation["reference_concentration_mol_mm3"] is not None and simulation["reference_concentration_mol_mm3"] <= 0.0:
+        raise ValueError("Reference concentration must be positive when configured.")
+
+    ideal = checked["ideal"]
+    for name in ("diffusivity_ratios", "length_ratios", "solubility_ratios"):
+        ideal[name] = _number_list(ideal[name], f"ideal.{name}")
+
+    surface = checked["surface"]
+    surface["onset_fraction_of_ideal_t50"] = float(surface["onset_fraction_of_ideal_t50"])
+    surface["time_constant_fraction_of_ideal_t50"] = float(surface["time_constant_fraction_of_ideal_t50"])
+    surface["entry_concentration_ratios"] = _number_list(
+        surface["entry_concentration_ratios"], "surface.entry_concentration_ratios"
+    )
+    if surface["onset_fraction_of_ideal_t50"] < 0.0 or surface["time_constant_fraction_of_ideal_t50"] <= 0.0:
+        raise ValueError("Surface onset must be non-negative and its time constant positive.")
+
+    trapping = checked["trapping"]
+    scalar_names = (
+        "end_time_ref", "capture_rate_ref", "capture_sweep_capacity_ratio",
+        "capture_sweep_release_half_time_ref", "capacity_sweep_release_half_time_ref",
+        "release_sweep_capacity_ratio",
+    )
+    for name in scalar_names:
+        trapping[name] = float(trapping[name])
+        if trapping[name] <= 0.0 and name != "capture_sweep_capacity_ratio":
+            raise ValueError(f"trapping.{name} must be positive.")
+    for name in (
+        "capture_rate_refs", "capacity_ratios", "release_half_times_ref",
+        "map_capacity_ratios", "map_release_half_times_ref",
+    ):
+        trapping[name] = _number_list(
+            trapping[name], f"trapping.{name}", positive=name != "capacity_ratios"
+        )
+    if any(value < 0.0 for value in trapping["capacity_ratios"]):
+        raise ValueError("Trap capacity ratios cannot be negative.")
+    combined = trapping.get("combined_cases")
+    if not isinstance(combined, list) or not combined:
+        raise ValueError("trapping.combined_cases must be a non-empty list.")
+    normalized_combined = []
+    for index, item in enumerate(combined):
+        if not isinstance(item, Mapping):
+            raise ValueError(f"trapping.combined_cases[{index}] must be a dictionary.")
+        value = {
+            "label": str(item["label"]),
+            "capacity_ratio": float(item["capacity_ratio"]),
+            "release_half_time_ref": float(item["release_half_time_ref"]),
+        }
+        if value["capacity_ratio"] < 0.0 or value["release_half_time_ref"] <= 0.0:
+            raise ValueError("Combined trap capacities must be non-negative and half-times positive.")
+        normalized_combined.append(value)
+    trapping["combined_cases"] = normalized_combined
+
+    prefill = checked["prefill"]
+    for name in ("initial_fraction", "target_center_fraction", "maximum_age_time_ref"):
+        prefill[name] = float(prefill[name])
+    prefill["target_center_fractions"] = _number_list(
+        prefill["target_center_fractions"], "prefill.target_center_fractions"
+    )
+    targets = [prefill["target_center_fraction"], *prefill["target_center_fractions"]]
+    if not (0.0 < prefill["initial_fraction"] <= 1.0):
+        raise ValueError("Prefill initial fraction must lie between zero and one.")
+    if any(not 0.0 < value < prefill["initial_fraction"] for value in targets):
+        raise ValueError("Every prefill target must lie between zero and the initial fraction.")
+    if prefill["maximum_age_time_ref"] <= 0.0:
+        raise ValueError("Maximum prefill ageing time must be positive.")
+
+    diagram = checked["diagram"]
+    if diagram["normalization"] not in {"common_reference", "per_curve", "physical"}:
+        raise ValueError("Unknown diagram normalization.")
+    if diagram["time_axis"] not in {"reference", "fo", "seconds", "minutes"}:
+        raise ValueError("Unknown diagram time axis.")
+    if diagram["response_metric"] not in {"t10", "t50", "t90", "time_lag", "peak_flux", "final_flux", "overshoot"}:
+        raise ValueError("Unknown response-map metric.")
+    diagram["comparison_window_ref"] = float(diagram["comparison_window_ref"])
+    diagram["dpi"] = int(diagram["dpi"])
+    diagram["formats"] = [str(value).lower().lstrip(".") for value in diagram.get("formats", [])]
+    if any(value not in {"png", "pdf", "svg"} for value in diagram["formats"]):
+        raise ValueError("Diagram formats must be png, pdf, or svg.")
+    if diagram["comparison_window_ref"] <= 0.0 or not 50 <= diagram["dpi"] <= 2400:
+        raise ValueError("Comparison window must be positive and DPI must be between 50 and 2400.")
+    defaults = {
+        "figure_scale": 1.0, "font_scale": 1.0, "line_width_scale": 1.0,
+        "marker_scale": 1.0, "grid_visible": True, "grid_style": ":",
+        "legend_mode": "original", "show_title": True, "title_override": "",
+    }
+    for name, value in defaults.items():
+        diagram.setdefault(name, value)
+    for name in ("figure_scale", "font_scale", "line_width_scale", "marker_scale"):
+        diagram[name] = float(diagram[name])
+        if not 0.25 <= diagram[name] <= 4.0:
+            raise ValueError(f"diagram.{name} must lie between 0.25 and 4.0.")
+    diagram["grid_visible"] = bool(diagram["grid_visible"])
+    diagram["show_title"] = bool(diagram["show_title"])
+    diagram["title_override"] = str(diagram["title_override"])
+    if diagram["grid_style"] not in {":", "--", "-", "-."}:
+        raise ValueError("Unknown grid style.")
+    if diagram["legend_mode"] not in {"original", "best", "outside", "hidden"}:
+        raise ValueError("Unknown legend mode.")
+    if diagram["normalization"] == "physical" and simulation["reference_concentration_mol_mm3"] is None:
+        raise ValueError("Physical flux normalization requires a reference concentration.")
+    return checked
 
 
 def list_presets() -> Dict[str, Dict[str, Any]]:
@@ -79,26 +223,26 @@ def _base_config(settings: Mapping[str, Any], **changes: Any) -> SimulationConfi
     return SimulationConfig(**simulation)
 
 
-def _build_ideal_cases(settings: Mapping[str, Any]) -> Dict[str, SimulationResult]:
+def _build_ideal_cases(settings: Mapping[str, Any], run_case: CaseRunner) -> Dict[str, SimulationResult]:
     results: Dict[str, SimulationResult] = {}
     base = _base_config(settings)
     for ratio in settings["ideal"]["diffusivity_ratios"]:
         config = base.with_changes(label=f"D/Dref = {ratio:g}", diffusivity_ratio=float(ratio))
-        results[f"ideal:D:{ratio:g}"] = simulate_case(config)
+        results[f"ideal:D:{ratio:g}"] = run_case(f"Ideal diffusivity: {ratio:g}", config)
     for ratio in settings["ideal"]["length_ratios"]:
         config = base.with_changes(label=f"L/Lref = {ratio:g}", length_ratio=float(ratio))
-        results[f"ideal:L:{ratio:g}"] = simulate_case(config)
+        results[f"ideal:L:{ratio:g}"] = run_case(f"Ideal length: {ratio:g}", config)
     for ratio in settings["ideal"]["solubility_ratios"]:
         config = base.with_changes(label=f"S/Sref = {ratio:g}", solubility_ratio=float(ratio))
-        results[f"ideal:S:{ratio:g}"] = simulate_case(config)
+        results[f"ideal:S:{ratio:g}"] = run_case(f"Ideal solubility: {ratio:g}", config)
     return results
 
 
-def _build_surface_cases(settings: Mapping[str, Any]) -> Dict[str, SimulationResult]:
+def _build_surface_cases(settings: Mapping[str, Any], run_case: CaseRunner) -> Dict[str, SimulationResult]:
     results: Dict[str, SimulationResult] = {}
     base = _base_config(settings)
     surface_settings = settings["surface"]
-    reference = simulate_case(base.with_changes(label="Unchanged entry condition"))
+    reference = run_case("Surface reference", base.with_changes(label="Unchanged entry condition"))
     onset = (
         float(surface_settings["onset_fraction_of_ideal_t50"])
         * reference.metrics["t50"]
@@ -116,7 +260,8 @@ def _build_surface_cases(settings: Mapping[str, Any]) -> Dict[str, SimulationRes
             time_constant_ref=time_constant,
             transition_mode="exponential",
         )
-        results[f"surface:ratio={ratio:g}"] = simulate_case(
+        results[f"surface:ratio={ratio:g}"] = run_case(
+            f"Entry concentration ratio: {ratio:g}",
             base.with_changes(
                 label=f"C_entry,2/C_entry,1 = {ratio:g}", surface=history
             )
@@ -142,7 +287,7 @@ def _trap_config(
     )
 
 
-def _build_trap_cases(settings: Mapping[str, Any]) -> Dict[str, SimulationResult]:
+def _build_trap_cases(settings: Mapping[str, Any], run_case: CaseRunner) -> Dict[str, SimulationResult]:
     results: Dict[str, SimulationResult] = {}
     base = _base_config(settings, end_time_ref=float(settings["trapping"]["end_time_ref"]))
     trap_settings = settings["trapping"]
@@ -153,7 +298,7 @@ def _build_trap_cases(settings: Mapping[str, Any]) -> Dict[str, SimulationResult
             label=f"N_T/C_ref = {capacity:g}",
             traps=_trap_config(settings, capacity, fixed_half_time),
         )
-        results[f"trap_capacity:{capacity:g}"] = simulate_case(config)
+        results[f"trap_capacity:{capacity:g}"] = run_case(f"Trap capacity: {capacity:g}", config)
     fixed_capacity = float(trap_settings["release_sweep_capacity_ratio"])
     for half_time in trap_settings["release_half_times_ref"]:
         half_time = float(half_time)
@@ -161,7 +306,7 @@ def _build_trap_cases(settings: Mapping[str, Any]) -> Dict[str, SimulationResult
             label=f"t_half,det/tau_ref = {half_time:g}",
             traps=_trap_config(settings, fixed_capacity, half_time),
         )
-        results[f"trap_release:{half_time:g}"] = simulate_case(config)
+        results[f"trap_release:{half_time:g}"] = run_case(f"Trap release half-time: {half_time:g}", config)
     capture_capacity = float(trap_settings["capture_sweep_capacity_ratio"])
     capture_half_time = float(trap_settings["capture_sweep_release_half_time_ref"])
     for capture_rate in trap_settings["capture_rate_refs"]:
@@ -175,7 +320,7 @@ def _build_trap_cases(settings: Mapping[str, Any]) -> Dict[str, SimulationResult
                 capture_rate=capture_rate,
             ),
         )
-        results[f"trap_capture:{capture_rate:g}"] = simulate_case(config)
+        results[f"trap_capture:{capture_rate:g}"] = run_case(f"Trap capture rate: {capture_rate:g}", config)
     for index, values in enumerate(trap_settings["combined_cases"]):
         capacity = float(values["capacity_ratio"])
         half_time = float(values["release_half_time_ref"])
@@ -184,14 +329,14 @@ def _build_trap_cases(settings: Mapping[str, Any]) -> Dict[str, SimulationResult
             label=label,
             traps=_trap_config(settings, capacity, half_time),
         )
-        results[f"trap_combined:{index}"] = simulate_case(config)
+        results[f"trap_combined:{index}"] = run_case(f"Combined trap case: {label}", config)
     return results
 
 
-def _build_prefill_cases(settings: Mapping[str, Any]) -> Dict[str, SimulationResult]:
+def _build_prefill_cases(settings: Mapping[str, Any], run_case: CaseRunner) -> Dict[str, SimulationResult]:
     results: Dict[str, SimulationResult] = {}
     base = _base_config(settings)
-    results["prefill:empty"] = simulate_case(base.with_changes(label="Initially empty"))
+    results["prefill:empty"] = run_case("Empty prefill reference", base.with_changes(label="Initially empty"))
     values = settings["prefill"]
     targets = values.get(
         "target_center_fractions", [values["target_center_fraction"]]
@@ -204,7 +349,8 @@ def _build_prefill_cases(settings: Mapping[str, Any]) -> Dict[str, SimulationRes
             target_center_fraction=target,
             maximum_age_time_ref=float(values["maximum_age_time_ref"]),
         )
-        results[f"prefill:center={target:g}"] = simulate_case(
+        results[f"prefill:center={target:g}"] = run_case(
+            f"Prefill centre target: {target:g}",
             base.with_changes(
                 label=f"Residual centre C/Cref = {target:g}", prefill=prefill
             )
@@ -212,10 +358,11 @@ def _build_prefill_cases(settings: Mapping[str, Any]) -> Dict[str, SimulationRes
     return results
 
 
-def _build_response_map_cases(settings: Mapping[str, Any]) -> Dict[str, SimulationResult]:
+def _build_response_map_cases(settings: Mapping[str, Any], run_case: CaseRunner) -> Dict[str, SimulationResult]:
     results: Dict[str, SimulationResult] = {}
     base = _base_config(settings, end_time_ref=float(settings["trapping"]["end_time_ref"]))
-    results["map_reference:no_traps"] = simulate_case(
+    results["map_reference:no_traps"] = run_case(
+        "Response-map reference",
         base.with_changes(label="Trap-free reference")
     )
     capacities = settings["trapping"]["map_capacity_ratios"]
@@ -229,14 +376,13 @@ def _build_response_map_cases(settings: Mapping[str, Any]) -> Dict[str, Simulati
                 traps=_trap_config(settings, capacity, half_time),
             )
             key = f"map:cap={capacity:g}:half={half_time:g}"
-            results[key] = simulate_case(config)
+            results[key] = run_case(
+                f"Response map: capacity {capacity:g}, half-time {half_time:g}", config
+            )
     return results
 
 
-def build_atlas_cases(
-    settings: Mapping[str, Any],
-    figure_names: Iterable[str],
-) -> Tuple[Dict[str, SimulationResult], Dict[str, Any]]:
+def requested_case_families(figure_names: Iterable[str]) -> tuple[list[str], set[str]]:
     figures = list(dict.fromkeys(figure_names))
     requested = set(figures)
     if "overview" in requested:
@@ -254,22 +400,73 @@ def build_atlas_cases(
         {"2.1_residual_hydrogen_flux", "2.2_residual_hydrogen_normalized_flux"}
     ):
         requested.add("prefill")
+    return figures, requested
+
+
+def estimate_case_count(settings: Mapping[str, Any], figure_names: Iterable[str]) -> int:
+    """Return the exact number of solver calls, including hidden references."""
+
+    checked = validate_settings(settings)
+    _figures, requested = requested_case_families(figure_names)
+    count = 0
+    if "ideal" in requested:
+        count += sum(len(checked["ideal"][name]) for name in (
+            "diffusivity_ratios", "length_ratios", "solubility_ratios"
+        ))
+    if "surface" in requested:
+        count += 1 + len(checked["surface"]["entry_concentration_ratios"])
+    if "trapping" in requested:
+        count += sum(len(checked["trapping"][name]) for name in (
+            "capacity_ratios", "release_half_times_ref", "capture_rate_refs", "combined_cases"
+        ))
+    if "prefill" in requested:
+        count += 1 + len(checked["prefill"]["target_center_fractions"])
+    if "response_map" in requested:
+        count += 1 + (
+            len(checked["trapping"]["map_capacity_ratios"])
+            * len(checked["trapping"]["map_release_half_times_ref"])
+        )
+    return count
+
+
+def build_atlas_cases(
+    settings: Mapping[str, Any],
+    figure_names: Iterable[str],
+    progress_callback: Optional[ProgressCallback] = None,
+    cancel_flag=None,
+) -> Tuple[Dict[str, SimulationResult], Dict[str, Any]]:
+    checked = validate_settings(settings)
+    figures, requested = requested_case_families(figure_names)
+    total = estimate_case_count(checked, figures)
+    completed = 0
+
+    def run_case(message: str, config: SimulationConfig) -> SimulationResult:
+        nonlocal completed
+        if cancel_flag is not None and cancel_flag[0] != 0:
+            raise SimulationCancelled("Simulation cancelled.")
+        if progress_callback:
+            progress_callback(completed, total, message)
+        result = simulate_case(config, cancel_flag=cancel_flag)
+        completed += 1
+        if progress_callback:
+            progress_callback(completed, total, message)
+        return result
 
     results: Dict[str, SimulationResult] = {}
     if "ideal" in requested:
-        results.update(_build_ideal_cases(settings))
+        results.update(_build_ideal_cases(checked, run_case))
     if "surface" in requested:
-        results.update(_build_surface_cases(settings))
+        results.update(_build_surface_cases(checked, run_case))
     if "trapping" in requested:
-        results.update(_build_trap_cases(settings))
+        results.update(_build_trap_cases(checked, run_case))
     if "prefill" in requested:
-        results.update(_build_prefill_cases(settings))
+        results.update(_build_prefill_cases(checked, run_case))
     if "response_map" in requested:
-        results.update(_build_response_map_cases(settings))
+        results.update(_build_response_map_cases(checked, run_case))
 
     metadata = {
         "figures": figures,
-        "diagram": deepcopy(settings["diagram"]),
+        "diagram": deepcopy(checked["diagram"]),
         "case_count": len(results),
     }
     return results, metadata

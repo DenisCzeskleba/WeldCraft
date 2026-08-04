@@ -21,7 +21,7 @@ x = 1300  # Width (x)
 y = 920  # Height (y)
 
 # Number of simulation steps. For continuation, this is the number of additional steps.
-steps = 100000000  # use 10_000_000 notation, or 10000000. DO NOT use 100.000.000
+steps = 130000000000  # use 10_000_000 notation, or 10000000. DO NOT use 100.000.000
 max_radius_to_jump = 10
 
 # ---------------------- Matrix Source ---------------------- #
@@ -99,12 +99,11 @@ AREA_CHARACTERISTICS = {'a': {'affinity': 1.0, 'mobility': 1.0},
 # relative to 02_Results. Continuation always writes h5_filename as a separate file.
 # New checkpoint-enabled files resume exactly; older/interrupted files resume from
 # their last valid snapshot with a fresh RNG and record that they are statistical.
-RESUME_FROM_H5 = (((((((((((((((((((((((((((((((((((((((((((((((((((((('F:\\100_WebSite and Hosted Projects\\WeldCraft\\P6_Visualize Diffusion (Brownian '
- 'Motion)\\02_Results\\random_motion.h5'))))))))))))))))))))))))))))))))))))))))))))))))))))))
+RESUME_FROM_H5 = ((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((None))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))
 random_seed = None  # None selects a fresh seed per run; set an integer to reproduce a run exactly.
 random_size = 10 ** 7  # Deprecated forced_jump only: number of precomputed random values.
 max_ram_mb = 2000  # Adjustable memory target for HDF5 frame buffering
-save_every_steps = 10000000
+save_every_steps = 1000000000
 delete_old_h5 = True
 
 
@@ -114,7 +113,7 @@ SHOW_CONCENTRATION_PROFILE_PANEL = True
 SHOW_NET_FLUX_PANEL = False
 
 # ---------------------- Main Panel Render Mode ---------------------- #
-MAIN_RENDER_MODE = 'dots'  # Options: "pixels", "dots"
+MAIN_RENDER_MODE = 'pixels'  # Options: "pixels", "dots"
 DOT_SIZE_AVAILABLE = 12.0
 DOT_SIZE_HYDROGEN = 12.0
 DOT_ALPHA_AVAILABLE = 0.85
@@ -135,7 +134,7 @@ animation_output_folder = "Saved Animations"
 animation_filename = 'brownian_motion_animation.mp4'
 
 # ---------------------- Video Output ---------------------- #
-render_every_nth_frame = 5  # Render every Nth saved HDF5 frame; use larger values for huge runs to keep videos and memory smaller.
+render_every_nth_frame = 2  # Render every Nth saved HDF5 frame; use larger values for huge runs to keep videos and memory smaller.
 animation_fps = 12
 animation_main_pixel_scale = 2  # Integer video pixels per matrix cell; 2 preserves sparse one-cell sites clearly.
 animation_side_panel_width_px = 480

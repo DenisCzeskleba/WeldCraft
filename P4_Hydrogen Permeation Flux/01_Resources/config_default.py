@@ -1,7 +1,7 @@
 """Shipped defaults for the P4 Hydrogen Permeation Flux tool.
 
-Copy this file to ``03_CodeBase/config.py`` to maintain local editable settings.
-That runtime copy is ignored by Git and may later be managed by the GUI.
+The GUI creates an ignored ``03_CodeBase/config.py`` from these values and
+keeps it shared with direct CLI runs. This shipped file remains unchanged.
 """
 
 DEFAULT_CONFIG = {
@@ -64,5 +64,14 @@ DEFAULT_CONFIG = {
         # still accepts --formats pdf,svg,png for final thesis export.
         "formats": ["png"],
         "dpi": 300,
+        "figure_scale": 1.0,
+        "font_scale": 1.0,
+        "line_width_scale": 1.0,
+        "marker_scale": 1.0,
+        "grid_visible": True,
+        "grid_style": ":",
+        "legend_mode": "original",
+        "show_title": True,
+        "title_override": "",
     },
 }
