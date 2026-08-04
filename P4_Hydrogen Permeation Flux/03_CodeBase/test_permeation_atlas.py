@@ -291,7 +291,7 @@ class IntegrationSmokeTests(unittest.TestCase):
     def test_launcher_slot_four_names_p4_and_stays_informational(self):
         repository = Path(__file__).resolve().parents[2]
         launcher_text = (repository / "P0_Launcher" / "Launcher.py").read_text(encoding="utf-8")
-        self.assertIn('"Hydrogen Permeation Atlas"', launcher_text)
+        self.assertIn('"Hydrogen Permeation Flux"', launcher_text)
         self.assertIn("GUI coming soon", launcher_text)
         self.assertNotIn("P4_Placeholder", launcher_text)
 

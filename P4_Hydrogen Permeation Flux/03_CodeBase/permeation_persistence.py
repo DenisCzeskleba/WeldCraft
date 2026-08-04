@@ -70,7 +70,7 @@ def load_atlas_hdf5(
     results: Dict[str, SimulationResult] = {}
     with h5py.File(source, "r") as handle:
         if handle.attrs.get("format") != FORMAT_NAME:
-            raise ValueError(f"Not a P4 Hydrogen Permeation Atlas file: {source}")
+            raise ValueError(f"Not a P4 Hydrogen Permeation Flux file: {source}")
         if int(handle.attrs.get("format_version", -1)) != FORMAT_VERSION:
             raise ValueError("Unsupported P4 HDF5 format version.")
         metadata = json.loads(handle.attrs.get("metadata_json", "{}"))
@@ -93,4 +93,3 @@ def load_atlas_hdf5(
             )
             results[label] = result
     return results, metadata
-

@@ -1,4 +1,4 @@
-"""Command-line entry point for the P4 Hydrogen Permeation Atlas."""
+"""Command-line entry point for the P4 Hydrogen Permeation Flux tool."""
 
 from __future__ import annotations
 

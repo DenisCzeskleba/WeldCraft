@@ -212,8 +212,8 @@ class Launcher(QMainWindow):
         self.p3_heat_map_info = (
             "Set weld geometry and thermal settings, run a 2D heat simulation, and inspect temperature maps and traces."
         )
-        self.p4_permeation_atlas_info = (
-            "Generate black-and-white 1D hydrogen-permeation response atlases for ideal diffusion, "
+        self.p4_permeation_flux_info = (
+            "Generate black-and-white 1D hydrogen-permeation flux response atlases for ideal diffusion, "
             "surface changes, kinetic trapping, and residual prefilling. GUI coming soon."
         )
         self.p6_diffusion_info = (
@@ -349,11 +349,11 @@ class Launcher(QMainWindow):
                     status_note=self.gui_beta_note,
                 ),
                 self.build_page_entry(
-                    "Hydrogen Permeation Atlas",
-                    self.p4_permeation_atlas_info,
+                    "Hydrogen Permeation Flux",
+                    self.p4_permeation_flux_info,
                     partial(
                         self.show_placeholder_message,
-                        self.p4_permeation_atlas_info,
+                        self.p4_permeation_flux_info,
                     ),
                 ),
                 self.build_page_entry(

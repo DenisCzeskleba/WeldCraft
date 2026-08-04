@@ -1,4 +1,4 @@
-# P4 Hydrogen Permeation Atlas
+# P4 Hydrogen Permeation Flux
 
 P4 creates publication-oriented black-and-white diagrams for recognizing how
 one-dimensional hydrogen permeation curves respond to ideal transport
@@ -70,7 +70,7 @@ Use the mandatory WeldCraft interpreter from the repository root:
 
 ```powershell
 & 'F:\99_Virtual-Environments\02_WeldCraft\Scripts\python.exe' `
-  '.\P4_Hydrogen Permeation Atlas\03_CodeBase\permeation_atlas.py' `
+  '.\P4_Hydrogen Permeation Flux\03_CodeBase\permeation_atlas.py' `
   --preset overview
 ```
 
@@ -79,18 +79,18 @@ Useful commands:
 ```powershell
 # List shipped presets
 & 'F:\99_Virtual-Environments\02_WeldCraft\Scripts\python.exe' `
-  '.\P4_Hydrogen Permeation Atlas\03_CodeBase\permeation_atlas.py' `
+  '.\P4_Hydrogen Permeation Flux\03_CodeBase\permeation_atlas.py' `
   --list-presets
 
 # Generate one plate and display it after saving
 & 'F:\99_Virtual-Environments\02_WeldCraft\Scripts\python.exe' `
-  '.\P4_Hydrogen Permeation Atlas\03_CodeBase\permeation_atlas.py' `
+  '.\P4_Hydrogen Permeation Flux\03_CodeBase\permeation_atlas.py' `
   --preset trapping --show
 
 # Rerender a saved result without repeating the simulation
 & 'F:\99_Virtual-Environments\02_WeldCraft\Scripts\python.exe' `
-  '.\P4_Hydrogen Permeation Atlas\03_CodeBase\permeation_atlas.py' `
-  --rerender '.\P4_Hydrogen Permeation Atlas\02_Results\hydrogen_permeation_atlas.h5'
+  '.\P4_Hydrogen Permeation Flux\03_CodeBase\permeation_atlas.py' `
+  --rerender '.\P4_Hydrogen Permeation Flux\02_Results\hydrogen_permeation_atlas.h5'
 ```
 
 During diagram development, the `overview` preset creates the separate ideal,
@@ -102,6 +102,48 @@ configurations, and derived metrics for later GUI use.
 
 The P0 launcher already names and describes P4, but intentionally presents an
 informational message until the graphical interface is added.
+
+## GUI feasibility and implementation plan
+
+Adding a GUI is highly feasible without rewriting the numerical solver. P4
+already exposes the important application boundaries: settings and preset
+loading, case construction, HDF5 persistence, and figure rendering. The main
+missing pieces are a settings writer/validator suitable for form input,
+background execution and progress reporting, and a result viewer.
+
+The planned implementation is:
+
+1. Add a PyQt5 entry path to `permeation_atlas.py` with `--gui`; keep the
+   current no-flag/`--cli` behavior and all existing CLI options unchanged.
+2. Add a P4-local GUI support module beside the existing code. It will manage
+   validated form settings, ignored runtime `config.py` persistence, safe
+   result filenames, overwrite confirmation, and worker-to-GUI status events.
+   Generic launcher signaling remains in `Resources/Common`.
+3. Build the window around three workflows: **Run** (preset, numerical and
+   diagram options), **Results** (load an existing P4 HDF5 file and select a
+   figure/case), and **Export** (PNG/PDF/SVG, normalization, time axis, and
+   response metric). The first version can preview the generated PNG exports;
+   direct embedded Matplotlib plots can follow if interactive inspection is
+   needed.
+4. Run `build_atlas_cases`, `save_atlas_hdf5`, and `render_figures` in a
+   `QThread` worker. The worker must never update Qt widgets directly. Add
+   staged progress signals first; add cooperative cancellation to the solver
+   loop as a follow-up once the basic run path is stable.
+5. Bind the P0 launcher’s slot 4 to the new script with `--gui`, replacing the
+   informational placeholder. The GUI will import
+   `Common.launch_ready.StartupReadySignal`, create the main window, and emit
+   the existing `WELDCRAFT_STARTUP_READY_FILE` handshake after the window is
+   visible. P0 already injects that environment variable, monitors the child,
+   minimizes/restores itself, and re-enables the slot after exit.
+6. Test the integration at three levels: unchanged CLI and numerical tests;
+   settings/HDF5/export tests for GUI-managed runs; and a launcher/headless
+   Qt smoke test that verifies the ready-file handshake and clean child exit.
+
+The public-facing name is now **P4 Hydrogen Permeation Flux**. The internal
+script name `permeation_atlas.py`, result stem `hydrogen_permeation_atlas`, and
+HDF5 format identifier remain stable for CLI and saved-file compatibility; the
+word “atlas” continues to describe the collection of response plates rather
+than the module’s display name.
 
 ## Tests
 

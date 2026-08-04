@@ -1,4 +1,4 @@
-"""Shipped defaults for the P4 Hydrogen Permeation Atlas.
+"""Shipped defaults for the P4 Hydrogen Permeation Flux tool.
 
 Copy this file to ``03_CodeBase/config.py`` to maintain local editable settings.
 That runtime copy is ignored by Git and may later be managed by the GUI.
