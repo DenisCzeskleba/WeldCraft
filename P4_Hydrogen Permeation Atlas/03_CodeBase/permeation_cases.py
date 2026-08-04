@@ -124,11 +124,20 @@ def _build_surface_cases(settings: Mapping[str, Any]) -> Dict[str, SimulationRes
     return results
 
 
-def _trap_config(settings: Mapping[str, Any], capacity: float, half_time: float) -> TrapConfig:
+def _trap_config(
+    settings: Mapping[str, Any],
+    capacity: float,
+    half_time: float,
+    capture_rate: float | None = None,
+) -> TrapConfig:
     return TrapConfig(
         enabled=capacity > 0.0,
         capacity_ratio=float(capacity),
-        capture_rate_ref=float(settings["trapping"]["capture_rate_ref"]),
+        capture_rate_ref=float(
+            settings["trapping"]["capture_rate_ref"]
+            if capture_rate is None
+            else capture_rate
+        ),
         release_half_time_ref=float(half_time),
     )
 
@@ -153,6 +162,29 @@ def _build_trap_cases(settings: Mapping[str, Any]) -> Dict[str, SimulationResult
             traps=_trap_config(settings, fixed_capacity, half_time),
         )
         results[f"trap_release:{half_time:g}"] = simulate_case(config)
+    capture_capacity = float(trap_settings["capture_sweep_capacity_ratio"])
+    capture_half_time = float(trap_settings["capture_sweep_release_half_time_ref"])
+    for capture_rate in trap_settings["capture_rate_refs"]:
+        capture_rate = float(capture_rate)
+        config = base.with_changes(
+            label=f"k_capture*C_ref*tau_ref = {capture_rate:g}",
+            traps=_trap_config(
+                settings,
+                capture_capacity,
+                capture_half_time,
+                capture_rate=capture_rate,
+            ),
+        )
+        results[f"trap_capture:{capture_rate:g}"] = simulate_case(config)
+    for index, values in enumerate(trap_settings["combined_cases"]):
+        capacity = float(values["capacity_ratio"])
+        half_time = float(values["release_half_time_ref"])
+        label = str(values["label"])
+        config = base.with_changes(
+            label=label,
+            traps=_trap_config(settings, capacity, half_time),
+        )
+        results[f"trap_combined:{index}"] = simulate_case(config)
     return results
 
 
@@ -210,10 +242,17 @@ def build_atlas_cases(
     if "overview" in requested:
         requested.update({"ideal", "surface", "trapping"})
     if requested.intersection(
-        {"annex_model", "annex_trap_capacity", "annex_trap_release", "annex_trap_profiles"}
+        {
+            "1.1_trap_capacity_flux",
+            "1.2_trap_release_flux",
+            "1.3_trap_capture_flux",
+            "1.4_combined_trap_flux",
+        }
     ):
         requested.add("trapping")
-    if requested.intersection({"annex_prefill_aging", "annex_prefill_response"}):
+    if requested.intersection(
+        {"2.1_residual_hydrogen_flux", "2.2_residual_hydrogen_normalized_flux"}
+    ):
         requested.add("prefill")
 
     results: Dict[str, SimulationResult] = {}

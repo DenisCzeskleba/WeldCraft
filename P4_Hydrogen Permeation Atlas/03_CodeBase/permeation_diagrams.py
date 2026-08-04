@@ -1183,6 +1183,297 @@ def render_annex_prefill_response(
     return fig
 
 
+def _render_annex_trap_flux_pair(
+    cases: Sequence[Tuple[str, SimulationResult]],
+    time_axis: str,
+    title: str,
+    parameter_title: str,
+    value_getter,
+    fixed_condition: str,
+    comparison_window_ref: float | None,
+):
+    """Render only the observable flux and its individual normalization."""
+
+    fig, (common_axis, normalized_axis) = plt.subplots(
+        1, 2, figsize=(8.2, 4.3), constrained_layout=True
+    )
+    if comparison_window_ref is not None and time_axis != "fo":
+        x_limit = _reference_time_on_axis(
+            cases[0][1], comparison_window_ref, time_axis
+        )
+    else:
+        x_limit = _active_x_limit(cases, time_axis)
+    label_fractions = np.linspace(0.24, 0.80, len(cases))
+    for index, ((_, result), label_fraction) in enumerate(
+        zip(cases, label_fractions)
+    ):
+        x = _time_values(result, time_axis)
+        common_flux = result.outlet_flux_common
+        individual_flux = common_flux / float(np.max(common_flux))
+        style = LINE_STYLES[index % len(LINE_STYLES)][0]
+        for axis, values in (
+            (common_axis, common_flux),
+            (normalized_axis, individual_flux),
+        ):
+            axis.plot(x, values, color="black", linestyle=style, linewidth=1.25)
+            _label_at_fraction(
+                axis,
+                x,
+                values,
+                value_getter(result),
+                float(label_fraction),
+                1.0,
+                maximum_x=0.90 * x_limit,
+                fallback_x=x_limit
+                * (0.60 + 0.27 * index / max(1, len(cases) - 1)),
+            )
+    for axis in (common_axis, normalized_axis):
+        axis.set_xlim(0.0, x_limit)
+        axis.set_ylim(-0.03, 1.06)
+        axis.set_xlabel(_time_label(time_axis))
+        axis.grid(True, axis="x")
+        _add_response_guides(axis, x_limit)
+    common_axis.set_ylabel(r"Outlet flux, $J/J_{\mathrm{ref}}$")
+    common_axis.set_title("Common-reference flux")
+    normalized_axis.set_ylabel(r"Individually normalized flux, $J/\max_t(J)$")
+    normalized_axis.set_title("Same curves normalized individually")
+    fig.suptitle(title, fontsize=12)
+    fig.supxlabel(
+        f"{parameter_title}; {fixed_condition}",
+        fontsize=7.3,
+    )
+    return fig
+
+
+def render_annex_trap_capacity_flux(
+    results: Mapping[str, SimulationResult],
+    normalization: str,
+    time_axis: str,
+    comparison_window_ref: float | None = None,
+):
+    cases = sorted(
+        _select(results, "trap_capacity:"),
+        key=lambda item: item[1].config.traps.capacity_ratio,
+    )
+    half_time = (
+        cases[0][1].config.traps.release_half_time_ref
+        * cases[0][1].config.tau_ref_seconds
+        / 60.0
+    )
+    return _render_annex_trap_flux_pair(
+        cases,
+        time_axis,
+        "Permeation-flux response to reversible trap capacity",
+        r"Values on curves: $N_T/C_{\mathrm{ref}}$",
+        lambda result: f"{result.config.traps.capacity_ratio:g}",
+        f"fixed detrapping half-time = {half_time:.1f} min",
+        comparison_window_ref,
+    )
+
+
+def render_annex_trap_release_flux(
+    results: Mapping[str, SimulationResult],
+    normalization: str,
+    time_axis: str,
+    comparison_window_ref: float | None = None,
+):
+    cases = sorted(
+        _select(results, "trap_release:"),
+        key=lambda item: item[1].config.traps.release_half_time_ref,
+    )
+    capacity = cases[0][1].config.traps.capacity_ratio
+    return _render_annex_trap_flux_pair(
+        cases,
+        time_axis,
+        "Permeation-flux response to reversible-trap release rate",
+        r"Values on curves: detrapping half-time $t_{1/2,\mathrm{det}}$ [min]",
+        lambda result: (
+            f"{result.config.traps.release_half_time_ref * result.config.tau_ref_seconds / 60.0:.1f}"
+        ),
+        rf"fixed trap capacity $N_T/C_{{\mathrm{{ref}}}}={capacity:g}$",
+        comparison_window_ref,
+    )
+
+
+def render_annex_trap_capture_flux(
+    results: Mapping[str, SimulationResult],
+    normalization: str,
+    time_axis: str,
+    comparison_window_ref: float | None = None,
+):
+    cases = sorted(
+        _select(results, "trap_capture:"),
+        key=lambda item: item[1].config.traps.capture_rate_ref,
+    )
+    capacity = cases[0][1].config.traps.capacity_ratio
+    half_time = (
+        cases[0][1].config.traps.release_half_time_ref
+        * cases[0][1].config.tau_ref_seconds
+        / 60.0
+    )
+    return _render_annex_trap_flux_pair(
+        cases,
+        time_axis,
+        "Permeation-flux response to the trap-capture rate",
+        r"Values on curves: $k_tC_{\mathrm{ref}}\tau_{\mathrm{ref}}$",
+        lambda result: f"{result.config.traps.capture_rate_ref:g}",
+        rf"fixed $N_T/C_{{\mathrm{{ref}}}}={capacity:g}$ and detrapping half-time = {half_time:.1f} min",
+        comparison_window_ref,
+    )
+
+
+def render_annex_trap_combined_flux(
+    results: Mapping[str, SimulationResult],
+    normalization: str,
+    time_axis: str,
+    comparison_window_ref: float | None = None,
+):
+    cases = sorted(_select(results, "trap_combined:"), key=lambda item: item[0])
+    return _render_annex_trap_flux_pair(
+        cases,
+        time_axis,
+        "Combined influence of trap capacity and release rate on permeation flux",
+        "Curve labels describe the selected capacity / release-rate combination",
+        lambda result: result.config.label,
+        r"few: $N_T/C_{\mathrm{ref}}=0.5$; many: 2.0; fast: $t_{1/2}=6.9$ min; slow: 138.9 min",
+        comparison_window_ref,
+    )
+
+
+def _annex_prefill_window(
+    cases: Sequence[Tuple[str, SimulationResult]],
+    time_axis: str,
+    comparison_window_ref: float | None,
+) -> float:
+    window_ref = 0.55
+    if comparison_window_ref is not None:
+        window_ref = min(window_ref, comparison_window_ref)
+    if time_axis == "fo":
+        return _active_x_limit(cases, time_axis)
+    return _reference_time_on_axis(cases[0][1], window_ref, time_axis)
+
+
+def _prefill_curve_label(result: SimulationResult) -> str:
+    if not result.config.prefill.enabled:
+        return "empty"
+    return f"{100.0 * result.config.prefill.target_center_fraction:g}%"
+
+
+def render_annex_prefill_flux(
+    results: Mapping[str, SimulationResult],
+    normalization: str,
+    time_axis: str,
+    comparison_window_ref: float | None = None,
+):
+    cases = _prefill_cases(results)
+    fig, (early_axis, full_axis) = plt.subplots(
+        1, 2, figsize=(8.2, 4.3), constrained_layout=True
+    )
+    x_limit = _annex_prefill_window(cases, time_axis, comparison_window_ref)
+    early_limit = 0.48 * x_limit
+    label_fractions = np.linspace(0.12, 0.58, len(cases))
+    for index, ((_, result), label_fraction) in enumerate(
+        zip(cases, label_fractions)
+    ):
+        x = _time_values(result, time_axis)
+        flux = result.outlet_flux_common
+        style = LINE_STYLES[index % len(LINE_STYLES)][0]
+        early_axis.plot(x, flux, color="black", linestyle=style, linewidth=1.25)
+        full_axis.plot(x, flux, color="black", linestyle=style, linewidth=1.25)
+        _label_at_fraction(
+            full_axis,
+            x,
+            flux,
+            _prefill_curve_label(result),
+            float(label_fraction),
+            1.0,
+            maximum_x=0.88 * x_limit,
+            fallback_x=x_limit * (0.58 + 0.30 * index / max(1, len(cases) - 1)),
+        )
+    for axis, limit in ((early_axis, early_limit), (full_axis, x_limit)):
+        axis.set_xlim(0.0, limit)
+        axis.set_ylim(-0.03, 1.06)
+        axis.set_xlabel(_time_label(time_axis))
+        axis.grid(True)
+    early_axis.set_ylabel(r"Outlet flux, $J/J_{\mathrm{ref}}$")
+    early_axis.set_title("Early-time detail")
+    full_axis.set_ylabel(r"Outlet flux, $J/J_{\mathrm{ref}}$")
+    full_axis.set_title("Complete rising transient")
+    fig.suptitle("Measured flux with residual hydrogen present before charging", fontsize=12)
+    fig.supxlabel(
+        r"Values on curves: retained centre concentration $C(x=L/2,t=0)/C_{\mathrm{ref}}$; no baseline subtraction",
+        fontsize=7.3,
+    )
+    return fig
+
+
+def render_annex_prefill_normalized(
+    results: Mapping[str, SimulationResult],
+    normalization: str,
+    time_axis: str,
+    comparison_window_ref: float | None = None,
+):
+    cases = _prefill_cases(results)
+    fig, (maximum_axis, corrected_axis) = plt.subplots(
+        1, 2, figsize=(8.2, 4.3), constrained_layout=True
+    )
+    x_limit = _annex_prefill_window(cases, time_axis, comparison_window_ref)
+    corrected_minimum = 0.0
+    label_fractions = np.linspace(0.18, 0.72, len(cases))
+    for index, ((_, result), label_fraction) in enumerate(
+        zip(cases, label_fractions)
+    ):
+        x = _time_values(result, time_axis)
+        flux = result.outlet_flux_common
+        maximum_normalized = flux / float(np.max(flux))
+        initial = float(flux[0])
+        corrected = (flux - initial) / (
+            result.config.steady_flux_common_reference - initial
+        )
+        corrected_minimum = min(corrected_minimum, float(np.min(corrected)))
+        style = LINE_STYLES[index % len(LINE_STYLES)][0]
+        maximum_axis.plot(
+            x, maximum_normalized, color="black", linestyle=style, linewidth=1.25
+        )
+        corrected_axis.plot(
+            x, corrected, color="black", linestyle=style, linewidth=1.25
+        )
+        for axis, values in (
+            (maximum_axis, maximum_normalized),
+            (corrected_axis, corrected),
+        ):
+            _label_at_fraction(
+                axis,
+                x,
+                values,
+                _prefill_curve_label(result),
+                float(label_fraction),
+                1.0,
+                maximum_x=0.88 * x_limit,
+                fallback_x=x_limit
+                * (0.58 + 0.30 * index / max(1, len(cases) - 1)),
+            )
+    for axis in (maximum_axis, corrected_axis):
+        axis.set_xlim(0.0, x_limit)
+        axis.set_xlabel(_time_label(time_axis))
+        axis.grid(True)
+        axis.axhline(1.0, color="0.55", linestyle=":", linewidth=0.7)
+    maximum_axis.set_ylim(-0.03, 1.06)
+    maximum_axis.set_ylabel(r"Individually normalized flux, $J/\max_t(J)$")
+    maximum_axis.set_title("Individual-maximum normalization")
+    corrected_axis.set_ylim(min(-0.08, 1.08 * corrected_minimum), 1.06)
+    corrected_axis.set_ylabel(
+        r"Baseline-corrected flux, $(J-J_0)/(J_{\mathrm{ss}}-J_0)$"
+    )
+    corrected_axis.set_title("Initial-baseline subtraction and normalization")
+    fig.suptitle("How normalization changes residual-hydrogen signatures", fontsize=12)
+    fig.supxlabel(
+        r"Values on curves: retained centre concentration $C(x=L/2,t=0)/C_{\mathrm{ref}}$",
+        fontsize=7.3,
+    )
+    return fig
+
+
 def _metric_label(metric: str) -> str:
     return {
         "t10": r"$t_{10}/\tau_{\mathrm{ref}}$",
@@ -1401,6 +1692,12 @@ RENDERERS = {
     "annex_trap_profiles": render_annex_trap_profiles,
     "annex_prefill_aging": render_annex_prefill_aging,
     "annex_prefill_response": render_annex_prefill_response,
+    "1.1_trap_capacity_flux": render_annex_trap_capacity_flux,
+    "1.2_trap_release_flux": render_annex_trap_release_flux,
+    "1.3_trap_capture_flux": render_annex_trap_capture_flux,
+    "1.4_combined_trap_flux": render_annex_trap_combined_flux,
+    "2.1_residual_hydrogen_flux": render_annex_prefill_flux,
+    "2.2_residual_hydrogen_normalized_flux": render_annex_prefill_normalized,
 }
 
 

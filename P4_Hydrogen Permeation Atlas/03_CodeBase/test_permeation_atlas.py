@@ -214,12 +214,12 @@ class PersistenceAndRenderingTests(unittest.TestCase):
         self.assertEqual(
             annex_figures,
             [
-                "annex_model",
-                "annex_trap_capacity",
-                "annex_trap_release",
-                "annex_trap_profiles",
-                "annex_prefill_aging",
-                "annex_prefill_response",
+                "1.1_trap_capacity_flux",
+                "1.2_trap_release_flux",
+                "1.3_trap_capture_flux",
+                "1.4_combined_trap_flux",
+                "2.1_residual_hydrogen_flux",
+                "2.2_residual_hydrogen_normalized_flux",
             ],
         )
 
