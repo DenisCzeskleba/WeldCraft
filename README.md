@@ -18,7 +18,7 @@ Until at least Q4 of 2026, this project will see constant updates, either here o
 | P1 | Simulate Hydrogen Diffusion | Interactive 1D/2D hydrogen-diffusion and heat-transport simulation with numerical and animation tools. |
 | P2 | Hydrogen Diffusion During Welding | Full code-driven thermal and hydrogen-diffusion welding simulation, including thermal calibration workflows. |
 | P3 | Heat Map | Focused thermal-welding simulation for manual heating calibration, four-point temperature traces, animations, and a practical smaller-scale example of P2 thermal concepts. |
-| P4 | Reserved | Reserved for a future WeldCraft module. |
+| P4 | Hydrogen Permeation Atlas | Generates normalized 1D permeation-response diagrams for ideal diffusion, changing entry conditions, McNabb-Foster trapping, and aged prefilling. |
 | P5 | Lattice Visualizer | Interactive SC, BCC, and FCC lattice visualization with configurable dopants and overlays. |
 | P6 | Visualize Diffusion (Brownian Motion) | GUI and code-driven lattice-scale diffusion simulation, visualization, and analysis. |
 | P7 | Analysis Tools | Reserved collection for additional WeldCraft analysis utilities. |

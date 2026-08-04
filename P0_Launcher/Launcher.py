@@ -212,6 +212,10 @@ class Launcher(QMainWindow):
         self.p3_heat_map_info = (
             "Set weld geometry and thermal settings, run a 2D heat simulation, and inspect temperature maps and traces."
         )
+        self.p4_permeation_atlas_info = (
+            "Generate black-and-white 1D hydrogen-permeation response atlases for ideal diffusion, "
+            "surface changes, kinetic trapping, and residual prefilling. GUI coming soon."
+        )
         self.p6_diffusion_info = (
             "Generate Brownian-motion diffusion data and create an animation."
         )
@@ -345,11 +349,11 @@ class Launcher(QMainWindow):
                     status_note=self.gui_beta_note,
                 ),
                 self.build_page_entry(
-                    "Coming Soon",
-                    "This module is coming soon.",
+                    "Hydrogen Permeation Atlas",
+                    self.p4_permeation_atlas_info,
                     partial(
                         self.show_placeholder_message,
-                        "This module is coming soon.",
+                        self.p4_permeation_atlas_info,
                     ),
                 ),
                 self.build_page_entry(

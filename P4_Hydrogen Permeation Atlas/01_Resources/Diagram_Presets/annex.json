@@ -1,0 +1,12 @@
+{
+  "name": "annex",
+  "description": "Six self-contained, non-duplicative annex figures for trapping and residual hydrogen.",
+  "figures": [
+    "annex_model",
+    "annex_trap_capacity",
+    "annex_trap_release",
+    "annex_trap_profiles",
+    "annex_prefill_aging",
+    "annex_prefill_response"
+  ]
+}

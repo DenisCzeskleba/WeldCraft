@@ -1,0 +1,5 @@
+{
+  "name": "surface",
+  "description": "Delayed exponential improvement and degradation of effective entry concentration.",
+  "figures": ["surface"]
+}

@@ -1,0 +1,5 @@
+{
+  "name": "ideal",
+  "description": "Ideal D, L, and solubility families plus the Fourier-number master curve.",
+  "figures": ["ideal"]
+}

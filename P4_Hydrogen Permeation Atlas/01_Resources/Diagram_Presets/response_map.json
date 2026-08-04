@@ -1,0 +1,5 @@
+{
+  "name": "response_map",
+  "description": "Phase-diagram-style trap-capacity/release-time isolines.",
+  "figures": ["response_map"]
+}

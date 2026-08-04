@@ -1,0 +1,5 @@
+{
+  "name": "overview",
+  "description": "Diagnostic transient plates under active development (PNG by default).",
+  "figures": ["ideal", "surface", "trapping"]
+}

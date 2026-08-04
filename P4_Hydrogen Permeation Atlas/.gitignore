@@ -1,0 +1,13 @@
+# Generated numerical results and thesis figures are local only.
+/02_Results/*
+!/02_Results/.gitkeep
+
+# Optional user-edited runtime configuration.
+/03_CodeBase/config.py
+
+# Python and test/runtime artifacts.
+**/__pycache__/
+*.py[cod]
+*.h5
+*.hdf5
+
