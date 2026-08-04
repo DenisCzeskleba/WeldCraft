@@ -19,6 +19,14 @@ class StepAndFilenameTests(unittest.TestCase):
         for text in ("3000000000", "3_000_000_000", "3e9", "3 × 10^9"):
             self.assertEqual(support.parse_step_count(text), 3_000_000_000)
 
+    def test_step_inputs_load_in_compact_scientific_notation(self):
+        self.assertEqual(support.format_step_input(130_000_000_000), "1.3e11")
+        self.assertEqual(support.format_step_input(3_000_000_001), "3.000000001e9")
+        self.assertEqual(
+            support.parse_step_count(support.format_step_input(130_000_000_000)),
+            130_000_000_000,
+        )
+
     def test_scientific_notation_is_valid_for_other_whole_number_fields(self):
         settings = support.load_gui_settings()
         settings.update({
@@ -31,6 +39,12 @@ class StepAndFilenameTests(unittest.TestCase):
         checked = support.validate_gui_settings(settings)
         self.assertEqual(checked["x"], 1300)
         self.assertEqual(checked["animation_fps"], 12)
+
+    def test_eta_formatting(self):
+        self.assertEqual(support.format_eta(None), "calculating...")
+        self.assertEqual(support.format_eta(65), "01:05")
+        self.assertEqual(support.format_eta(3661), "01:01:01")
+        self.assertEqual(support.format_eta(90061), "1d 01:01:01")
 
     def test_exact_frame_counts(self):
         self.assertEqual(
@@ -79,6 +93,34 @@ class ConfigWriterTests(unittest.TestCase):
             self.assertNotEqual(original, updated)
         finally:
             shutil.rmtree(directory)
+
+    def test_saved_settings_are_readable_by_a_later_session(self):
+        with tempfile.TemporaryDirectory(prefix="weldcraft_p6_config_test_") as directory:
+            path = Path(directory) / "config.py"
+            shutil.copyfile(support.CONFIG_PATH, path)
+            settings = support.load_gui_settings()
+            settings.update({"steps": 7_000_000, "h5_filename": "next_session.h5"})
+            support.write_gui_settings(settings, path)
+            later_cfg = support._load_module(path, "p6_round_trip_config")
+            self.assertEqual(later_cfg.steps, 7_000_000)
+            self.assertEqual(later_cfg.h5_filename, "next_session.h5")
+
+    def test_continuation_gets_a_new_output_when_source_name_is_selected(self):
+        settings = support.load_gui_settings()
+        source = support.result_path("random_motion.h5")
+        settings["h5_filename"] = source.name
+        info = {"valid": True, "path": source, "metadata": {}}
+        updated = support.resume_settings_from_info(info, settings)
+        self.assertEqual(updated["h5_filename"], "continued_random_motion.h5")
+        self.assertEqual(updated["RESUME_FROM_H5"], str(source.resolve()))
+
+    def test_missing_persisted_continuation_is_cleared(self):
+        settings = support.load_gui_settings()
+        settings["RESUME_FROM_H5"] = str(Path(tempfile.gettempdir()) / "missing_p6_file.h5")
+        updated, info, message = support.restore_persisted_resume(settings)
+        self.assertIsNone(info)
+        self.assertIsNone(updated["RESUME_FROM_H5"])
+        self.assertIn("cleared", message)
 
     def test_resolved_settings_save_as_new_non_overwriting_preset(self):
         with tempfile.TemporaryDirectory(prefix="weldcraft_p6_preset_test_") as directory:

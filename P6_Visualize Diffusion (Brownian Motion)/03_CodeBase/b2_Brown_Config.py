@@ -18,22 +18,22 @@ from fractions import Fraction
 
 simulation_mode = 'event_driven_wiggle'
 x = 1300  # Width (x)
-y = 920  # Height (y)
+y = 650  # Height (y)
 
 # Number of simulation steps. For continuation, this is the number of additional steps.
-steps = 130000000000  # use 10_000_000 notation, or 10000000. DO NOT use 100.000.000
+steps = 150000000000  # use 10_000_000 notation, or 10000000. DO NOT use 100.000.000
 max_radius_to_jump = 10
 
 # ---------------------- Matrix Source ---------------------- #
 MATRIX_SOURCE = 'random'  # Options: "random", "image", "lattice"
 
 # Used when MATRIX_SOURCE = "random" or "lattice"
-max_sol_a = Fraction(1, 5)
+max_sol_a = Fraction(1, 10)
 max_sol_b = Fraction(1, 20)
 
 # Independent possible-site densities for the optional special areas
 max_sol_spot = Fraction(1, 1)
-max_sol_trap_layer = Fraction(1, 10)
+max_sol_trap_layer = Fraction(3, 20)
 
 # Used when MATRIX_SOURCE = "lattice"
 LATTICE_STYLE = "prime"
@@ -47,27 +47,27 @@ max_sol_black = Fraction(2, 100)
 show_image_matrix_plot = True
 
 # ---------------------- Initial Concentration ---------------------- #
-concentration_a = 50.0
-concentration_b = 50.0
+concentration_a = 0.0
+concentration_b = 0.0
 concentration_spot = 0.0  # only used if USE_SPOT = True
-concentration_trap_layer = 75.0  # only used if USE_TRAP_LAYER = True
+concentration_trap_layer = 0.0  # only used if USE_TRAP_LAYER = True
 
 # Optional left-to-right linear starting profiles for the two base areas.
 # When enabled, concentration_a and concentration_b above are replaced by these profiles.
 # Each pair is: (concentration at the area's left edge, concentration at its right edge).
 USE_INITIAL_CONCENTRATION_PROFILE = False
-concentration_profile_a = (100.0, 50.0)
-concentration_profile_b = (50.0, 0.0)
+concentration_profile_a = (100.0, 80.0)
+concentration_profile_b = (80.0, 0.0)
 
 # ---------------------- Layer / Boundary Options ---------------------- #
-USE_SPOT = True
+USE_SPOT = False
 SPOT_DIAMETER = 120
 SPOT_CENTER_X = 866  # Column position of the spot center
 SPOT_CENTER_Y = 460  # Row position of the spot center
 
 USE_TRAP_LAYER = True
-TRAP_LAYER_CENTER_X = 325
-TRAP_LAYER_WIDTH = 40
+TRAP_LAYER_CENTER_X = 650
+TRAP_LAYER_WIDTH = 100
 
 USE_SINK_SOURCE = True
 SINK_SOURCE_THICKNESS = 10
@@ -91,7 +91,7 @@ base_movement_probability = 1.0
 AREA_CHARACTERISTICS = {'a': {'affinity': 1.0, 'mobility': 1.0},
  'b': {'affinity': 1.0, 'mobility': 1.0},
  'spot': {'affinity': 2.0, 'mobility': 1.0},
- 'trap_layer': {'affinity': 3.0, 'mobility': 1.0}}
+ 'trap_layer': {'affinity': 2.0, 'mobility': 0.5}}
 
 # --------------------- Numerics stuff --------------------- #
 
@@ -99,11 +99,11 @@ AREA_CHARACTERISTICS = {'a': {'affinity': 1.0, 'mobility': 1.0},
 # relative to 02_Results. Continuation always writes h5_filename as a separate file.
 # New checkpoint-enabled files resume exactly; older/interrupted files resume from
 # their last valid snapshot with a fresh RNG and record that they are statistical.
-RESUME_FROM_H5 = ((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((None))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))
-random_seed = None  # None selects a fresh seed per run; set an integer to reproduce a run exactly.
+RESUME_FROM_H5 = (((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((None)))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))
+random_seed = 42  # None selects a fresh seed per run; set an integer to reproduce a run exactly.
 random_size = 10 ** 7  # Deprecated forced_jump only: number of precomputed random values.
 max_ram_mb = 2000  # Adjustable memory target for HDF5 frame buffering
-save_every_steps = 1000000000
+save_every_steps = 10000000
 delete_old_h5 = True
 
 
@@ -129,7 +129,7 @@ NET_FLUX_COLOR = '#4A148C'
 NET_FLUX_BAND_COLOR = '#B39DDB'
 
 # ---------------------- Output Files ---------------------- #
-h5_filename = 'continued_random_motion.h5'
+h5_filename = 'Empty_but_traps_from_0_to_100b.h5'
 animation_output_folder = "Saved Animations"
 animation_filename = 'brownian_motion_animation.mp4'
 
@@ -155,5 +155,6 @@ ffmpeg_path = (
 # direct-script users can inspect or edit them as needed.
 GUI_DISABLE_OVERWRITE_WARNING = False
 GUI_FIGURE_FILENAME = 'brownian_diagram.png'
-GUI_DIAGRAM_PRESET = 'area_summary'
-GUI_DIAGRAM_OVERRIDES = {'area_summary': {'RENDER_MODE': 'concentration_heatmap'}}
+GUI_DIAGRAM_PRESET = 'area_summary_transient_profile'
+GUI_DIAGRAM_OVERRIDES = {'area_summary': {'RENDER_MODE': 'concentration_heatmap'},
+ 'depletion_heatmap': {'SHOW_NET_FLUX_PANEL': False, 'HEATMAP_MODE': 'change_from_initial_setup'}}

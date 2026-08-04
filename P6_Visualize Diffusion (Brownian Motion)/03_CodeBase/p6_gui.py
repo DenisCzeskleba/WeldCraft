@@ -6,6 +6,7 @@ import html
 import sys
 import threading
 import shutil
+import time
 from copy import deepcopy
 from pathlib import Path
 
@@ -38,8 +39,10 @@ from p6_gui_support import (
     discover_diagram_presets,
     estimate_snapshot_bytes,
     find_ffmpeg,
+    format_eta,
     format_scientific_steps,
     frame_summary,
+    format_step_input,
     inspect_resume_source,
     load_diagram_settings,
     load_gui_settings,
@@ -47,11 +50,12 @@ from p6_gui_support import (
     parse_step_count,
     render_diagram_figure,
     render_presentation_animation,
+    restore_persisted_resume,
     restore_gui_defaults,
+    resume_settings_from_info,
     result_path,
     run_brownian_simulation,
     save_diagram_preset,
-    settings_from_resume_metadata,
     validate_gui_settings,
     write_gui_settings,
 )
@@ -350,6 +354,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.run_progress_start_step = 0
         self.run_progress_end_step = 0
         self.run_progress_total_frames = 0
+        self.run_progress_started_at = None
         self.current_canvas = {}
         self.presentation_widgets = {}
         self.presentation_settings = {}
@@ -369,6 +374,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._populate_widgets()
         self.loading_widgets = False
         self._connect_signals()
+        self._restore_persisted_resume()
         self._update_dependencies()
         self._update_preview()
         self._load_presentation_controls()
@@ -378,6 +384,35 @@ class MainWindow(QtWidgets.QMainWindow):
             self.render_mp4_button.setToolTip("FFmpeg was not found; MP4 rendering is unavailable.")
         self.startup_ready_signal = StartupReadySignal(self)
         self.showMaximized()
+
+    def _restore_persisted_resume(self):
+        if self.settings.get("RESUME_FROM_H5") in (None, ""):
+            return
+        try:
+            updated, info, message = restore_persisted_resume(self.settings)
+            self.settings = write_gui_settings(updated)
+            if info is not None:
+                self.resume_info = info
+                self.loading_widgets = True
+                self._populate_widgets()
+                self.loading_widgets = False
+                self.resume_banner.show()
+                self.field_labels["steps"].setText("Additional simulation steps")
+                self.run_button.setText("Start continuation")
+                self.continue_button.setText("Change continuation file…")
+                self.clear_resume_action.setEnabled(True)
+            elif message:
+                self.status_label.setText(message)
+        except Exception as exc:
+            # A persisted continuation must never prevent a new simulation
+            # from starting if its source became unreadable or incompatible.
+            self.resume_info = None
+            self.settings["RESUME_FROM_H5"] = None
+            self.settings = write_gui_settings(self.settings)
+            self.loading_widgets = True
+            self._populate_widgets()
+            self.loading_widgets = False
+            self.status_label.setText(f"Stored continuation was cleared: {exc}")
 
     def _configured_ffmpeg(self):
         try:
@@ -552,6 +587,20 @@ class MainWindow(QtWidgets.QMainWindow):
         self.diagram_layout = QtWidgets.QVBoxLayout(self.diagram_container)
         self.result_views.addTab(self.classic_container, "Animation view")
         self.result_views.addTab(self.diagram_container, "Diagram view")
+
+        style_corner = QtWidgets.QWidget()
+        style_corner_layout = QtWidgets.QHBoxLayout(style_corner)
+        style_corner_layout.setContentsMargins(4, 0, 4, 0)
+        style_corner_layout.setSpacing(4)
+        style_corner_layout.addWidget(QtWidgets.QLabel("Animation matrix style:"))
+        self.result_style_combo = QtWidgets.QComboBox()
+        self.result_style_combo.addItems(CHOICES["render_mode"])
+        self.result_style_combo.setMaximumWidth(150)
+        self.result_style_combo.setToolTip(
+            "Choose pixels or dots for the Animation view. This is shared with the Setup tab."
+        )
+        style_corner_layout.addWidget(self.result_style_combo)
+        self.result_views.setCornerWidget(style_corner, QtCore.Qt.TopRightCorner)
         splitter.addWidget(self.result_views)
 
         presentation_scroll = QtWidgets.QScrollArea()
@@ -644,6 +693,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.render_mp4_button.clicked.connect(self._start_animation_render)
         self.cancel_render_button.clicked.connect(self._cancel_animation_render)
         self.preview_style_combo.currentTextChanged.connect(self._preview_style_changed)
+        self.result_style_combo.currentTextChanged.connect(self._preview_style_changed)
 
     def _populate_widgets(self):
         for name, widget in self.widgets.items():
@@ -653,11 +703,17 @@ class MainWindow(QtWidgets.QMainWindow):
             elif isinstance(widget, QtWidgets.QComboBox):
                 widget.setCurrentText(str(value))
             else:
-                widget.setText("" if value is None else str(value))
+                if name in ("steps", "save_every_steps") and value not in (None, ""):
+                    widget.setText(format_step_input(value))
+                else:
+                    widget.setText("" if value is None else str(value))
         self.preset_combo.setCurrentText(self.settings["GUI_DIAGRAM_PRESET"])
         self.preview_style_combo.blockSignals(True)
         self.preview_style_combo.setCurrentText(self.settings["MAIN_RENDER_MODE"])
         self.preview_style_combo.blockSignals(False)
+        self.result_style_combo.blockSignals(True)
+        self.result_style_combo.setCurrentText(self.settings["MAIN_RENDER_MODE"])
+        self.result_style_combo.blockSignals(False)
 
     def _preview_style_changed(self, style):
         if self.loading_widgets:
@@ -666,7 +722,13 @@ class MainWindow(QtWidgets.QMainWindow):
         matrix_style_widget.blockSignals(True)
         matrix_style_widget.setCurrentText(style)
         matrix_style_widget.blockSignals(False)
+        for combo in (self.preview_style_combo, self.result_style_combo):
+            combo.blockSignals(True)
+            combo.setCurrentText(style)
+            combo.blockSignals(False)
         self._persist_widgets("MAIN_RENDER_MODE")
+        if self.frame_source:
+            self._render_selected_result()
 
     def _settings_from_widgets(self):
         values = deepcopy(self.settings)
@@ -687,11 +749,18 @@ class MainWindow(QtWidgets.QMainWindow):
                     values[name] = text
         return validate_gui_settings(values)
 
+    def _settings_for_persistence(self):
+        values = self._settings_from_widgets()
+        values["RESUME_FROM_H5"] = (
+            str(self.resume_info["path"]) if self.resume_info is not None else None
+        )
+        return values
+
     def _persist_widgets(self, changed_name=""):
         if self.loading_widgets:
             return
         try:
-            checked = self._settings_from_widgets()
+            checked = self._settings_for_persistence()
             self.settings = write_gui_settings(checked)
             self._clear_field_errors()
             self.status_label.setText(f"Saved {changed_name or 'settings'} to b2_Brown_Config.py")
@@ -981,7 +1050,10 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _start_simulation(self):
         try:
-            self.settings = write_gui_settings(self._settings_from_widgets())
+            # The worker receives settings from disk/environment, while the
+            # GUI tracks continuation state in memory. Keep both synchronized
+            # even after a GUI restart or a stale saved configuration.
+            self.settings = write_gui_settings(self._settings_for_persistence())
         except Exception as exc:
             QtWidgets.QMessageBox.warning(self, "Cannot start simulation", str(exc))
             return
@@ -1005,6 +1077,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.settings["save_every_steps"],
             self.run_progress_start_step,
         )["count"]
+        self.run_progress_started_at = time.monotonic()
         self.status_label.setText(
             "Starting exact continuation…" if self.resume_info else "Starting event-driven simulation…"
         )
@@ -1030,10 +1103,18 @@ class MainWindow(QtWidgets.QMainWindow):
         self.progress_bar.setFormat(f"{fraction * 100:.1f}%")
         global_step = self.run_progress_start_step + int(completed)
         activity = "Continuing" if self.resume_info else "Running"
+        elapsed = (
+            max(0.0, time.monotonic() - self.run_progress_started_at)
+            if self.run_progress_started_at is not None
+            else 0.0
+        )
+        rate = int(completed) / elapsed if completed > 0 and elapsed > 0 else None
+        remaining_steps = max(0, self.run_progress_end_step - global_step)
+        eta = remaining_steps / rate if rate else None
         self.status_label.setText(
             f"{activity} event-driven simulation · global step {global_step:,} of "
             f"{self.run_progress_end_step:,} · {int(frames):,}/{self.run_progress_total_frames:,} "
-            "frames safely committed"
+            f"frames safely committed | ETA {format_eta(eta)}"
         )
 
     def _simulation_completed(self, path):
@@ -1093,10 +1174,7 @@ class MainWindow(QtWidgets.QMainWindow):
             QtWidgets.QMessageBox.warning(self, "File cannot be continued", info["reason"])
             return
         try:
-            updated = settings_from_resume_metadata(info["metadata"], self.settings)
-            updated["RESUME_FROM_H5"] = str(info["path"])
-            if result_path(updated["h5_filename"]).resolve() == info["path"]:
-                updated["h5_filename"] = f"continued_{info['path'].name}"
+            updated = resume_settings_from_info(info, self.settings)
             self.settings = write_gui_settings(updated)
             self.resume_info = info
             self.loading_widgets = True
@@ -1148,6 +1226,11 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _advance_frame(self):
         if not self.frame_source:
+            return
+        # Rendering is asynchronous and can be slower than the nominal
+        # animation FPS. Wait for the current frame request to finish so the
+        # slider and displayed figure do not drift apart.
+        if self.frame_debounce.isActive() or self.result_render_worker is not None or self.pending_result_render is not None:
             return
         value = self.frame_slider.value() + 1
         if value >= self.frame_source.frame_count:
@@ -1507,7 +1590,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if not self.frame_source:
             return
         try:
-            self.settings = write_gui_settings(self._settings_from_widgets())
+            self.settings = write_gui_settings(self._settings_for_persistence())
             output = result_path(self.settings["GUI_FIGURE_FILENAME"])
             if not self._confirm_overwrite(output):
                 return
@@ -1528,7 +1611,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if not self.frame_source or not self.ffmpeg:
             return
         try:
-            self.settings = write_gui_settings(self._settings_from_widgets())
+            self.settings = write_gui_settings(self._settings_for_persistence())
             output = result_path(self.settings["animation_filename"])
             if not self._confirm_overwrite(output):
                 return
@@ -1597,6 +1680,14 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.animation_worker and self.animation_worker.isRunning():
             self.animation_worker.wait(10000)
         self.play_timer.stop()
+        try:
+            # Persist the final widget values as well as continuation state;
+            # editingFinished is not guaranteed to fire for every field when
+            # the window is closed directly.
+            self.settings = write_gui_settings(self._settings_for_persistence())
+        except Exception as exc:
+            # Keep the last valid configuration on disk if a field is invalid.
+            self.status_label.setText(f"Could not save the latest P6 settings: {exc}")
         event.accept()
 
 

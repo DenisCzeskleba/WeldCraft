@@ -68,6 +68,8 @@ SAVE_DPI = 300
 #   "area_summary"                          - Stylized non-overlapping dots using measured area averages.
 #   "chapter_2_3_brown_overview"            - Stylized dots following a transient saved x-profile.
 #   "area_summary_transient"                - Stylized non-overlapping dots using measured area averages, with transient x-profile.
+#   "transport_profile"                     - Spatial transport-rate profile with a temporal flux trace.
+#   "area_summary_transient_profile"        - Transient area-summary dots paired with their concentration profile.
 # When adding a preset, also add it to BATCH_PRESET_ORDER in the "all_presets"
 # preset file. Treat existing entries as append-only to keep public numbering stable.
 DIAGRAM_PRESET = "full_sized_1_region"  # File stem in 01_Resources/Diagram_Presets.
@@ -235,6 +237,11 @@ OPTIONAL_DIAGRAM_PRESET_DEFAULTS = {
     "SHOW_FRAME_SUPTITLE": True,
     "NET_FLUX_COLOR": "#4A148C",
     "NET_FLUX_BAND_COLOR": "#B39DDB",
+    "SHOW_TRANSPORT_PROFILE_PANEL": False,
+    "TRANSPORT_PROFILE_COLOR": "#4A148C",
+    "TRANSPORT_PROFILE_MARKER_COLOR": "#1B5E20",
+    "TRANSPORT_PROFILE_INSET_FACE_COLOR": "#FBFBFB",
+    "TRANSPORT_PROFILE_INSET_ALPHA": 0.96,
 }
 
 
@@ -356,7 +363,7 @@ def load_snapshot_and_context(h5_path, requested_frame_index):
 
     transport_analysis = (
         analyze_transport(h5_path)
-        if SHOW_NET_FLUX_PANEL
+        if SHOW_NET_FLUX_PANEL or SHOW_TRANSPORT_PROFILE_PANEL
         else None
     )
 
@@ -2719,6 +2726,104 @@ def draw_net_flux(axis, transport_analysis, saved_step):
         axis.legend(fontsize=8)
 
 
+def draw_transport_profile(axis, transport_analysis, saved_step):
+    """Show regional transport rate across x, with its time history inset.
+
+    The recorded quantity is a signed net flux per region width, not the
+    instantaneous velocity of an individual hydrogen particle. At steady
+    state the profile should become approximately level across the connected
+    transport path; a trap changes the magnitude and local noise, while
+    continuity still constrains the through-flow.
+    """
+    if not transport_analysis:
+        axis.text(
+            0.5,
+            0.5,
+            "No transport data found",
+            ha="center",
+            va="center",
+            transform=axis.transAxes,
+        )
+        axis.set_axis_off()
+        return
+
+    x_values = np.asarray(transport_analysis.get("x", []), dtype=float)
+    flux_profile = np.asarray(transport_analysis.get("flux_profile", []), dtype=float)
+    time_values = np.asarray(transport_analysis.get("time", []), dtype=float)
+    net_flux = np.asarray(transport_analysis.get("net_flux", []), dtype=float)
+    flux_low = np.asarray(transport_analysis.get("flux_low", []), dtype=float)
+    flux_high = np.asarray(transport_analysis.get("flux_high", []), dtype=float)
+
+    if flux_profile.ndim != 2 or len(x_values) != flux_profile.shape[1]:
+        axis.text(
+            0.5,
+            0.5,
+            "No spatial transport profile found",
+            ha="center",
+            va="center",
+            transform=axis.transAxes,
+        )
+        axis.set_axis_off()
+        return
+
+    if len(time_values) == flux_profile.shape[0]:
+        selected_index = int(np.argmin(np.abs(time_values - float(saved_step))))
+    else:
+        selected_index = flux_profile.shape[0] - 1
+    selected_profile = flux_profile[selected_index]
+
+    axis.plot(
+        x_values,
+        selected_profile,
+        color=TRANSPORT_PROFILE_COLOR,
+        linewidth=2.0,
+        marker="o",
+        markersize=4.5,
+        markerfacecolor=TRANSPORT_PROFILE_MARKER_COLOR,
+        markeredgecolor="white",
+        markeredgewidth=0.6,
+        label="Regional net flux J(x)",
+        clip_on=False,
+        zorder=3,
+    )
+    axis.axhline(0, color="#505050", linewidth=0.8)
+    axis.set_title("Transport rate across the domain")
+    axis.set_xlabel("Matrix x (regional centers)")
+    axis.set_ylabel("Net flux per region width\n(H particles / step)")
+    axis.grid(alpha=0.22)
+    if len(x_values):
+        axis.set_xlim(x_values[0], x_values[-1])
+    if SHOW_LEGEND:
+        axis.legend(fontsize=8, loc="upper left")
+
+    # Position and simulation time are different quantities, so a small
+    # temporal inset is more honest and easier to read than a second x-axis
+    # pretending that the two scales are interchangeable.
+    inset = axis.inset_axes([0.48, 0.58, 0.48, 0.34])
+    inset.set_facecolor(TRANSPORT_PROFILE_INSET_FACE_COLOR)
+    inset.patch.set_alpha(TRANSPORT_PROFILE_INSET_ALPHA)
+    if len(time_values) and len(net_flux) == len(time_values):
+        inset.fill_between(
+            time_values,
+            flux_low,
+            flux_high,
+            color=NET_FLUX_BAND_COLOR,
+            alpha=0.35,
+            linewidth=0,
+        )
+        inset.plot(time_values, net_flux, color=NET_FLUX_COLOR, linewidth=1.4)
+        inset.axvline(float(saved_step), color="#303030", linestyle="--", linewidth=0.8)
+        inset.axhline(0, color="#505050", linewidth=0.6)
+        inset.set_title("Flux history", fontsize=8, pad=2)
+        inset.set_xlabel("Step", fontsize=7, labelpad=1)
+        inset.set_ylabel("J", fontsize=7, labelpad=1)
+        inset.tick_params(axis="both", labelsize=7)
+        inset.grid(alpha=0.18)
+    else:
+        inset.text(0.5, 0.5, "No flux history", ha="center", va="center", fontsize=8)
+        inset.set_axis_off()
+
+
 def match_side_panel_heights_to_main(fig, axes_by_panel):
     if not MATCH_SIDE_PANEL_HEIGHT_TO_MAIN or "main" not in axes_by_panel:
         return
@@ -2762,6 +2867,8 @@ def create_figure(
         panels.append(("profile", 2))
     if SHOW_NET_FLUX_PANEL:
         panels.append(("flux", 3))
+    if SHOW_TRANSPORT_PROFILE_PANEL:
+        panels.append(("transport", 4))
 
     if not panels:
         raise ValueError("At least one diagram panel must be enabled.")
@@ -2808,6 +2915,8 @@ def create_figure(
             )
         elif panel_name == "flux":
             draw_net_flux(axis, transport_analysis, saved_step)
+        elif panel_name == "transport":
+            draw_transport_profile(axis, transport_analysis, saved_step)
 
     for axis in fig.axes:
         apply_panel_typography(axis)
@@ -2983,6 +3092,7 @@ def render_all_diagram_presets():
     }
     globals()["SHOW_NET_FLUX_PANEL"] = any(
         settings["SHOW_NET_FLUX_PANEL"]
+        or settings.get("SHOW_TRANSPORT_PROFILE_PANEL", False)
         for settings in preset_settings.values()
     )
     matrix, saved_step, frame_index, metadata, transport_analysis = (

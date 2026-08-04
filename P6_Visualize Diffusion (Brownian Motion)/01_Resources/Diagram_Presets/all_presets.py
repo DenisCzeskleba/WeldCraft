@@ -30,4 +30,6 @@ BATCH_PRESET_ORDER = (
     "chapter_2_3_brown_overview",
     "area_summary_transient",
     "full_sized_1_region",
+    "transport_profile",
+    "area_summary_transient_profile",
 )

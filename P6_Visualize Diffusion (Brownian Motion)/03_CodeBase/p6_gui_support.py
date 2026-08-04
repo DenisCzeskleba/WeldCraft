@@ -347,6 +347,31 @@ def format_scientific_steps(value: int) -> str:
     return f"{coefficient:g} × 10^{exponent}"
 
 
+def format_step_input(value: int) -> str:
+    """Format an exact integer step count for compact GUI input."""
+    value = int(value)
+    if value == 0:
+        return "0"
+    sign = "-" if value < 0 else ""
+    digits = str(abs(value))
+    exponent = len(digits) - 1
+    fraction = digits[1:].rstrip("0")
+    coefficient = digits[0] if not fraction else f"{digits[0]}.{fraction}"
+    return f"{sign}{coefficient}e{exponent}"
+
+
+def format_eta(seconds) -> str:
+    """Format an ETA in a compact, tqdm-like clock style."""
+    if seconds is None or not math.isfinite(float(seconds)):
+        return "calculating..."
+    total_seconds = max(0, int(round(float(seconds))))
+    days, remainder = divmod(total_seconds, 86_400)
+    hours, remainder = divmod(remainder, 3_600)
+    minutes, seconds = divmod(remainder, 60)
+    clock = f"{hours:02d}:{minutes:02d}:{seconds:02d}" if hours else f"{minutes:02d}:{seconds:02d}"
+    return f"{days}d {clock}" if days else clock
+
+
 def frame_summary(steps: int, save_every_steps: int, start_step: int = 0) -> dict:
     from b4_Brown_Checkpoint import build_saved_steps
 
@@ -785,6 +810,52 @@ def settings_from_resume_metadata(metadata: dict, current: dict) -> dict:
     return validate_gui_settings(values)
 
 
+def resume_settings_from_info(info: dict, current: dict) -> dict:
+    """Prepare GUI settings for a validated continuation source.
+
+    Continuations are always written to a separate HDF5 file.  This helper is
+    shared by the file picker and startup restoration so the persisted and
+    in-memory continuation paths cannot drift apart.
+    """
+    if not info.get("valid"):
+        raise P6ConfigError(info.get("reason") or "The selected file cannot be continued")
+    updated = settings_from_resume_metadata(info["metadata"], current)
+    updated["RESUME_FROM_H5"] = str(Path(info["path"]).resolve())
+    if result_path(updated["h5_filename"]).resolve() == Path(info["path"]).resolve():
+        updated["h5_filename"] = f"continued_{Path(info['path']).name}"
+    return validate_gui_settings(updated)
+
+
+def restore_persisted_resume(settings: dict):
+    """Restore a saved continuation or clear a stale persisted source.
+
+    The GUI keeps the continuation source in the editable config so a
+    deliberately configured continuation survives closing the window.  A
+    missing or no-longer-valid source must not poison the next new run.
+    """
+    current = deepcopy(settings)
+    configured = current.get("RESUME_FROM_H5")
+    if configured in (None, ""):
+        return validate_gui_settings(current), None, ""
+    try:
+        info = inspect_resume_source(configured)
+    except Exception as exc:
+        current["RESUME_FROM_H5"] = None
+        return (
+            validate_gui_settings(current),
+            None,
+            f"Stored continuation was cleared: {exc}",
+        )
+    if not info["valid"]:
+        current["RESUME_FROM_H5"] = None
+        return (
+            validate_gui_settings(current),
+            None,
+            f"Stored continuation was cleared: {info['reason']}",
+        )
+    return resume_settings_from_info(info, current), info, ""
+
+
 def load_diagram_settings(preset_name: str, overrides=None) -> dict:
     with contextlib.redirect_stdout(io.StringIO()):
         import c3_Brown_Make_Diagram as diagram
@@ -841,7 +912,12 @@ def render_diagram_figure(path, frame_index, preset_name, overrides=None):
             setattr(diagram, name, value)
         source = H5FrameSource(path)
         matrix, saved_step = source.read_frame(frame_index)
-        transport = diagram.analyze_transport(source.path) if preset["SHOW_NET_FLUX_PANEL"] else None
+        transport = (
+            diagram.analyze_transport(source.path)
+            if preset["SHOW_NET_FLUX_PANEL"]
+            or preset.get("SHOW_TRANSPORT_PROFILE_PANEL", False)
+            else None
+        )
         baseline = None
         if preset.get("HEATMAP_MODE") == "change_from_initial":
             baseline, _ = source.read_frame(int(preset.get("HEATMAP_BASELINE_SNAPSHOT_INDEX", 0)))
