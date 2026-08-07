@@ -75,7 +75,7 @@ class TrapConfig:
     enabled: bool = False
     capacity_ratio: float = 0.0
     capture_rate_ref: float = 20.0
-    release_half_time_ref: float = 0.5
+    release_half_time_ref: float = 1.0
     initial_occupancy: float = 0.0
 
     @property

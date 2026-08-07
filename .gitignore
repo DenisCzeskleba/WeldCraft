@@ -41,3 +41,6 @@ P5_Lattice_Visualizer/config.py
 Resources/Common/prepare_release.py
 ToDo.md
 P6_Visualize Diffusion (Brownian Motion)/Erklärung Konzentration.txt
+
+# Local-only P6 diagram presets
+/P6_Visualize Diffusion (Brownian Motion)/01_Resources/Diagram_Presets/cli_only_option_3_speed.py

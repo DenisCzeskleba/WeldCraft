@@ -6,10 +6,13 @@ the HDF5 metadata when present, so old config edits do not change old diagrams.
 """
 
 from pathlib import Path
+import argparse
 import contextlib
+import functools
 import importlib.util
 import io
 import json
+import sys
 
 import h5py
 import matplotlib.pyplot as plt
@@ -209,6 +212,20 @@ OPTIONAL_DIAGRAM_PRESET_DEFAULTS = {
     "AREA_SUMMARY_SOURCE_SINK_EDGE_WIDTH": 0.8,
     "AREA_SUMMARY_SHOW_HALF_DIVIDER": True,
     "AREA_SUMMARY_HALF_DIVIDER_COLOR": "#A0A0A0",
+    "SHOW_AREA_SUMMARY_PROFILE_OVERLAY": False,
+    "AREA_SUMMARY_PROFILE_OVERLAY_COLOR": "#253494",
+    "AREA_SUMMARY_PROFILE_OVERLAY_WIDTH": 2.4,
+    "AREA_SUMMARY_PROFILE_OVERLAY_ALPHA": 0.95,
+    "AREA_SUMMARY_PROFILE_OVERLAY_STYLE": "-",
+    "AREA_SUMMARY_PROFILE_OVERLAY_LABEL": "Measured concentration profile",
+    "AREA_SUMMARY_PROFILE_OVERLAY_SHOW_RIGHT_AXIS": True,
+    "AREA_SUMMARY_PROFILE_OVERLAY_AXIS_COLOR": "#253494",
+    "AREA_SUMMARY_PROFILE_OVERLAY_LEGEND_LOCATION": "upper right",
+    "AREA_SUMMARY_PROFILE_OVERLAY_LEGEND_ANCHOR": (0.98, 0.98),
+    "AREA_SUMMARY_PROFILE_OVERLAY_LEGEND_FONT_SIZE": 9,
+    "AREA_SUMMARY_TIME_AVERAGE": False,
+    "AREA_SUMMARY_TIME_AVERAGE_USE_CONTINUED": True,
+    "AREA_SUMMARY_TIME_AVERAGE_SKIP_FIRST_FRAME": True,
     # Shared visual aids.
     "SHOW_SPECIAL_REGION_OUTLINES": False,
     "SPECIAL_REGION_OUTLINE_COLOR": "#202020",
@@ -240,8 +257,10 @@ OPTIONAL_DIAGRAM_PRESET_DEFAULTS = {
     "SHOW_TRANSPORT_PROFILE_PANEL": False,
     "TRANSPORT_PROFILE_COLOR": "#4A148C",
     "TRANSPORT_PROFILE_MARKER_COLOR": "#1B5E20",
-    "TRANSPORT_PROFILE_INSET_FACE_COLOR": "#FBFBFB",
-    "TRANSPORT_PROFILE_INSET_ALPHA": 0.96,
+    "TRANSPORT_PROFILE_TEMPORAL_COLOR": "#E65100",
+    "TRANSPORT_TIME_AVERAGE": False,
+    "TRANSPORT_TIME_AVERAGE_USE_CONTINUED": True,
+    "TRANSPORT_TIME_AVERAGE_SKIP_FIRST_FRAME": True,
 }
 
 
@@ -268,6 +287,12 @@ def load_diagram_preset_module(preset_file_stem):
 
 def load_diagram_preset(preset_file_stem):
     module, preset_path = load_diagram_preset_module(preset_file_stem)
+    if getattr(module, "CLI_ONLY", False):
+        raise RuntimeError(
+            f"CLI-only diagram preset {preset_path.name} cannot be applied as an "
+            "ordinary GUI-compatible preset. Run this file with "
+            f"--preset {preset_file_stem}."
+        )
     if getattr(module, "BATCH_RENDER_ALL_PRESETS", False):
         required_batch_keys = (
             "PRESET_NAME",
@@ -361,11 +386,11 @@ def load_snapshot_and_context(h5_path, requested_frame_index):
         matrix = snapshots[frame_index]
         saved_step = int(saved_steps[frame_index])
 
-    transport_analysis = (
-        analyze_transport(h5_path)
-        if SHOW_NET_FLUX_PANEL or SHOW_TRANSPORT_PROFILE_PANEL
-        else None
-    )
+    transport_analysis = None
+    if SHOW_NET_FLUX_PANEL or SHOW_TRANSPORT_PROFILE_PANEL:
+        transport_analysis = load_transport_time_average(h5_path)
+        if transport_analysis is None:
+            transport_analysis = analyze_transport(h5_path)
 
     print(f"Loaded: {h5_path}")
     print(f"Available saved frames: {frame_count} (valid indices: -{frame_count}..-1 or 0..{frame_count - 1})")
@@ -507,6 +532,170 @@ def compute_profile(matrix, metadata):
     profile[mask] = filled_spots[mask] / total_spots[mask]
 
     return coordinates, smooth_profile(profile), axis_label
+
+
+def _continued_profile_source(h5_path):
+    path = Path(h5_path).resolve()
+    if path.stem.endswith("_continued"):
+        return path if path.is_file() else None
+    candidate = path.with_name(f"{path.stem}_continued{path.suffix}")
+    return candidate if candidate.is_file() else None
+
+
+def _profile_average_cache_key():
+    def normalized_range(value):
+        if value is None:
+            return None
+        return tuple(float(item) for item in value)
+
+    return (
+        str(PROFILE_AXIS),
+        normalized_range(PROFILE_X_RANGE),
+        normalized_range(PROFILE_Y_RANGE),
+        int(PROFILE_BIN_SIZE),
+        int(PROFILE_SMOOTHING_WINDOW),
+        float(PROFILE_GAUSSIAN_SIGMA),
+        bool(AREA_SUMMARY_TIME_AVERAGE_SKIP_FIRST_FRAME),
+    )
+
+
+@functools.lru_cache(maxsize=16)
+def _load_time_averaged_profile_cached(source_path, profile_cache_key):
+    del profile_cache_key  # The key invalidates cached results when profile settings change.
+    source_path = Path(source_path)
+    metadata = load_brown_config_json(source_path, required=True)
+    with h5py.File(source_path, "r") as hf:
+        snapshots = hf.get("snapshots")
+        if snapshots is None:
+            return None
+        frame_count = min(
+            int(snapshots.shape[0]),
+            int(hf.attrs.get("frames_written", snapshots.shape[0])),
+        )
+        if frame_count < 1:
+            return None
+        saved_steps = np.asarray(read_saved_steps(hf)[:frame_count], dtype=np.int64)
+        first_index = 1 if AREA_SUMMARY_TIME_AVERAGE_SKIP_FIRST_FRAME and frame_count > 1 else 0
+        frame_indices = range(first_index, frame_count)
+        profiles = []
+        coordinates = None
+        axis_label = None
+        for frame_index in frame_indices:
+            frame_coordinates, frame_profile, frame_axis_label = compute_profile(
+                snapshots[frame_index],
+                metadata,
+            )
+            if coordinates is None:
+                coordinates = frame_coordinates
+                axis_label = frame_axis_label
+            elif not np.array_equal(coordinates, frame_coordinates):
+                return None
+            profiles.append(frame_profile)
+
+    if not profiles:
+        return None
+    return {
+        "coordinates": coordinates,
+        "profile": np.mean(np.asarray(profiles, dtype=np.float64), axis=0),
+        "axis_label": axis_label,
+        "source_path": str(source_path),
+        "frame_count": len(profiles),
+        "step_start": int(saved_steps[first_index]),
+        "step_end": int(saved_steps[-1]),
+    }
+
+
+def load_area_summary_time_average(h5_path):
+    """Load a continuation-frame concentration mean for opted-in presets."""
+    if not AREA_SUMMARY_TIME_AVERAGE or not AREA_SUMMARY_TIME_AVERAGE_USE_CONTINUED:
+        return None
+    source_path = _continued_profile_source(h5_path)
+    if source_path is None:
+        return None
+    try:
+        return _load_time_averaged_profile_cached(
+            str(source_path),
+            _profile_average_cache_key(),
+        )
+    except (OSError, KeyError, RuntimeError, ValueError, TypeError, json.JSONDecodeError):
+        # A companion may be incomplete or locked while the simulation is running.
+        return None
+
+
+def _transport_average_cache_key():
+    return (
+        bool(TRANSPORT_TIME_AVERAGE_SKIP_FIRST_FRAME),
+    )
+
+
+@functools.lru_cache(maxsize=16)
+def _load_transport_time_average_cached(source_path, cache_key):
+    """Return direct transport data averaged over a continuation timeline."""
+    del cache_key
+    analysis = analyze_transport(source_path)
+    time_values = np.asarray(analysis.get("time", []), dtype=float)
+    flux_profile = np.asarray(analysis.get("flux_profile", []), dtype=float)
+    net_flux = np.asarray(analysis.get("net_flux", []), dtype=float)
+    x_values = np.asarray(analysis.get("x", []), dtype=float)
+
+    if flux_profile.ndim != 2 or not len(x_values):
+        return None
+    if flux_profile.shape[1] != len(x_values) or len(time_values) != flux_profile.shape[0]:
+        return None
+
+    first_index = (
+        1
+        if TRANSPORT_TIME_AVERAGE_SKIP_FIRST_FRAME and len(time_values) > 1
+        else 0
+    )
+    if first_index >= len(time_values):
+        return None
+
+    # Keep the actual region widths when they were recorded. They allow the
+    # renderer to draw each measured regional value over its real x interval,
+    # instead of putting three ambiguous points at regional centres.
+    region_widths = np.asarray(analysis.get("region_widths", []), dtype=float)
+    if len(region_widths) != len(x_values):
+        region_widths = np.asarray(analysis.get("bin_widths", []), dtype=float)
+    if len(region_widths) != len(x_values):
+        region_widths = np.full(len(x_values), np.nan, dtype=float)
+
+    spatial_flux = np.nanmean(flux_profile[first_index:], axis=0)
+    temporal_mask = np.isfinite(time_values) & np.isfinite(net_flux)
+    temporal_mask[:first_index] = False
+    if not np.any(temporal_mask):
+        return None
+
+    return {
+        "method_key": analysis.get("method_key"),
+        "spatial_x": x_values,
+        "spatial_flux": spatial_flux,
+        "spatial_widths": region_widths,
+        "temporal_time": time_values[temporal_mask],
+        "temporal_flux": net_flux[temporal_mask],
+        "source_path": str(source_path),
+        "frame_count": int(np.sum(temporal_mask)),
+        "step_start": int(time_values[temporal_mask][0]),
+        "step_end": int(time_values[temporal_mask][-1]),
+    }
+
+
+def load_transport_time_average(h5_path):
+    """Load direct transport data from the matching continuation file."""
+    if not TRANSPORT_TIME_AVERAGE or not TRANSPORT_TIME_AVERAGE_USE_CONTINUED:
+        return None
+    source_path = _continued_profile_source(h5_path)
+    if source_path is None:
+        return None
+    try:
+        return _load_transport_time_average_cached(
+            str(source_path),
+            _transport_average_cache_key(),
+        )
+    except (OSError, KeyError, RuntimeError, ValueError, TypeError, json.JSONDecodeError):
+        # A continuation may still be written by the simulator. The selected
+        # base-file analysis remains a safe fallback for the GUI.
+        return None
 
 
 def rectangle_mask(shape, x_start, x_end, y_start=None, y_end=None):
@@ -1867,7 +2056,13 @@ def prepare_combined_base_cluster_positions(
     }
 
 
-def draw_area_summary_dots(axis, matrix, metadata, shake_mode=None):
+def draw_area_summary_dots(
+    axis,
+    matrix,
+    metadata,
+    shake_mode=None,
+    concentration_profile_override=None,
+):
     """Reconstruct area averages as a clean randomized dot field in matrix space."""
     rows, cols = matrix.shape
     axis.set_facecolor(AREA_SUMMARY_BACKGROUND_COLOR)
@@ -1886,10 +2081,32 @@ def draw_area_summary_dots(axis, matrix, metadata, shake_mode=None):
         )
     base_x_probabilities = None
     if concentration_mode == "saved_x_profile":
-        base_x_probabilities = compute_area_summary_base_x_profile(
-            matrix,
-            concentration_masks,
-        )
+        if concentration_profile_override is None:
+            base_x_probabilities = compute_area_summary_base_x_profile(
+                matrix,
+                concentration_masks,
+            )
+        else:
+            override_coordinates = np.asarray(
+                concentration_profile_override["coordinates"],
+                dtype=np.float64,
+            )
+            override_profile = np.asarray(
+                concentration_profile_override["profile"],
+                dtype=np.float64,
+            )
+            if (
+                override_coordinates.ndim != 1
+                or override_profile.ndim != 1
+                or len(override_coordinates) != len(override_profile)
+                or len(override_coordinates) == 0
+            ):
+                raise ValueError("The averaged concentration profile is invalid")
+            base_x_probabilities = np.interp(
+                np.arange(cols, dtype=np.float64),
+                override_coordinates,
+                np.clip(override_profile, 0.0, 1.0),
+            )
     elif concentration_mode == "linear_x":
         left_probability, right_probability = (
             validate_area_summary_linear_concentration()
@@ -2455,6 +2672,7 @@ def draw_main_panel(
     metadata,
     area_summary_shake_mode=None,
     heatmap_baseline_matrix=None,
+    concentration_profile_override=None,
 ):
     rows, cols = matrix.shape
 
@@ -2501,6 +2719,7 @@ def draw_main_panel(
             matrix,
             metadata,
             shake_mode=area_summary_shake_mode,
+            concentration_profile_override=concentration_profile_override,
         )
     else:
         raise ValueError(
@@ -2518,7 +2737,11 @@ def draw_main_panel(
     if RENDER_MODE == "area_summary_dots":
         concentration_title = {
             "area_average": None,
-            "saved_x_profile": "Saved x-profile",
+            "saved_x_profile": (
+                "Temporal mean x-profile"
+                if concentration_profile_override is not None
+                else "Saved x-profile"
+            ),
             "linear_x": "Linear x-profile",
         }.get(str(AREA_SUMMARY_CONCENTRATION_MODE))
         if title and concentration_title is not None:
@@ -2528,6 +2751,14 @@ def draw_main_panel(
     axis.set_xlabel(dimension_label_with_pixels(X_LABEL, cols))
     axis.set_ylabel(dimension_label_with_pixels(Y_LABEL, rows))
     apply_l_fraction_ticks(axis, x_length=cols, y_length=rows)
+
+    if RENDER_MODE == "area_summary_dots" and SHOW_AREA_SUMMARY_PROFILE_OVERLAY:
+        draw_area_summary_profile_overlay(
+            axis,
+            matrix,
+            metadata,
+            concentration_profile_override=concentration_profile_override,
+        )
 
     if SHOW_REGION_ANNOTATIONS:
         for region in build_annotation_regions(matrix.shape, metadata):
@@ -2564,6 +2795,80 @@ def draw_main_panel(
 
     if SHOW_LEGEND and SHOW_SITE_STATE_LEGEND:
         draw_site_state_legend(axis)
+
+
+def draw_area_summary_profile_overlay(
+    axis,
+    matrix,
+    metadata,
+    concentration_profile_override=None,
+):
+    """Overlay the measured x-concentration profile on an area-summary field."""
+    if PROFILE_AXIS != "x":
+        raise ValueError(
+            "AREA_SUMMARY_PROFILE_OVERLAY currently requires PROFILE_AXIS='x'"
+        )
+
+    if concentration_profile_override is None:
+        coordinates, profile, _ = compute_profile(matrix, metadata)
+    else:
+        coordinates = np.asarray(
+            concentration_profile_override["coordinates"],
+            dtype=np.float64,
+        )
+        profile = np.asarray(
+            concentration_profile_override["profile"],
+            dtype=np.float64,
+        )
+    if len(coordinates) == 0:
+        return
+
+    overlay_axis = axis.twinx()
+    overlay_axis.set_zorder(axis.get_zorder() + 1)
+    overlay_axis.patch.set_visible(False)
+    overlay_axis.set_xlim(axis.get_xlim())
+    overlay_axis.set_ylim(0, 100)
+    overlay_axis.plot(
+        coordinates,
+        profile * 100,
+        color=AREA_SUMMARY_PROFILE_OVERLAY_COLOR,
+        linewidth=AREA_SUMMARY_PROFILE_OVERLAY_WIDTH,
+        alpha=AREA_SUMMARY_PROFILE_OVERLAY_ALPHA,
+        linestyle=AREA_SUMMARY_PROFILE_OVERLAY_STYLE,
+        label=AREA_SUMMARY_PROFILE_OVERLAY_LABEL,
+        path_effects=[
+            path_effects.Stroke(
+                linewidth=AREA_SUMMARY_PROFILE_OVERLAY_WIDTH + 2.0,
+                foreground="white",
+            ),
+            path_effects.Normal(),
+        ],
+        clip_on=False,
+        zorder=20,
+    )
+    if AREA_SUMMARY_PROFILE_OVERLAY_SHOW_RIGHT_AXIS:
+        overlay_axis.set_ylabel(
+            "Concentration (%)",
+            color=AREA_SUMMARY_PROFILE_OVERLAY_AXIS_COLOR,
+        )
+        overlay_axis.tick_params(
+            axis="y",
+            colors=AREA_SUMMARY_PROFILE_OVERLAY_AXIS_COLOR,
+        )
+        overlay_axis.set_yticks([0, 25, 50, 75, 100])
+    else:
+        overlay_axis.set_yticks([])
+        overlay_axis.spines["right"].set_visible(False)
+    if SHOW_LEGEND:
+        overlay_axis.legend(
+            loc=AREA_SUMMARY_PROFILE_OVERLAY_LEGEND_LOCATION,
+            bbox_to_anchor=AREA_SUMMARY_PROFILE_OVERLAY_LEGEND_ANCHOR,
+            fontsize=AREA_SUMMARY_PROFILE_OVERLAY_LEGEND_FONT_SIZE,
+            frameon=True,
+            facecolor="#FFFFFF",
+            edgecolor="#707070",
+            framealpha=0.90,
+        )
 
 
 def draw_concentration_profile(axis, matrix, metadata):
@@ -2685,6 +2990,7 @@ def draw_net_flux(axis, transport_analysis, saved_step):
     net_flux = np.asarray(transport_analysis["net_flux"], dtype=float)
     flux_low = np.asarray(transport_analysis["flux_low"], dtype=float)
     flux_high = np.asarray(transport_analysis["flux_high"], dtype=float)
+    is_legacy = transport_analysis.get("method_key") == "legacy_signed_displacement"
 
     # A file sparsified to its first and last snapshots contains one measured
     # interval-average flux. Draw that value across its interval instead of as
@@ -2700,7 +3006,7 @@ def draw_net_flux(axis, transport_analysis, saved_step):
         flux_low = np.full(2, interval_low, dtype=float)
         flux_high = np.full(2, interval_high, dtype=float)
 
-    axis.fill_between(
+    flux_band = axis.fill_between(
         time_values,
         flux_low,
         flux_high,
@@ -2708,32 +3014,41 @@ def draw_net_flux(axis, transport_analysis, saved_step):
         alpha=0.35,
         label="10th–90th spatial percentile",
     )
+    if is_legacy:
+        flux_band.remove()
     axis.plot(
         time_values,
         net_flux,
         color=NET_FLUX_COLOR,
         linewidth=1.7,
-        label="Net flux",
+        label="Mean signed x-motion" if is_legacy else "Net flux",
         clip_on=False,
         zorder=3,
     )
     axis.axhline(0, color="#505050", linewidth=0.8)
     axis.axvline(saved_step, color="#000000", linestyle="--", linewidth=1)
-    axis.set_title("Net Diffusive Flux")
+    axis.set_title(
+        "Domain-averaged signed x-motion"
+        if is_legacy
+        else "Net Diffusive Flux"
+    )
     axis.set_xlabel("Step")
-    axis.set_ylabel("H particles / step\n(+x is positive)")
+    axis.set_ylabel(
+        "Signed dx / step / x-column\n(+x is positive)"
+        if is_legacy
+        else "H particles / step\n(+x is positive)"
+    )
     if SHOW_LEGEND:
         axis.legend(fontsize=8)
 
 
 def draw_transport_profile(axis, transport_analysis, saved_step):
-    """Show regional transport rate across x, with its time history inset.
+    """Show measured transport over x and time on one shared flux scale.
 
     The recorded quantity is a signed net flux per region width, not the
-    instantaneous velocity of an individual hydrogen particle. At steady
-    state the profile should become approximately level across the connected
-    transport path; a trap changes the magnitude and local noise, while
-    continuity still constrains the through-flow.
+    instantaneous velocity of an individual hydrogen particle. The bottom
+    axis is the real matrix x coordinate. The top axis is simulation step;
+    both curves use the same y-axis so their flux levels can be compared.
     """
     if not transport_analysis:
         axis.text(
@@ -2747,14 +3062,40 @@ def draw_transport_profile(axis, transport_analysis, saved_step):
         axis.set_axis_off()
         return
 
-    x_values = np.asarray(transport_analysis.get("x", []), dtype=float)
-    flux_profile = np.asarray(transport_analysis.get("flux_profile", []), dtype=float)
-    time_values = np.asarray(transport_analysis.get("time", []), dtype=float)
-    net_flux = np.asarray(transport_analysis.get("net_flux", []), dtype=float)
-    flux_low = np.asarray(transport_analysis.get("flux_low", []), dtype=float)
-    flux_high = np.asarray(transport_analysis.get("flux_high", []), dtype=float)
+    if transport_analysis.get("method_key") == "legacy_signed_displacement":
+        axis.text(
+            0.5,
+            0.5,
+            "This legacy file has no x-interface crossing counts.\n"
+            "Its source-region displacement values are not a spatial flux profile.",
+            ha="center",
+            va="center",
+            transform=axis.transAxes,
+        )
+        axis.set_axis_off()
+        return
 
-    if flux_profile.ndim != 2 or len(x_values) != flux_profile.shape[1]:
+    if "spatial_flux" in transport_analysis:
+        x_values = np.asarray(transport_analysis.get("spatial_x", []), dtype=float)
+        spatial_flux = np.asarray(transport_analysis.get("spatial_flux", []), dtype=float)
+        widths = np.asarray(transport_analysis.get("spatial_widths", []), dtype=float)
+        time_values = np.asarray(transport_analysis.get("temporal_time", []), dtype=float)
+        net_flux = np.asarray(transport_analysis.get("temporal_flux", []), dtype=float)
+    else:
+        x_values = np.asarray(transport_analysis.get("x", []), dtype=float)
+        flux_profile = np.asarray(transport_analysis.get("flux_profile", []), dtype=float)
+        time_values = np.asarray(transport_analysis.get("time", []), dtype=float)
+        net_flux = np.asarray(transport_analysis.get("net_flux", []), dtype=float)
+        widths = np.asarray(transport_analysis.get("region_widths", []), dtype=float)
+        if flux_profile.ndim != 2 or len(x_values) != flux_profile.shape[1]:
+            spatial_flux = np.asarray([])
+        elif len(time_values) == flux_profile.shape[0]:
+            selected_index = int(np.argmin(np.abs(time_values - float(saved_step))))
+            spatial_flux = flux_profile[selected_index]
+        else:
+            spatial_flux = flux_profile[-1]
+
+    if len(x_values) == 0 or len(spatial_flux) != len(x_values):
         axis.text(
             0.5,
             0.5,
@@ -2766,62 +3107,125 @@ def draw_transport_profile(axis, transport_analysis, saved_step):
         axis.set_axis_off()
         return
 
-    if len(time_values) == flux_profile.shape[0]:
-        selected_index = int(np.argmin(np.abs(time_values - float(saved_step))))
+    order = np.argsort(x_values)
+    x_values = x_values[order]
+    spatial_flux = spatial_flux[order]
+    if len(widths) == len(order):
+        widths = widths[order]
     else:
-        selected_index = flux_profile.shape[0] - 1
-    selected_profile = flux_profile[selected_index]
+        widths = np.full(len(x_values), np.nan, dtype=float)
 
-    axis.plot(
-        x_values,
-        selected_profile,
-        color=TRANSPORT_PROFILE_COLOR,
-        linewidth=2.0,
-        marker="o",
-        markersize=4.5,
-        markerfacecolor=TRANSPORT_PROFILE_MARKER_COLOR,
-        markeredgecolor="white",
-        markeredgewidth=0.6,
-        label="Regional net flux J(x)",
-        clip_on=False,
-        zorder=3,
-    )
-    axis.axhline(0, color="#505050", linewidth=0.8)
-    axis.set_title("Transport rate across the domain")
-    axis.set_xlabel("Matrix x (regional centers)")
-    axis.set_ylabel("Net flux per region width\n(H particles / step)")
-    axis.grid(alpha=0.22)
-    if len(x_values):
-        axis.set_xlim(x_values[0], x_values[-1])
-    if SHOW_LEGEND:
-        axis.legend(fontsize=8, loc="upper left")
+    finite_widths = widths[np.isfinite(widths) & (widths > 0)]
+    fallback_width = float(np.median(finite_widths)) if len(finite_widths) else 1.0
+    widths = np.where(np.isfinite(widths) & (widths > 0), widths, fallback_width)
+    edges = np.empty(len(x_values) + 1, dtype=float)
+    edges[:-1] = x_values - widths / 2
+    edges[-1] = x_values[-1] + widths[-1] / 2
+    if np.any(np.diff(edges) <= 0):
+        # This only applies to malformed/custom transport metadata. A line
+        # at the measured x positions is safer than drawing folded regions.
+        edges = None
 
-    # Position and simulation time are different quantities, so a small
-    # temporal inset is more honest and easier to read than a second x-axis
-    # pretending that the two scales are interchangeable.
-    inset = axis.inset_axes([0.48, 0.58, 0.48, 0.34])
-    inset.set_facecolor(TRANSPORT_PROFILE_INSET_FACE_COLOR)
-    inset.patch.set_alpha(TRANSPORT_PROFILE_INSET_ALPHA)
-    if len(time_values) and len(net_flux) == len(time_values):
-        inset.fill_between(
-            time_values,
-            flux_low,
-            flux_high,
-            color=NET_FLUX_BAND_COLOR,
-            alpha=0.35,
-            linewidth=0,
+    is_interface_profile = transport_analysis.get("method_key") == "interface_crossings"
+    if is_interface_profile:
+        spatial_line, = axis.plot(
+            x_values,
+            spatial_flux,
+            color=TRANSPORT_PROFILE_COLOR,
+            linewidth=2.0,
+            label="Direct x-interface flux J(x)",
+            zorder=3,
         )
-        inset.plot(time_values, net_flux, color=NET_FLUX_COLOR, linewidth=1.4)
-        inset.axvline(float(saved_step), color="#303030", linestyle="--", linewidth=0.8)
-        inset.axhline(0, color="#505050", linewidth=0.6)
-        inset.set_title("Flux history", fontsize=8, pad=2)
-        inset.set_xlabel("Step", fontsize=7, labelpad=1)
-        inset.set_ylabel("J", fontsize=7, labelpad=1)
-        inset.tick_params(axis="both", labelsize=7)
-        inset.grid(alpha=0.18)
+        axis.set_xlim(x_values[0], x_values[-1])
+    elif edges is None:
+        spatial_line, = axis.plot(
+            x_values,
+            spatial_flux,
+            color=TRANSPORT_PROFILE_COLOR,
+            linewidth=2.2,
+            marker="o",
+            markersize=4.5,
+            markerfacecolor=TRANSPORT_PROFILE_MARKER_COLOR,
+            markeredgecolor="white",
+            markeredgewidth=0.6,
+            label="Measured regional flux J(x)",
+            zorder=3,
+        )
     else:
-        inset.text(0.5, 0.5, "No flux history", ha="center", va="center", fontsize=8)
-        inset.set_axis_off()
+        step_values = np.r_[spatial_flux, spatial_flux[-1]]
+        spatial_line, = axis.step(
+            edges,
+            step_values,
+            where="post",
+            color=TRANSPORT_PROFILE_COLOR,
+            linewidth=2.4,
+            label="Measured regional flux J(x)",
+            zorder=3,
+        )
+        axis.plot(
+            x_values,
+            spatial_flux,
+            linestyle="none",
+            marker="o",
+            markersize=4.5,
+            markerfacecolor=TRANSPORT_PROFILE_MARKER_COLOR,
+            markeredgecolor="white",
+            markeredgewidth=0.6,
+            color=TRANSPORT_PROFILE_MARKER_COLOR,
+            zorder=4,
+        )
+
+    axis.axhline(0, color="#505050", linewidth=0.8)
+    axis.set_title("Transport flux across x")
+    axis.set_xlabel("Matrix x position")
+    axis.set_ylabel("Net flux J\n(H particles / step / x-column)")
+    axis.grid(alpha=0.22)
+    if is_interface_profile:
+        axis.set_xlim(x_values[0], x_values[-1])
+    elif edges is not None:
+        axis.set_xlim(edges[0], edges[-1])
+    elif len(x_values):
+        axis.set_xlim(x_values[0], x_values[-1])
+
+    temporal_axis = axis.twiny()
+    temporal_axis.set_xlabel("Simulation step", color=TRANSPORT_PROFILE_TEMPORAL_COLOR)
+    temporal_axis.tick_params(axis="x", colors=TRANSPORT_PROFILE_TEMPORAL_COLOR)
+    temporal_line = None
+    finite_time = np.isfinite(time_values) & np.isfinite(net_flux)
+    if np.any(finite_time):
+        temporal_line, = temporal_axis.plot(
+            time_values[finite_time],
+            net_flux[finite_time],
+            color=TRANSPORT_PROFILE_TEMPORAL_COLOR,
+            linewidth=1.8,
+            label="Domain net flux J(t)",
+            zorder=2,
+        )
+        temporal_axis.set_xlim(
+            float(time_values[finite_time][0]),
+            float(time_values[finite_time][-1]),
+        )
+        time_start = float(time_values[finite_time][0])
+        time_end = float(time_values[finite_time][-1])
+        if time_start <= float(saved_step) <= time_end:
+            temporal_axis.axvline(
+                float(saved_step),
+                color=TRANSPORT_PROFILE_TEMPORAL_COLOR,
+                linestyle="--",
+                linewidth=0.9,
+                alpha=0.7,
+            )
+    else:
+        temporal_axis.set_xlim(0, 1)
+    temporal_axis.grid(False)
+
+    if SHOW_LEGEND:
+        handles = [spatial_line]
+        labels = [spatial_line.get_label()]
+        if temporal_line is not None:
+            handles.append(temporal_line)
+            labels.append(temporal_line.get_label())
+        axis.legend(handles, labels, fontsize=9, loc="upper left")
 
 
 def match_side_panel_heights_to_main(fig, axes_by_panel):
@@ -2857,7 +3261,18 @@ def create_figure(
     area_summary_shake_mode=None,
     heatmap_baseline_matrix=None,
     managed=True,
+    h5_path=None,
+    concentration_profile_override=None,
 ):
+    if concentration_profile_override is None and h5_path is not None:
+        concentration_profile_override = load_area_summary_time_average(h5_path)
+    if h5_path is not None and SHOW_TRANSPORT_PROFILE_PANEL:
+        averaged_transport = load_transport_time_average(h5_path)
+        if averaged_transport is not None:
+            transport_analysis = averaged_transport
+    elif transport_analysis is None and h5_path is not None:
+        transport_analysis = load_transport_time_average(h5_path)
+
     panels = []
     if SHOW_MAIN_PANEL:
         panels.append(("main", 5))
@@ -2903,6 +3318,7 @@ def create_figure(
                 metadata,
                 area_summary_shake_mode=area_summary_shake_mode,
                 heatmap_baseline_matrix=heatmap_baseline_matrix,
+                concentration_profile_override=concentration_profile_override,
             )
         elif panel_name == "profile":
             draw_concentration_profile(axis, matrix, metadata)
@@ -2990,7 +3406,9 @@ def discover_batch_diagram_presets():
     discovered = {
         path.stem
         for path in diagram_presets_dir().glob("*.py")
-        if path.stem != "all_presets" and not path.stem.startswith("_")
+        if path.stem != "all_presets"
+        and not path.stem.startswith("_")
+        and not path.stem.startswith("cli_only_")
     }
     ordered = [
         preset_name
@@ -3136,6 +3554,7 @@ def render_all_diagram_presets():
                 transport_analysis,
                 area_summary_shake_mode=shake_mode,
                 heatmap_baseline_matrix=heatmap_baseline_matrix,
+                h5_path=h5_path,
             )
             fig.savefig(
                 output_path,
@@ -3160,7 +3579,40 @@ def render_all_diagram_presets():
     return saved_paths
 
 
-def main():
+def run_cli_only_preset(preset_file_stem):
+    """Run a deliberately non-GUI preset with its own rendering function."""
+    module, preset_path = load_diagram_preset_module(preset_file_stem)
+    if not getattr(module, "CLI_ONLY", False):
+        raise RuntimeError(f"Preset is not marked CLI_ONLY: {preset_path}")
+    render_cli = getattr(module, "render_cli", None)
+    if not callable(render_cli):
+        raise RuntimeError(
+            f"CLI-only diagram preset {preset_path} must define render_cli(output_dir)."
+        )
+
+    saved_paths = [Path(path) for path in render_cli(results_dir())]
+    for saved_path in saved_paths:
+        print(f"Saved diagram: {saved_path}")
+    return saved_paths
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(
+        description="Render a P6 Brownian-motion diagram preset."
+    )
+    parser.add_argument(
+        "--preset",
+        help="Diagram preset file stem. Omit to use DIAGRAM_PRESET in this file.",
+    )
+    args = parser.parse_args([] if argv is None else argv)
+
+    if args.preset:
+        selected_module, _ = load_diagram_preset_module(args.preset)
+        if getattr(selected_module, "CLI_ONLY", False):
+            run_cli_only_preset(args.preset)
+            return
+        apply_diagram_preset(args.preset)
+
     if BATCH_RENDER_ALL_PRESETS:
         render_all_diagram_presets()
         return
@@ -3187,6 +3639,7 @@ def main():
             transport_analysis,
             area_summary_shake_mode=shake_mode,
             heatmap_baseline_matrix=heatmap_baseline_matrix,
+            h5_path=h5_path,
         )
         figures.append(fig)
 
@@ -3206,4 +3659,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    main(sys.argv[1:])

@@ -177,7 +177,7 @@ class GuiTests(unittest.TestCase):
                 self.app.processEvents()
                 self.assertTrue(ready.exists())
                 self.assertEqual(window.preset_combo.count(), 7)
-                self.assertEqual(len(window.field_widgets), 45)
+                self.assertEqual(len(window.field_widgets), 50)
                 thickness = window.field_widgets["simulation.reference_length_mm"][0]
                 thickness.setText("0.8")
                 thickness.editingFinished.emit()

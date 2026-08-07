@@ -5,15 +5,17 @@ This replaces the old centre-of-mass "diffusion speed" calculation.  A centre
 of mass is dominated by finite-particle jitter, and differentiating its MSD in
 short moving windows does not measure directional transport.
 
-Two data paths are supported:
+Three data paths are supported:
 
-1. New HDF5 files can contain ``/transport/net_x_displacement``.  This is the
-   signed molecular x-displacement accumulated between saved frames.  Dividing
-   it by elapsed steps and sampled x-width gives the spatially averaged net
-   crossing flux directly.
+1. Current HDF5 files contain ``/transport/interface_net_crossings``: directly
+   counted signed particle crossings through every vertical x-interface.
+2. Older recorded-transport files contain ``/transport/net_x_displacement``.
+   This is signed hop displacement grouped by each hop's source region. Its
+   domain sum is a directional-transport diagnostic, but its regional values
+   are not local cross-sectional fluxes.
    Publication-optimized files may keep a full independent transport timeline
    in ``/transport/saved_steps`` while retaining fewer full matrix snapshots.
-2. Legacy files contain only occupancy snapshots.  Their steady through-flow
+3. Legacy files contain only occupancy snapshots.  Their steady through-flow
    is not observable from mass balance alone, so an effective diffusivity is
    fitted from the transient relaxation of coarse concentration profiles.
    Signed flux is then estimated with Fick's first law,
@@ -141,16 +143,26 @@ def load_binned_concentration(h5_path, frame_stride=1):
             )
 
         transport_group = hf.get("transport")
-        required_transport_datasets = {
+        required_legacy_transport_datasets = {
             "net_x_displacement",
             "interval_steps",
             "region_widths",
             "region_centers_x",
         }
-        has_recorded_transport = (
+        required_interface_transport_datasets = {
+            "interface_net_crossings",
+            "interface_x",
+            "interval_steps",
+        }
+        has_interface_transport = (
             transport_group is not None
-            and required_transport_datasets.issubset(transport_group.keys())
+            and required_interface_transport_datasets.issubset(transport_group.keys())
         )
+        has_legacy_transport = (
+            transport_group is not None
+            and required_legacy_transport_datasets.issubset(transport_group.keys())
+        )
+        has_recorded_transport = has_interface_transport or has_legacy_transport
         has_independent_transport_timeline = (
             has_recorded_transport and "saved_steps" in transport_group
         )
@@ -191,7 +203,12 @@ def load_binned_concentration(h5_path, frame_stride=1):
 
         recorded_transport = None
         if has_recorded_transport:
-            all_displacement = transport_group["net_x_displacement"][:]
+            transport_value_name = (
+                "interface_net_crossings"
+                if has_interface_transport
+                else "net_x_displacement"
+            )
+            all_displacement = transport_group[transport_value_name][:]
             all_interval_steps = transport_group["interval_steps"][:]
 
             if has_independent_transport_timeline:
@@ -263,12 +280,17 @@ def load_binned_concentration(h5_path, frame_stride=1):
                     )
                     previous_frame = int(frame_index)
             recorded_transport = {
+                "kind": "interface_crossings" if has_interface_transport else "legacy_displacement",
                 "time": transport_time,
-                "net_x_displacement": displacement,
                 "interval_steps": interval_steps,
-                "region_widths": transport_group["region_widths"][:],
-                "region_centers_x": transport_group["region_centers_x"][:],
             }
+            if has_interface_transport:
+                recorded_transport["interface_net_crossings"] = displacement
+                recorded_transport["interface_x"] = transport_group["interface_x"][:]
+            else:
+                recorded_transport["net_x_displacement"] = displacement
+                recorded_transport["region_widths"] = transport_group["region_widths"][:]
+                recorded_transport["region_centers_x"] = transport_group["region_centers_x"][:]
 
         if recorded_transport is None and len(saved_steps) < 3:
             raise RuntimeError(
@@ -447,6 +469,70 @@ def _smooth_time_series(values, sigma):
     return gaussian_filter(values, sigma=float(sigma), mode="nearest")
 
 
+def _analysis_from_interface_transport(profile_data):
+    recorded = profile_data["recorded_transport"]
+    transport_time = np.asarray(recorded["time"], dtype=np.float64)
+    crossings = np.asarray(recorded["interface_net_crossings"], dtype=np.float64)
+    interval_steps = np.asarray(recorded["interval_steps"], dtype=np.float64)
+    interface_x = np.asarray(recorded["interface_x"], dtype=np.float64)
+
+    if crossings.ndim != 2 or crossings.shape[1] != len(interface_x):
+        raise RuntimeError("Interface-crossing transport datasets have incompatible shapes.")
+    if len(transport_time) != len(crossings) or len(interval_steps) != len(crossings):
+        raise RuntimeError("Interface-crossing timeline and interval arrays do not align.")
+
+    interface_flux = np.full_like(crossings, np.nan, dtype=np.float64)
+    np.divide(
+        crossings,
+        interval_steps[:, None],
+        out=interface_flux,
+        where=interval_steps[:, None] > 0,
+    )
+    finite_rows = interval_steps > 0
+    if np.any(finite_rows) and TEMPORAL_SMOOTH_SIGMA_FRAMES > 0:
+        interface_flux[finite_rows] = gaussian_filter(
+            interface_flux[finite_rows],
+            sigma=(float(TEMPORAL_SMOOTH_SIGMA_FRAMES), 0.0),
+            mode="nearest",
+        )
+
+    metadata = profile_data["metadata"]
+    columns = int(metadata.get("x", round(interface_x[-1] + 0.5)))
+    boundary_width = int(metadata.get("sink_source_thickness_used", 0))
+    interior = (
+        (interface_x >= boundary_width - 0.5)
+        & (interface_x <= columns - boundary_width - 0.5)
+    )
+    if not np.any(interior):
+        interior = np.ones(len(interface_x), dtype=bool)
+
+    interior_flux = interface_flux[:, interior]
+    net_flux = np.full(len(interface_flux), np.nan, dtype=np.float64)
+    flux_low = np.full(len(interface_flux), np.nan, dtype=np.float64)
+    flux_high = np.full(len(interface_flux), np.nan, dtype=np.float64)
+    net_flux[finite_rows] = np.mean(interior_flux[finite_rows], axis=1)
+    flux_low[finite_rows] = np.quantile(interior_flux[finite_rows], 0.10, axis=1)
+    flux_high[finite_rows] = np.quantile(interior_flux[finite_rows], 0.90, axis=1)
+
+    return {
+        "method": "direct signed x-interface crossings",
+        "method_key": "interface_crossings",
+        "time": transport_time,
+        "concentration_time": profile_data["time"],
+        "x": interface_x,
+        "concentration_x": profile_data["x"],
+        "concentration": profile_data["concentration"],
+        "flux_profile": interface_flux,
+        "net_flux": net_flux,
+        "flux_low": flux_low,
+        "flux_high": flux_high,
+        "effective_diffusivity": np.nan,
+        "relative_fit_spread": np.nan,
+        "fit_improvement": np.nan,
+        "lag_fits": [],
+    }
+
+
 def _analysis_from_recorded_transport(profile_data):
     recorded = profile_data["recorded_transport"]
     transport_time = np.asarray(recorded["time"], dtype=np.float64)
@@ -496,14 +582,15 @@ def _analysis_from_recorded_transport(profile_data):
             flux_high[frame_index] = np.quantile(finite_values, 0.90)
 
     return {
-        "method": "recorded signed molecular crossings",
-        "method_key": "recorded",
+        "method": "legacy source-region signed displacement",
+        "method_key": "legacy_signed_displacement",
         "time": transport_time,
         "concentration_time": profile_data["time"],
         "x": np.asarray(recorded["region_centers_x"], dtype=np.float64),
         "concentration_x": profile_data["x"],
         "concentration": profile_data["concentration"],
         "flux_profile": region_flux,
+        "region_widths": region_widths,
         "net_flux": net_flux,
         "flux_low": flux_low,
         "flux_high": flux_high,
@@ -565,6 +652,7 @@ def _analysis_from_profiles(profile_data, imposed_diffusivity=None):
         "concentration_x": profile_data["x"],
         "concentration": concentration,
         "flux_profile": flux_profile,
+        "bin_widths": profile_data["bin_widths"],
         "net_flux": net_flux,
         "flux_low": flux_low,
         "flux_high": flux_high,
@@ -579,7 +667,10 @@ def analyze_transport(
 ):
     h5_path = Path(h5_path)
     profile_data = load_binned_concentration(h5_path, frame_stride=frame_stride)
-    if profile_data["recorded_transport"] is not None:
+    recorded_transport = profile_data["recorded_transport"]
+    if recorded_transport is not None and recorded_transport.get("kind") == "interface_crossings":
+        analysis = _analysis_from_interface_transport(profile_data)
+    elif recorded_transport is not None:
         analysis = _analysis_from_recorded_transport(profile_data)
     else:
         analysis = _analysis_from_profiles(

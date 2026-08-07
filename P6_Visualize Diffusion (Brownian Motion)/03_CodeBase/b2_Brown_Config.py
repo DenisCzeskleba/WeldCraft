@@ -21,7 +21,7 @@ x = 1300  # Width (x)
 y = 650  # Height (y)
 
 # Number of simulation steps. For continuation, this is the number of additional steps.
-steps = 150000000000  # use 10_000_000 notation, or 10000000. DO NOT use 100.000.000
+steps = 2000000000  # use 10_000_000 notation, or 10000000. DO NOT use 100.000.000
 max_radius_to_jump = 10
 
 # ---------------------- Matrix Source ---------------------- #
@@ -71,7 +71,7 @@ TRAP_LAYER_WIDTH = 100
 
 USE_SINK_SOURCE = True
 SINK_SOURCE_THICKNESS = 10
-SOURCE_SIDE = 'left'  # Options: "left" or "right"
+SOURCE_SIDE = 'right'  # Options: "left" or "right"
 num_subregions = 1
 
 # ---------------------- Movement Probability ---------------------- #
@@ -99,11 +99,11 @@ AREA_CHARACTERISTICS = {'a': {'affinity': 1.0, 'mobility': 1.0},
 # relative to 02_Results. Continuation always writes h5_filename as a separate file.
 # New checkpoint-enabled files resume exactly; older/interrupted files resume from
 # their last valid snapshot with a fresh RNG and record that they are statistical.
-RESUME_FROM_H5 = (((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((None)))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))
+RESUME_FROM_H5 = ((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((None))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))
 random_seed = 42  # None selects a fresh seed per run; set an integer to reproduce a run exactly.
 random_size = 10 ** 7  # Deprecated forced_jump only: number of precomputed random values.
 max_ram_mb = 2000  # Adjustable memory target for HDF5 frame buffering
-save_every_steps = 10000000
+save_every_steps = 100000000
 delete_old_h5 = True
 
 
@@ -129,7 +129,7 @@ NET_FLUX_COLOR = '#4A148C'
 NET_FLUX_BAND_COLOR = '#B39DDB'
 
 # ---------------------- Output Files ---------------------- #
-h5_filename = 'Empty_but_traps_from_0_to_100b.h5'
+h5_filename = 'Empty_but_traps_from_0_to_150b_continued.h5'
 animation_output_folder = "Saved Animations"
 animation_filename = 'brownian_motion_animation.mp4'
 
@@ -155,6 +155,32 @@ ffmpeg_path = (
 # direct-script users can inspect or edit them as needed.
 GUI_DISABLE_OVERWRITE_WARNING = False
 GUI_FIGURE_FILENAME = 'brownian_diagram.png'
-GUI_DIAGRAM_PRESET = 'area_summary_transient_profile'
+GUI_DIAGRAM_PRESET = 'option_3_concentration'
 GUI_DIAGRAM_OVERRIDES = {'area_summary': {'RENDER_MODE': 'concentration_heatmap'},
- 'depletion_heatmap': {'SHOW_NET_FLUX_PANEL': False, 'HEATMAP_MODE': 'change_from_initial_setup'}}
+ 'depletion_heatmap': {'SHOW_NET_FLUX_PANEL': False, 'HEATMAP_MODE': 'change_from_initial_setup'},
+ 'transport_profile': {'PROFILE_AXIS': 'x', 'PROFILE_X_RANGE': None},
+ 'area_summary_transient_profile': {'AREA_SUMMARY_CONCENTRATION_BIN_WIDTH': 40,
+                                    'AREA_SUMMARY_LINEAR_CONCENTRATION': (100.0, 0.0),
+                                    'AREA_SUMMARY_SHAKE_MODE': 'clustered',
+                                    'AREA_SUMMARY_MIN_DOT_SPACING': 7.0,
+                                    'AREA_SUMMARY_CONCENTRATION_MODE': 'saved_x_profile',
+                                    'AREA_SUMMARY_DENSITY_MODE': 'available_sites',
+                                    'AREA_SUMMARY_TOTAL_DOTS': 6500,
+                                    'DOT_ALPHA_HYDROGEN': 1.0,
+                                    'DOT_ALPHA_AVAILABLE': 1.0,
+                                    'DOT_SIZE_HYDROGEN': 8.0,
+                                    'DOT_SIZE_AVAILABLE': 8.0,
+                                    'AREA_SUMMARY_CLUSTER_SCOPE': 'combined_a_b',
+                                    'AREA_SUMMARY_DOT_SIZE': 18.0,
+                                    'AREA_SUMMARY_DOT_ALPHA': 0.96,
+                                    'AREA_SUMMARY_SHOW_HALF_DIVIDER': False,
+                                    'AREA_SUMMARY_SHOW_AREA_LABELS': False,
+                                    'AREA_SUMMARY_SHOW_EXPLANATION': False,
+                                    'AREA_SUMMARY_SHOW_SOURCE_SINK_BANDS': False,
+                                    'AREA_SUMMARY_CLUSTER_COUNT': 16,
+                                    'RENDER_MODE': 'area_summary_dots',
+                                    'COLOR_AVAILABLE_SPOT': '#2166AC',
+                                    'COLOR_EMPTY': '#F2F2F2',
+                                    'AREA_SUMMARY_POSITION_MODE': 'even_hex'},
+ 'default': {'PROFILE_GAUSSIAN_SIGMA': 1.5},
+ 'option_3_concentration': {'SHOW_LEGEND': True}}

@@ -472,7 +472,9 @@ def restore_gui_defaults(current: dict | None = None) -> dict:
 def discover_diagram_presets() -> list[str]:
     return sorted(
         path.stem for path in DIAGRAM_PRESETS_DIR.glob("*.py")
-        if path.stem != "all_presets" and not path.stem.startswith("_")
+        if path.stem != "all_presets"
+        and not path.stem.startswith("_")
+        and not path.stem.startswith("cli_only_")
     )
 
 
@@ -507,6 +509,7 @@ def save_diagram_preset(display_name: str, settings: dict, preset_directory=DIAG
             "SHOW_CONCENTRATION_PROFILE_PANEL",
             "SHOW_HEATMAP_PANEL",
             "SHOW_NET_FLUX_PANEL",
+            "SHOW_TRANSPORT_PROFILE_PANEL",
         )
     ):
         raise P6ConfigError("At least one diagram panel must remain enabled")
@@ -872,6 +875,7 @@ def load_diagram_settings(preset_name: str, overrides=None) -> dict:
             "SHOW_CONCENTRATION_PROFILE_PANEL",
             "SHOW_HEATMAP_PANEL",
             "SHOW_NET_FLUX_PANEL",
+            "SHOW_TRANSPORT_PROFILE_PANEL",
         )
     ):
         raise P6ConfigError("At least one diagram panel must remain enabled")
@@ -912,12 +916,11 @@ def render_diagram_figure(path, frame_index, preset_name, overrides=None):
             setattr(diagram, name, value)
         source = H5FrameSource(path)
         matrix, saved_step = source.read_frame(frame_index)
-        transport = (
-            diagram.analyze_transport(source.path)
-            if preset["SHOW_NET_FLUX_PANEL"]
-            or preset.get("SHOW_TRANSPORT_PROFILE_PANEL", False)
-            else None
-        )
+        transport = None
+        if preset["SHOW_NET_FLUX_PANEL"] or preset.get("SHOW_TRANSPORT_PROFILE_PANEL", False):
+            transport = diagram.load_transport_time_average(source.path)
+            if transport is None:
+                transport = diagram.analyze_transport(source.path)
         baseline = None
         if preset.get("HEATMAP_MODE") == "change_from_initial":
             baseline, _ = source.read_frame(int(preset.get("HEATMAP_BASELINE_SNAPSHOT_INDEX", 0)))
@@ -931,6 +934,7 @@ def render_diagram_figure(path, frame_index, preset_name, overrides=None):
             area_summary_shake_mode=shake_mode,
             heatmap_baseline_matrix=baseline,
             managed=False,
+            h5_path=source.path,
         )
     return fig
 

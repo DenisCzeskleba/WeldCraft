@@ -501,6 +501,8 @@ def run_compact_wiggle_work(
     transition_weight,
     work_count,
     pending_wait_steps,
+    interface_crossing_deltas,
+    reservoir_event_counts,
 ):
     if use_random_sequential_lane:
         hydrogen_count, displacement_stats, wiggle_attempt_count = (
@@ -520,6 +522,8 @@ def run_compact_wiggle_work(
                 num_regions,
                 molecular_rng_state,
                 work_count,
+                interface_crossing_deltas,
+                reservoir_event_counts,
             )
         )
         return (
@@ -551,6 +555,8 @@ def run_compact_wiggle_work(
         uniformization_site_bound,
         work_count,
         pending_wait_steps,
+        interface_crossing_deltas,
+        reservoir_event_counts,
     )
 
 
@@ -632,21 +638,46 @@ with h5py.File(h5_filename, "w") as hf:
         )
 
     transport_group = hf.create_group("transport")
-    transport_group.attrs["schema"] = "signed_x_displacement_v1"
+    transport_group.attrs["schema"] = "interface_crossings_v2"
     transport_group.attrs["description"] = (
-        "Signed molecular x-displacement accumulated during each saved interval. "
-        "Divide by interval_steps and region_widths to obtain mean cross-sectional "
-        "net flux in H particles per simulation step."
+        "Signed particle crossings through every vertical x-interface during each "
+        "saved interval, with source insertions and sink removals recorded separately."
+    )
+    interface_net_crossings_dset = transport_group.create_dataset(
+        "interface_net_crossings",
+        shape=(num_saved_frames, max(width - 1, 0)),
+        dtype=np.int64,
+    )
+    transport_group.create_dataset(
+        "interface_x",
+        data=np.arange(max(width - 1, 0), dtype=np.float64) + 0.5,
+    )
+    source_insertion_count_dset = transport_group.create_dataset(
+        "source_insertion_count",
+        shape=(num_saved_frames,),
+        dtype=np.int64,
+    )
+    sink_removal_count_dset = transport_group.create_dataset(
+        "sink_removal_count",
+        shape=(num_saved_frames,),
+        dtype=np.int64,
     )
     net_x_displacement_dset = transport_group.create_dataset(
         "net_x_displacement",
         shape=(num_saved_frames, num_regions),
         dtype=np.float64,
     )
+    net_x_displacement_dset.attrs["description"] = (
+        "Legacy signed hop displacement grouped by the hop's source region; "
+        "this is not a local cross-sectional flux."
+    )
     accepted_move_count_dset = transport_group.create_dataset(
         "accepted_move_count",
         shape=(num_saved_frames, num_regions),
         dtype=np.float64,
+    )
+    accepted_move_count_dset.attrs["description"] = (
+        "Accepted hops grouped by source region; useful as a local activity diagnostic."
     )
     interval_steps_dset = transport_group.create_dataset(
         "interval_steps",
@@ -684,6 +715,8 @@ with h5py.File(h5_filename, "w") as hf:
         with tqdm(total=steps, desc=progress_description, disable=gui_run) as progress:
             for frame_index, saved_step in enumerate(saved_steps):
                 steps_to_run = int(saved_step - previous_saved_step)
+                interface_crossing_deltas = np.zeros(width, dtype=np.int64)
+                reservoir_event_counts = np.zeros(2, dtype=np.int64)
                 if steps_to_run > 0:
                     disp_stats = np.zeros((num_regions, 3), dtype=np.float64)
                     completed_in_interval = 0
@@ -708,6 +741,8 @@ with h5py.File(h5_filename, "w") as hf:
                             total_transition_weight,
                             work_count,
                             event_pending_wait_steps,
+                            interface_crossing_deltas,
+                            reservoir_event_counts,
                         )
                         if use_event_driven_lane and completed_work != work_count:
                             raise RuntimeError(
@@ -747,6 +782,12 @@ with h5py.File(h5_filename, "w") as hf:
 
                 net_x_displacement_dset[frame_index] = disp_stats[:, 0]
                 accepted_move_count_dset[frame_index] = disp_stats[:, 2]
+                interface_net_crossings_dset[frame_index] = np.cumsum(
+                    interface_crossing_deltas,
+                    dtype=np.int64,
+                )[:-1]
+                source_insertion_count_dset[frame_index] = reservoir_event_counts[0]
+                sink_removal_count_dset[frame_index] = reservoir_event_counts[1]
                 interval_steps_dset[frame_index] = steps_to_run
 
                 previous_saved_step = int(saved_step)
@@ -808,6 +849,8 @@ with h5py.File(h5_filename, "w") as hf:
                     (num_regions, 3),
                     dtype=np.float64,
                 )
+                interface_crossing_deltas = np.zeros(width, dtype=np.int64)
+                reservoir_event_counts = np.zeros(2, dtype=np.int64)
 
                 for _ in range(steps_to_run):
                     if cfg.simulation_mode == "molecular_wiggle":
@@ -837,6 +880,8 @@ with h5py.File(h5_filename, "w") as hf:
                             claim_epoch,
                             touched_targets,
                             molecular_epoch,
+                            interface_crossing_deltas,
+                            reservoir_event_counts,
                         )
                     elif use_forced_jump_precomputed_lane:
                         (
@@ -855,6 +900,7 @@ with h5py.File(h5_filename, "w") as hf:
                             random_size,
                             region_map,
                             num_regions,
+                            interface_crossing_deltas,
                         )
                     else:
                         (
@@ -876,6 +922,8 @@ with h5py.File(h5_filename, "w") as hf:
                             cfg.SOURCE_SIDE == "left",
                             region_map,
                             num_regions,
+                            interface_crossing_deltas,
+                            reservoir_event_counts,
                         )
                     interval_transport_stats += disp_stats
 
@@ -890,6 +938,12 @@ with h5py.File(h5_filename, "w") as hf:
                     dset[frame_index] = h_spots_matrix
                 net_x_displacement_dset[frame_index] = interval_transport_stats[:, 0]
                 accepted_move_count_dset[frame_index] = interval_transport_stats[:, 2]
+                interface_net_crossings_dset[frame_index] = np.cumsum(
+                    interface_crossing_deltas,
+                    dtype=np.int64,
+                )[:-1]
+                source_insertion_count_dset[frame_index] = reservoir_event_counts[0]
+                sink_removal_count_dset[frame_index] = reservoir_event_counts[1]
                 interval_steps_dset[frame_index] = steps_to_run
 
                 completed_step = int(saved_step)

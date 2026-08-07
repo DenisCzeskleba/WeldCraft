@@ -1,13 +1,13 @@
-"""Transport-rate profile with a compact temporal flux history."""
+"""Transport flux over the real x coordinate and simulation time."""
 
-PRESET_NAME = "Transport Profile and Flux History"
+PRESET_NAME = "Transport Flux over x and Time"
 
 RENDER_MODE = "pixels"
-FIGURE_SIZE = (16, 6)
-MATCH_SIDE_PANEL_HEIGHT_TO_MAIN = True
-TITLE = "Diffusion as a Result of Random Motion"
-X_LABEL = "Length"
-Y_LABEL = "Height"
+FIGURE_SIZE = (12, 7)
+MATCH_SIDE_PANEL_HEIGHT_TO_MAIN = False
+TITLE = "Transport flux over position and time"
+X_LABEL = "Matrix x position"
+Y_LABEL = "Net flux J"
 
 COLOR_EMPTY = "#440154"
 COLOR_AVAILABLE_SPOT = "#0000FF"
@@ -18,12 +18,13 @@ DOT_SIZE_HYDROGEN = 8
 DOT_ALPHA_AVAILABLE = 0.8
 DOT_ALPHA_HYDROGEN = 0.95
 
-SHOW_MAIN_PANEL = True
-SHOW_CONCENTRATION_PROFILE_PANEL = True
-# The transport panel loads the same analysis without adding the older,
-# domain-wide flux panel as a fourth column.
+SHOW_MAIN_PANEL = False
+SHOW_CONCENTRATION_PROFILE_PANEL = False
 SHOW_NET_FLUX_PANEL = False
 SHOW_TRANSPORT_PROFILE_PANEL = True
+TRANSPORT_TIME_AVERAGE = True
+TRANSPORT_TIME_AVERAGE_USE_CONTINUED = True
+TRANSPORT_TIME_AVERAGE_SKIP_FIRST_FRAME = True
 
 PROFILE_AXIS = "x"
 PROFILE_X_RANGE = None
@@ -55,7 +56,7 @@ ANNOTATION_COLOR = "#FFFFFF"
 CUSTOM_RECT_REGIONS = []
 
 SHOW_LEGEND = True
-SHOW_FRAME_SUPTITLE = True
+SHOW_FRAME_SUPTITLE = False
 PANEL_TITLE_FONT_SIZE = 15
 AXIS_LABEL_FONT_SIZE = 11
 TICK_LABEL_FONT_SIZE = 10
@@ -65,5 +66,4 @@ NET_FLUX_COLOR = "#4A148C"
 NET_FLUX_BAND_COLOR = "#B39DDB"
 TRANSPORT_PROFILE_COLOR = "#4A148C"
 TRANSPORT_PROFILE_MARKER_COLOR = "#1B5E20"
-TRANSPORT_PROFILE_INSET_FACE_COLOR = "#FBFBFB"
-TRANSPORT_PROFILE_INSET_ALPHA = 0.96
+TRANSPORT_PROFILE_TEMPORAL_COLOR = "#E65100"

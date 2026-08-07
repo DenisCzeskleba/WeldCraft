@@ -93,6 +93,9 @@ def copy_transport_group(source_group, target_group, frame_indices, frame_count)
     summed_interval_datasets = {
         "net_x_displacement",
         "accepted_move_count",
+        "interface_net_crossings",
+        "source_insertion_count",
+        "sink_removal_count",
         "interval_steps",
     }
 

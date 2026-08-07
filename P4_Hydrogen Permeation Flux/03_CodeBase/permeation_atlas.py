@@ -31,7 +31,7 @@ def _plain_result_name(value: str) -> str:
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Generate normalized 1D hydrogen-permeation response atlases."
+        description="Generate normalized 1D hydrogen-permeation flux response figures."
     )
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--gui", action="store_true", help="open the PyQt5 graphical interface")
@@ -39,7 +39,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--preset", help="Shipped diagram preset; defaults to overview for new runs.")
     parser.add_argument("--list-presets", action="store_true", help="List shipped presets and exit.")
     parser.add_argument("--config", type=Path, help="Optional Python configuration override.")
-    parser.add_argument("--result-name", type=_plain_result_name, default="hydrogen_permeation_atlas")
+    parser.add_argument("--result-name", type=_plain_result_name, default="hydrogen_permeation_flux")
     parser.add_argument("--output-dir", type=Path, default=RESULTS_DIR)
     parser.add_argument("--rerender", type=Path, help="Render an existing P4 HDF5 result without simulating.")
     parser.add_argument(

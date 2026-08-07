@@ -37,7 +37,7 @@ MANAGED_ASSIGNMENTS = ("CONFIG", "GUI_STATE", "USER_PROFILES")
 
 DEFAULT_GUI_STATE = {
     "preset": "overview",
-    "result_name": "hydrogen_permeation_atlas",
+    "result_name": "hydrogen_permeation_flux",
     "formats": ["png"],
     "last_result_path": "",
     "selected_tab": 0,

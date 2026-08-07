@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 import json
+import math
 from pathlib import Path
 import runpy
 from typing import Any, Callable, Dict, Iterable, Mapping, Optional, Tuple
@@ -117,7 +118,9 @@ def validate_settings(settings: Mapping[str, Any]) -> Dict[str, Any]:
     scalar_names = (
         "end_time_ref", "capture_rate_ref", "capture_sweep_capacity_ratio",
         "capture_sweep_release_half_time_ref", "capacity_sweep_release_half_time_ref",
-        "release_sweep_capacity_ratio",
+        "release_sweep_capacity_ratio", "capacity_sweep_binding_energy_kJ_mol",
+        "binding_energy_temperature_K", "detrapping_prefactor_s_inv",
+        "lattice_activation_energy_kJ_mol",
     )
     for name in scalar_names:
         trapping[name] = float(trapping[name])
@@ -125,13 +128,16 @@ def validate_settings(settings: Mapping[str, Any]) -> Dict[str, Any]:
             raise ValueError(f"trapping.{name} must be positive.")
     for name in (
         "capture_rate_refs", "capacity_ratios", "release_half_times_ref",
-        "map_capacity_ratios", "map_release_half_times_ref",
+        "binding_energy_kJ_mol", "map_capacity_ratios", "map_release_half_times_ref",
     ):
         trapping[name] = _number_list(
-            trapping[name], f"trapping.{name}", positive=name != "capacity_ratios"
+            trapping[name], f"trapping.{name}",
+            positive=name not in {"capacity_ratios", "binding_energy_kJ_mol"},
         )
     if any(value < 0.0 for value in trapping["capacity_ratios"]):
         raise ValueError("Trap capacity ratios cannot be negative.")
+    if any(value < 0.0 for value in trapping["binding_energy_kJ_mol"]):
+        raise ValueError("Binding energies cannot be negative.")
     combined = trapping.get("combined_cases")
     if not isinstance(combined, list) or not combined:
         raise ValueError("trapping.combined_cases must be a non-empty list.")
@@ -287,11 +293,36 @@ def _trap_config(
     )
 
 
+def _binding_energy_to_half_time_ref(
+    settings: Mapping[str, Any],
+    base: SimulationConfig,
+    binding_energy_kJ_mol: float,
+) -> float:
+    """Convert an equivalent binding energy into the solver's release half-time."""
+
+    if math.isinf(binding_energy_kJ_mol):
+        return math.inf
+    trap_settings = settings["trapping"]
+    gas_constant = 8.314462618  # J/(mol K)
+    temperature = float(trap_settings["binding_energy_temperature_K"])
+    prefactor = float(trap_settings["detrapping_prefactor_s_inv"])
+    lattice_barrier = float(trap_settings["lattice_activation_energy_kJ_mol"])
+    release_rate_s_inv = prefactor * math.exp(
+        -((lattice_barrier + binding_energy_kJ_mol) * 1000.0)
+        / (gas_constant * temperature)
+    )
+    return math.log(2.0) / (release_rate_s_inv * base.tau_ref_seconds)
+
+
 def _build_trap_cases(settings: Mapping[str, Any], run_case: CaseRunner) -> Dict[str, SimulationResult]:
     results: Dict[str, SimulationResult] = {}
     base = _base_config(settings, end_time_ref=float(settings["trapping"]["end_time_ref"]))
     trap_settings = settings["trapping"]
-    fixed_half_time = float(trap_settings["capacity_sweep_release_half_time_ref"])
+    fixed_half_time = _binding_energy_to_half_time_ref(
+        settings,
+        base,
+        float(trap_settings["capacity_sweep_binding_energy_kJ_mol"]),
+    )
     for capacity in trap_settings["capacity_ratios"]:
         capacity = float(capacity)
         config = base.with_changes(
@@ -300,13 +331,18 @@ def _build_trap_cases(settings: Mapping[str, Any], run_case: CaseRunner) -> Dict
         )
         results[f"trap_capacity:{capacity:g}"] = run_case(f"Trap capacity: {capacity:g}", config)
     fixed_capacity = float(trap_settings["release_sweep_capacity_ratio"])
-    for half_time in trap_settings["release_half_times_ref"]:
-        half_time = float(half_time)
+    binding_energies = [float(value) for value in trap_settings["binding_energy_kJ_mol"]]
+    for binding_energy in [*binding_energies, math.inf]:
+        half_time = _binding_energy_to_half_time_ref(settings, base, binding_energy)
+        energy_label = "∞ (no detrapping)" if math.isinf(binding_energy) else f"{binding_energy:g} kJ/mol"
         config = base.with_changes(
-            label=f"t_half,det/tau_ref = {half_time:g}",
+            label=energy_label,
             traps=_trap_config(settings, fixed_capacity, half_time),
         )
-        results[f"trap_release:{half_time:g}"] = run_case(f"Trap release half-time: {half_time:g}", config)
+        key = "inf" if math.isinf(binding_energy) else f"{binding_energy:g}"
+        results[f"trap_release:{key}"] = run_case(
+            f"Equivalent binding energy: {energy_label}", config
+        )
     capture_capacity = float(trap_settings["capture_sweep_capacity_ratio"])
     capture_half_time = float(trap_settings["capture_sweep_release_half_time_ref"])
     for capture_rate in trap_settings["capture_rate_refs"]:
@@ -416,9 +452,10 @@ def estimate_case_count(settings: Mapping[str, Any], figure_names: Iterable[str]
     if "surface" in requested:
         count += 1 + len(checked["surface"]["entry_concentration_ratios"])
     if "trapping" in requested:
-        count += sum(len(checked["trapping"][name]) for name in (
-            "capacity_ratios", "release_half_times_ref", "capture_rate_refs", "combined_cases"
-        ))
+        count += len(checked["trapping"]["capacity_ratios"])
+        count += len(checked["trapping"]["binding_energy_kJ_mol"]) + 1
+        count += len(checked["trapping"]["capture_rate_refs"])
+        count += len(checked["trapping"]["combined_cases"])
     if "prefill" in requested:
         count += 1 + len(checked["prefill"]["target_center_fractions"])
     if "response_map" in requested:

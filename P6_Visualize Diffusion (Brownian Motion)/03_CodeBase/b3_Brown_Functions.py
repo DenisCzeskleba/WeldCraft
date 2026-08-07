@@ -930,11 +930,24 @@ def find_transition_from_cdf(transition_cdf, start, end, random_value):
 
 
 @njit
+def record_interface_crossings(interface_crossing_deltas, source_x, target_x):
+    """Range-add one signed particle crossing to every traversed x-interface."""
+    if target_x > source_x:
+        interface_crossing_deltas[source_x] += 1
+        interface_crossing_deltas[target_x] -= 1
+    elif target_x < source_x:
+        interface_crossing_deltas[target_x] -= 1
+        interface_crossing_deltas[source_x] += 1
+
+
+@njit
 def simulate_random_sequential_wiggle_steps(site_states, hydrogen_site_ids, hydrogen_count,
                                             hydrogen_transition_totals,
                                             transition_offsets, transition_targets, transition_cdf,
                                             transition_totals, source_site_flags, sink_site_flags,
-                                            site_x, region_map, num_regions, rng_state, num_steps):
+                                            site_x, region_map, num_regions, rng_state, num_steps,
+                                            interface_crossing_deltas,
+                                            reservoir_event_counts):
     """Run H-at-start selections; the probability cache mirrors the active H-list prefix."""
     displacement_stats = np.zeros((num_regions, 3), dtype=np.float64)
     wiggle_attempt_count = 0
@@ -975,6 +988,11 @@ def simulate_random_sequential_wiggle_steps(site_states, hydrogen_site_ids, hydr
                 continue
 
             move_x = site_x[target_site_id] - site_x[source_site_id]
+            record_interface_crossings(
+                interface_crossing_deltas,
+                site_x[source_site_id],
+                site_x[target_site_id],
+            )
             region_id = region_map[site_x[source_site_id]]
             if region_id >= 0:
                 # Signed x-displacement is the spatial integral of net
@@ -988,6 +1006,7 @@ def simulate_random_sequential_wiggle_steps(site_states, hydrogen_site_ids, hydr
 
             if target_is_sink:
                 if not source_is_reservoir:
+                    reservoir_event_counts[1] += 1
                     site_states[source_site_id] = 1
                     hydrogen_count -= 1
                     hydrogen_site_ids[hydrogen_index] = hydrogen_site_ids[hydrogen_count]
@@ -997,6 +1016,7 @@ def simulate_random_sequential_wiggle_steps(site_states, hydrogen_site_ids, hydr
                     if hydrogen_count > 0:
                         selection_rejection_threshold = bounded_index_rejection_threshold(hydrogen_count)
             elif source_is_reservoir:
+                reservoir_event_counts[0] += 1
                 site_states[target_site_id] = 2
                 hydrogen_site_ids[hydrogen_count] = target_site_id
                 hydrogen_transition_totals[hydrogen_count] = transition_totals[target_site_id]
@@ -1066,7 +1086,9 @@ def simulate_event_driven_wiggle_events(site_states, hydrogen_site_ids, hydrogen
                                         transition_targets, transition_cdf, transition_totals,
                                         source_site_flags, sink_site_flags, site_x, region_map,
                                         num_regions, rng_state, uniformization_site_bound,
-                                        num_uniformized_steps, pending_wait_steps=0):
+                                        num_uniformized_steps, pending_wait_steps,
+                                        interface_crossing_deltas,
+                                        reservoir_event_counts):
     """Skip uniformized null waiting while preserving the directed-rate equilibrium."""
     displacement_stats = np.zeros((num_regions, 3), dtype=np.float64)
     completed_steps = 0
@@ -1153,6 +1175,11 @@ def simulate_event_driven_wiggle_events(site_states, hydrogen_site_ids, hydrogen
             continue
 
         move_x = site_x[target_site_id] - site_x[source_site_id]
+        record_interface_crossings(
+            interface_crossing_deltas,
+            site_x[source_site_id],
+            site_x[target_site_id],
+        )
         region_id = region_map[site_x[source_site_id]]
         if region_id >= 0:
             displacement_stats[region_id, 0] += move_x
@@ -1164,6 +1191,7 @@ def simulate_event_driven_wiggle_events(site_states, hydrogen_site_ids, hydrogen
 
         if target_is_sink:
             if not source_is_reservoir:
+                reservoir_event_counts[1] += 1
                 site_states[source_site_id] = 1
                 removed_weight = float(hydrogen_transition_totals[hydrogen_index])
                 last_hydrogen_index = hydrogen_count - 1
@@ -1194,6 +1222,7 @@ def simulate_event_driven_wiggle_events(site_states, hydrogen_site_ids, hydrogen
                 hydrogen_count -= 1
                 total_transition_weight -= removed_weight
         elif source_is_reservoir:
+            reservoir_event_counts[0] += 1
             site_states[target_site_id] = 2
             new_weight = float(transition_totals[target_site_id])
             hydrogen_site_ids[hydrogen_count] = target_site_id
@@ -1248,7 +1277,8 @@ def simulate_brownian_motion(matrix, rng_state, active_y, active_x, nx, ny, max_
                              base_movement_probability, jump_probability_table, characteristic_map,
                              characteristic_transition_multipliers, sink_source_thickness,
                              use_sink_source, source_on_left, region_map, num_regions,
-                             winner_source, winner_priority, claim_epoch, touched_targets, epoch_id):
+                             winner_source, winner_priority, claim_epoch, touched_targets, epoch_id,
+                             interface_crossing_deltas, reservoir_event_counts):
     new_matrix = np.copy(matrix)
     displacement_stats = np.zeros((num_regions, 3), dtype=np.float32)
     touched_count = 0
@@ -1301,6 +1331,11 @@ def simulate_brownian_motion(matrix, rng_state, active_y, active_x, nx, ny, max_
         target_j = target_flat // nx
         target_i = target_flat % nx
         move_x = target_i - source_i
+        record_interface_crossings(
+            interface_crossing_deltas,
+            source_i,
+            target_i,
+        )
 
         region_id = region_map[source_i]
         if region_id >= 0:
@@ -1316,19 +1351,25 @@ def simulate_brownian_motion(matrix, rng_state, active_y, active_x, nx, ny, max_
             for j in range(ny):
                 for i in range(sink_source_thickness):
                     if new_matrix[j, i] == 1:
+                        reservoir_event_counts[0] += 1
                         new_matrix[j, i] = 2
 
             for j in range(ny):
                 for i in range(nx - sink_source_thickness, nx):
+                    if new_matrix[j, i] == 2:
+                        reservoir_event_counts[1] += 1
                     new_matrix[j, i] = 1
         else:
             for j in range(ny):
                 for i in range(sink_source_thickness):
+                    if new_matrix[j, i] == 2:
+                        reservoir_event_counts[1] += 1
                     new_matrix[j, i] = 1
 
             for j in range(ny):
                 for i in range(nx - sink_source_thickness, nx):
                     if new_matrix[j, i] == 1:
+                        reservoir_event_counts[0] += 1
                         new_matrix[j, i] = 2
 
     return new_matrix, displacement_stats
@@ -1346,7 +1387,8 @@ def gcd_int(a, b):
 @njit
 def simulate_brownian_motion_forced_jump_precomputed(site_states, random_values, hydrogen_site_ids, site_y, site_x,
                                                      neighbor_site_ids, neighbor_counts, rand_index, random_size,
-                                                     region_map, num_regions):
+                                                     region_map, num_regions,
+                                                     interface_crossing_deltas):
     new_site_states = np.copy(site_states)
     displacement_stats = np.zeros((num_regions, 3), dtype=np.float32)
     valid_site_ids = np.zeros(neighbor_site_ids.shape[1], dtype=np.int32)
@@ -1392,6 +1434,7 @@ def simulate_brownian_motion_forced_jump_precomputed(site_states, random_values,
             new_j = site_y[target_site_id]
             new_i = site_x[target_site_id]
             move_x = new_i - i
+            record_interface_crossings(interface_crossing_deltas, i, new_i)
 
             region_id = region_map[i]
             if region_id >= 0:
@@ -1409,7 +1452,9 @@ def simulate_brownian_motion_forced_jump_precomputed(site_states, random_values,
 @njit
 def simulate_brownian_motion_forced_jump(matrix, random_values, active_y, active_x, nx, ny, rand_index, random_size,
                                          max_radius_to_jump, sink_source_thickness, use_sink_source, source_on_left,
-                                         region_map, num_regions):
+                                         region_map, num_regions,
+                                         interface_crossing_deltas,
+                                         reservoir_event_counts):
     new_matrix = np.copy(matrix)
     displacement_stats = np.zeros((num_regions, 3), dtype=np.float32)
     max_target_count = (2 * max_radius_to_jump + 1) ** 2 - 1
@@ -1446,6 +1491,7 @@ def simulate_brownian_motion_forced_jump(matrix, random_values, active_y, active
                 move_y = valid_move_y[chosen_index]
                 new_i = i + move_x
                 new_j = j + move_y
+                record_interface_crossings(interface_crossing_deltas, i, new_i)
 
                 region_id = region_map[i]
                 if region_id >= 0:
@@ -1461,19 +1507,25 @@ def simulate_brownian_motion_forced_jump(matrix, random_values, active_y, active
             for j in range(ny):
                 for i in range(sink_source_thickness):
                     if new_matrix[j, i] == 1:
+                        reservoir_event_counts[0] += 1
                         new_matrix[j, i] = 2
 
             for j in range(ny):
                 for i in range(nx - sink_source_thickness, nx):
+                    if new_matrix[j, i] == 2:
+                        reservoir_event_counts[1] += 1
                     new_matrix[j, i] = 1
         else:
             for j in range(ny):
                 for i in range(sink_source_thickness):
+                    if new_matrix[j, i] == 2:
+                        reservoir_event_counts[1] += 1
                     new_matrix[j, i] = 1
 
             for j in range(ny):
                 for i in range(nx - sink_source_thickness, nx):
                     if new_matrix[j, i] == 1:
+                        reservoir_event_counts[0] += 1
                         new_matrix[j, i] = 2
 
     return new_matrix, rand_index, displacement_stats

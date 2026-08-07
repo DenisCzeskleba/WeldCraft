@@ -22,6 +22,12 @@ LINE_STYLES: Sequence[Tuple[object, str]] = (
 )
 
 
+# The solver stores every 1 kJ/mol case from 20 to 100. Edit this list to
+# change only the curves displayed in the overview strength panel; the
+# trap-free reference represents the effectively zero-energy response here.
+TRAPPING_STRENGTH_DISPLAY_ENERGIES_KJ_MOL = [20.0, 25.0, 27.0, 30.0, 32.0, 35.0, 37.0, 40.0, 50.0]
+
+
 THESIS_STYLE = {
     "font.family": "serif",
     "font.size": 9.0,
@@ -253,6 +259,8 @@ def _plot_direct_response_family(
     value_getter,
     normalized_per_curve: bool = True,
     comparison_window_ref: float | None = None,
+    skip_label_indices: set[int] | None = None,
+    solid_indices: set[int] | None = None,
 ) -> float:
     if comparison_window_ref is not None and time_axis != "fo":
         x_limit = _reference_time_on_axis(
@@ -265,25 +273,27 @@ def _plot_direct_response_family(
         x = _time_values(result, time_axis)
         final = result.config.steady_flux_common_reference
         y = result.outlet_flux_common / final if normalized_per_curve else result.outlet_flux_common
+        line_style = "-" if solid_indices and index in solid_indices else LINE_STYLES[index % len(LINE_STYLES)][0]
         axis.plot(
             x,
             y,
             color="black",
-            linestyle=LINE_STYLES[index % len(LINE_STYLES)][0],
+            linestyle=line_style,
             linewidth=1.25,
         )
         displayed_final = 1.0 if normalized_per_curve else final
-        _label_at_fraction(
-            axis,
-            x,
-            y,
-            value_getter(result),
-            float(label_fraction),
-            displayed_final,
-            maximum_x=0.91 * x_limit,
-            fallback_x=x_limit
-            * (0.62 + 0.24 * index / max(1, len(cases) - 1)),
-        )
+        if skip_label_indices is None or index not in skip_label_indices:
+            _label_at_fraction(
+                axis,
+                x,
+                y,
+                value_getter(result),
+                float(label_fraction),
+                displayed_final,
+                maximum_x=0.91 * x_limit,
+                fallback_x=x_limit
+                * (0.62 + 0.24 * index / max(1, len(cases) - 1)),
+            )
     axis.set_xlim(0.0, x_limit)
     axis.grid(True, axis="x")
     return x_limit
@@ -710,6 +720,89 @@ def _render_trapping_legacy(
     return fig
 
 
+def _draw_trapping_explanation(axis) -> None:
+    """Draw the compact lattice/trap schematic above the response plates."""
+
+    axis.set_xlim(0.0, 1.0)
+    axis.set_ylim(0.0, 1.0)
+    axis.axis("off")
+    axis.text(0.03, 0.78, "Perfect lattice / no traps", fontsize=7.0, va="center")
+    axis.annotate(
+        "",
+        xy=(0.43, 0.52),
+        xytext=(0.18, 0.52),
+        arrowprops={"arrowstyle": "->", "linewidth": 1.0, "color": "black"},
+    )
+    axis.scatter([0.21, 0.30, 0.39], [0.52, 0.52, 0.52], s=11, color="black")
+    axis.text(0.21, 0.34, "mobile H", fontsize=6.7, ha="center")
+    axis.text(0.43, 0.34, "all mobile H remains mobile", fontsize=6.7, ha="center")
+
+    axis.text(0.56, 0.78, "Traps added", fontsize=7.0, va="center")
+    axis.annotate(
+        "",
+        xy=(0.94, 0.52),
+        xytext=(0.64, 0.52),
+        arrowprops={"arrowstyle": "->", "linewidth": 1.0, "color": "black"},
+    )
+    positions = (0.67, 0.79, 0.91)
+    axis.scatter(positions, [0.52] * len(positions), s=11, color="black")
+    for position in positions:
+        axis.plot(
+            [position - 0.035, position, position + 0.035],
+            [0.19, 0.13, 0.19],
+            color="black",
+            linewidth=0.9,
+        )
+    axis.annotate(
+        "",
+        xy=(0.67, 0.22),
+        xytext=(0.67, 0.49),
+        arrowprops={"arrowstyle": "->", "linewidth": 0.7, "color": "black"},
+    )
+    axis.annotate(
+        "",
+        xy=(0.91, 0.49),
+        xytext=(0.91, 0.22),
+        arrowprops={"arrowstyle": "->", "linewidth": 0.7, "color": "black"},
+    )
+    axis.text(0.67, 0.02, "capture", fontsize=6.7, ha="center")
+    axis.text(0.79, 0.22, r"$\tau_{0.5}$", fontsize=6.7, ha="center")
+    axis.text(0.91, 0.02, "release", fontsize=6.7, ha="center")
+
+
+def _plot_early_trapping_zoom(axis, cases, time_axis: str) -> None:
+    """Plot the early response where capture and release first separate curves."""
+
+    for index, (_, result) in enumerate(cases):
+        line_style = LINE_STYLES[index % len(LINE_STYLES)][0]
+        x = _time_values(result, time_axis)
+        final = result.config.steady_flux_common_reference
+        axis.plot(
+            x,
+            result.outlet_flux_common / final,
+            color="black",
+            linestyle=line_style,
+            linewidth=1.15,
+        )
+    axis.set_xlim(0.0, 15.0)
+    axis.set_ylim(0.0, 0.20)
+    axis.set_xlabel(_time_label(time_axis))
+    axis.set_ylabel(r"Normalized response, $J/J_{\mathrm{ss}}$")
+    axis.set_title("Early-time zoom: 0–15 min and 0–20% of steady response", fontsize=8.8)
+    axis.grid(True, linestyle=":")
+    axis.axhline(0.10, color="0.65", linewidth=0.6, linestyle=":")
+    axis.text(
+        0.99,
+        0.93,
+        "Same line meanings as above; solid = no traps",
+        transform=axis.transAxes,
+        ha="right",
+        va="top",
+        fontsize=6.6,
+        bbox={"facecolor": "white", "edgecolor": "none", "pad": 0.4, "alpha": 0.9},
+    )
+
+
 def render_trapping(
     results: Mapping[str, SimulationResult],
     normalization: str,
@@ -720,78 +813,134 @@ def render_trapping(
         _select(results, "trap_capacity:"),
         key=lambda item: item[1].config.traps.capacity_ratio,
     )
-    release_cases = sorted(
-        _select(results, "trap_release:"),
-        key=lambda item: item[1].config.traps.release_half_time_ref,
+    release_by_key = dict(_select(results, "trap_release:"))
+    display_keys = [
+        f"trap_release:{energy:g}"
+        for energy in TRAPPING_STRENGTH_DISPLAY_ENERGIES_KJ_MOL
+    ]
+    display_keys.append("trap_release:inf")
+    release_cases = [
+        (key, release_by_key[key]) for key in display_keys if key in release_by_key
+    ]
+    trap_free = capacity_cases[0]
+    strength_cases = [trap_free, *release_cases]
+    strength_capacity = (
+        release_cases[0][1].config.traps.capacity_ratio if release_cases else float("nan")
     )
-    tau_minutes = capacity_cases[0][1].config.tau_ref_seconds / 60.0
-    fixed_release_minutes = (
-        capacity_cases[0][1].config.traps.release_half_time_ref * tau_minutes
+    strength_value = lambda result: (
+        "no traps"
+        if result.config.traps.capacity_ratio == 0.0
+        else r"$\infty$"
+        if np.isinf(result.config.traps.release_half_time_ref)
+        else result.config.label
     )
-    fig, axes = plt.subplots(1, 2, figsize=(8.2, 4.0), constrained_layout=True)
+    fig = plt.figure(figsize=(8.8, 4.9), constrained_layout=True)
+    grid = fig.add_gridspec(2, 2, height_ratios=[0.62, 2.55])
+    explanation_axis = fig.add_subplot(grid[0, :])
+    strength_axis = fig.add_subplot(grid[1, 0])
+    capacity_axis = fig.add_subplot(grid[1, 1])
+    _draw_trapping_explanation(explanation_axis)
+
+    thirty_case = next(
+        (item for item in release_cases if item[0] == "trap_release:30"),
+        None,
+    )
+    if thirty_case is not None:
+        zero_result = trap_free[1]
+        thirty_result = thirty_case[1]
+        zero_x = _time_values(zero_result, time_axis)
+        zero_y = zero_result.outlet_flux_common / zero_result.config.steady_flux_common_reference
+        thirty_x = _time_values(thirty_result, time_axis)
+        thirty_y = thirty_result.outlet_flux_common / thirty_result.config.steady_flux_common_reference
+        if np.allclose(zero_x, thirty_x):
+            thirty_y_on_zero_grid = thirty_y
+        else:
+            thirty_y_on_zero_grid = np.interp(zero_x, thirty_x, thirty_y)
+        strength_axis.fill_between(
+            zero_x,
+            zero_y,
+            thirty_y_on_zero_grid,
+            color="0.88",
+            alpha=0.75,
+            zorder=0,
+        )
+
     panels = (
         (
-            axes[0],
-            capacity_cases,
-            lambda result: f"{result.config.traps.capacity_ratio:g}",
-            r"Trap storage capacity $N_T/C_{\mathrm{ref}}$",
-            rf"Fixed detrapping half-time: {fixed_release_minutes:.1f} min",
-            "more available trap storage",
+            strength_axis,
+            strength_cases,
+            strength_value,
+            r"Trap strength $E_B$ [kJ/mol]",
+            None,
         ),
         (
-            axes[1],
-            release_cases,
-            lambda result: (
-                f"{result.config.traps.release_half_time_ref * result.config.tau_ref_seconds / 60.0:.1f}"
-            ),
-            r"Detrapping half-time $t_{1/2,\mathrm{det}}$ [min]",
-            r"Fixed trap capacity: $N_T/C_{\mathrm{ref}}=1$",
-            "slower release / stronger retention",
+            capacity_axis,
+            capacity_cases,
+            lambda result: f"{result.config.traps.capacity_ratio:g}",
+            r"Trap density $N_T/C_{\mathrm{ref}}$",
+            r"$E_b = 30\ \mathrm{kJ/mol}$",
         ),
     )
-    for axis, cases, values, title, fixed_note, arrow_text in panels:
+    for panel_index, (axis, cases, values, title, fixed_note) in enumerate(panels):
         x_limit = _plot_direct_response_family(
             axis,
             cases,
             time_axis,
             values,
             comparison_window_ref=comparison_window_ref,
+            skip_label_indices={0} if panel_index == 0 else None,
+            solid_indices={len(cases) - 1} if panel_index == 0 else None,
         )
-        _add_response_guides(axis, x_limit)
+        if panel_index == 0:
+            trap_free_result = strength_cases[0][1]
+            trap_free_x = _time_values(trap_free_result, time_axis)
+            trap_free_y = trap_free_result.outlet_flux_common / trap_free_result.config.steady_flux_common_reference
+            no_traps_x = _crossing_x(trap_free_x, trap_free_y, 0.90)
+            if np.isfinite(no_traps_x):
+                axis.annotate(
+                    "no traps",
+                    xy=(no_traps_x, 0.90),
+                    xytext=(no_traps_x + 2.0, 0.96),
+                    textcoords="data",
+                    arrowprops={"arrowstyle": "-", "color": "0.25", "linewidth": 0.6},
+                    fontsize=7.0,
+                    ha="left",
+                    va="bottom",
+                )
+            axis.text(
+                0.10,
+                0.50,
+                "reversible",
+                transform=axis.transAxes,
+                rotation=90,
+                ha="center",
+                va="center",
+                fontsize=8.0,
+                color="0.25",
+            )
+            axis.text(
+                0.03,
+                0.95,
+                rf"$N_T/C_{{\mathrm{{ref}}}} = {strength_capacity:g}$",
+                transform=axis.transAxes,
+                ha="left",
+                va="top",
+                fontsize=7.0,
+            )
         axis.set_ylim(-0.03, 1.06)
         axis.set_xlabel(_time_label(time_axis))
         axis.set_ylabel(r"Normalized response, $J/J_{\mathrm{ss}}$")
-        axis.set_title(title + " (values on curves)", fontsize=9.2)
-        axis.text(
-            0.03,
-            0.96,
-            fixed_note,
-            transform=axis.transAxes,
-            va="top",
-            fontsize=7.0,
-            bbox={"facecolor": "white", "edgecolor": "none", "pad": 0.5, "alpha": 0.9},
-        )
-        axis.annotate(
-            arrow_text,
-            xy=(0.83, 0.16),
-            xytext=(0.28, 0.16),
-            xycoords="axes fraction",
-            textcoords="axes fraction",
-            arrowprops={"arrowstyle": "->", "color": "black", "linewidth": 0.8},
-            fontsize=7.0,
-            va="center",
-        )
-    fig.suptitle(
-        "Distinct McNabb-Foster trapping influences on breakthrough", fontsize=12
-    )
-    fig.text(
-        0.5,
-        -0.015,
-        "Capacity controls hydrogen storage; detrapping half-time controls kinetic retention. "
-        rf"Other parameters are held fixed; $\tau_{{\mathrm{{ref}}}}={tau_minutes:.1f}$ min.",
-        ha="center",
-        fontsize=7.2,
-    )
+        axis.set_title(title, fontsize=9.2)
+        if fixed_note is not None:
+            axis.text(
+                0.03,
+                0.96,
+                fixed_note,
+                transform=axis.transAxes,
+                va="top",
+                fontsize=6.8,
+                bbox={"facecolor": "white", "edgecolor": "none", "pad": 0.5, "alpha": 0.9},
+            )
     return fig
 
 
@@ -1721,7 +1870,7 @@ def render_overview(
         axis.set_title(title)
         if cases:
             axis.legend(fontsize=6.7)
-    fig.suptitle("Hydrogen permeation response atlas", fontsize=13)
+    fig.suptitle("Hydrogen permeation flux response", fontsize=13)
     return fig
 
 

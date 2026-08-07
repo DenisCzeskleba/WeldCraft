@@ -52,9 +52,49 @@ seconds, or physical molar flux when a reference concentration is configured.
 
 P4 implements the McNabb-Foster kinetic capture/detrapping picture. Trap
 capacity is relative to `C_ref`; retention is configured through a release
-half-time relative to `tau_ref`. McNabb-Foster kinetics and Oriani local
-equilibrium are related but distinct; Oriani equilibrium is not implemented as
-a second solver mode.
+half-time relative to `tau_ref`. In the local normalized equations, the trap
+occupancy `theta` follows
+
+```text
+dtheta/dt = k_cap C (1 - theta) - k_det theta
+dC_mobile/dt = diffusion - (N_T/C_ref) dtheta/dt
+```
+
+`N_T/C_ref` is storage capacity, not a literal count of atoms. `k_cap` is a
+capture-rate coefficient; the default `k_cap * tau_ref = 20` means capture is
+fast compared with reference diffusion at `C/C_ref = 1`, not that 20 atoms or
+20 traps are inserted. The overview capacity-panel comparison now fixes the
+equivalent binding energy at `E_B = 30 kJ/mol` (about `3.24 min` detrapping
+half-time under the illustrative calibration).
+
+The left overview panel presents an equivalent binding-energy sweep. It uses
+the declared calibration
+
+```text
+p = p0 exp[-(E_D + E_B)/(R T)]
+t_half,det = ln(2) / p
+```
+
+Here, `p` is the first-order detrapping coefficient [1/s], `p0` is its
+pre-exponential factor or attempt-frequency scale [1/s], `E_B` is the trap
+binding energy [J/mol or kJ/mol], `E_D` is the lattice-diffusion activation
+energy [J/mol or kJ/mol], `R` is the universal gas constant, and `T` is the
+absolute temperature [K]. The half-time `t_half,det` is therefore the time
+required for half of an initially occupied trap population to detrap when
+release follows first-order kinetics. The prefactor and activation energies
+are calibration parameters; they should not be treated as properties that can
+be inferred from a single normalized permeation curve.
+
+with `T = 293.15 K`, `p0 = 5e3 1/s`, and `E_D = 4.5 kJ/mol` in the shipped
+SCM435-derived illustrative calibration. Those calibration values are explicit
+assumptions, not universal material constants; replace them when fitting a
+particular steel or experiment. The `infinity` curve is the finite-window limit `p -> 0` (no
+detrapping). With finite trap capacity it is not a permanently lower steady
+flux: traps eventually fill, so the long-time flux approaches the trap-free
+steady state.
+
+McNabb-Foster kinetics and Oriani local equilibrium are related but distinct;
+Oriani equilibrium is not implemented as a second solver mode.
 
 ### Aged prefilling
 
@@ -119,12 +159,12 @@ persistent `CONFIG` as the GUI.
 # Rerender saved data without simulation
 & 'F:\99_Virtual-Environments\02_WeldCraft\Scripts\python.exe' `
   '.\P4_Hydrogen Permeation Flux\03_CodeBase\permeation_atlas.py' `
-  --rerender '.\P4_Hydrogen Permeation Flux\02_Results\hydrogen_permeation_atlas.h5'
+  --rerender '.\P4_Hydrogen Permeation Flux\02_Results\hydrogen_permeation_flux.h5'
 ```
 
-The internal script name, default result stem, and HDF5 format identifier retain
-the word `atlas` for compatibility and to describe the response-plate
-collection. The public application name is **Hydrogen Permeation Flux**.
+The public application name and default result stem are **Hydrogen Permeation
+Flux**. Some internal Python function names and the HDF5 format identifier
+retain `atlas` for backward compatibility with existing saved result files.
 
 ## Tests
 
