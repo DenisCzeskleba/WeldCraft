@@ -1,0 +1,5 @@
+{
+  "name": "trap_temperature",
+  "description": "Temperature and binding-energy retention diagnostic map.",
+  "figures": ["trap_temperature_map"]
+}

@@ -7,6 +7,8 @@ from typing import Callable, Dict, Iterable, List, Mapping, Sequence, Tuple
 
 import matplotlib.pyplot as plt
 from matplotlib.patches import FancyArrowPatch, Rectangle
+from matplotlib.colors import LogNorm
+from matplotlib.ticker import LogFormatterMathtext
 import numpy as np
 
 from permeation_model import SimulationCancelled, SimulationError, SimulationResult
@@ -26,6 +28,18 @@ LINE_STYLES: Sequence[Tuple[object, str]] = (
 # change only the curves displayed in the overview strength panel; the
 # trap-free reference represents the effectively zero-energy response here.
 TRAPPING_STRENGTH_DISPLAY_ENERGIES_KJ_MOL = [20.0, 25.0, 27.0, 30.0, 32.0, 35.0, 37.0, 40.0, 50.0]
+
+# Temperature/binding-energy diagnostic map.  These are the same illustrative
+# constants used for the table: they are deliberately kept separate from the
+# permeation solver's apparent reference diffusivity.
+TRAP_MAP_LENGTH_MM = 0.5
+TRAP_MAP_P0_S_INV = 5.0e3
+TRAP_MAP_ED_KJ_MOL = 4.5
+TRAP_MAP_D0_CM2_S = 7.23e-4
+TRAP_MAP_Q_L_J_MOL = 5690.0
+TRAP_MAP_TEMPERATURES_C = np.array(
+    [20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0, 90.0, 100.0, 200.0, 300.0, 400.0, 500.0]
+)
 
 
 THESIS_STYLE = {
@@ -882,6 +896,11 @@ def render_trapping(
         ),
     )
     for panel_index, (axis, cases, values, title, fixed_note) in enumerate(panels):
+        legacy_layout = (
+            panel_index == 0
+            and cases
+            and cases[0][1].config.end_time_ref <= 3.0
+        )
         x_limit = _plot_direct_response_family(
             axis,
             cases,
@@ -897,10 +916,15 @@ def render_trapping(
             trap_free_y = trap_free_result.outlet_flux_common / trap_free_result.config.steady_flux_common_reference
             no_traps_x = _crossing_x(trap_free_x, trap_free_y, 0.90)
             if np.isfinite(no_traps_x):
+                no_traps_offset = (
+                    2.0 * x_limit / 86.8055555556
+                    if legacy_layout
+                    else min(2.0, 0.15 * x_limit)
+                )
                 axis.annotate(
                     "no traps",
                     xy=(no_traps_x, 0.90),
-                    xytext=(no_traps_x + 2.0, 0.96),
+                    xytext=(no_traps_x + no_traps_offset, 0.96),
                     textcoords="data",
                     arrowprops={"arrowstyle": "-", "color": "0.25", "linewidth": 0.6},
                     fontsize=7.0,
@@ -908,7 +932,7 @@ def render_trapping(
                     va="bottom",
                 )
             axis.text(
-                0.10,
+                0.10 if legacy_layout else 0.015,
                 0.50,
                 "reversible",
                 transform=axis.transAxes,
@@ -919,11 +943,11 @@ def render_trapping(
                 color="0.25",
             )
             axis.text(
-                0.03,
-                0.95,
+                0.03 if legacy_layout else 0.97,
+                0.95 if legacy_layout else 0.985,
                 rf"$N_T/C_{{\mathrm{{ref}}}} = {strength_capacity:g}$",
                 transform=axis.transAxes,
-                ha="left",
+                ha="left" if legacy_layout else "right",
                 va="top",
                 fontsize=7.0,
             )
@@ -1680,6 +1704,179 @@ def _metric_label(metric: str) -> str:
     }.get(metric, metric)
 
 
+def _trap_temperature_ratio(temperature_c, binding_energy_kj_mol):
+    """Return detrapping half-time divided by ideal lattice diffusion time."""
+
+    gas_constant = 8.314462618
+    temperature_k = np.asarray(temperature_c, dtype=float) + 273.15
+    binding_energy = np.asarray(binding_energy_kj_mol, dtype=float)
+    lattice_diffusivity_mm2_s = (
+        TRAP_MAP_D0_CM2_S
+        * np.exp(-TRAP_MAP_Q_L_J_MOL / (gas_constant * temperature_k))
+        * 100.0
+    )
+    lattice_time_min = TRAP_MAP_LENGTH_MM**2 / lattice_diffusivity_mm2_s / 60.0
+    detrapping_time_min = (
+        np.log(2.0)
+        / TRAP_MAP_P0_S_INV
+        * np.exp(
+            (TRAP_MAP_ED_KJ_MOL + binding_energy) * 1000.0
+            / (gas_constant * temperature_k)
+        )
+        / 60.0
+    )
+    return detrapping_time_min / lattice_time_min
+
+
+def render_trap_temperature_map(
+    results: Mapping[str, SimulationResult],
+    normalization: str,
+    time_axis: str,
+    comparison_window_ref: float | None = None,
+):
+    """Render the temperature/binding-energy retention diagnostic."""
+
+    del results, normalization, time_axis, comparison_window_ref
+    energy_plot = np.linspace(10.0, 100.0, 181)
+    temperature_plot = np.linspace(20.0, 500.0, 241)
+    ratio = _trap_temperature_ratio(
+        temperature_plot[:, None], energy_plot[None, :]
+    )
+
+    figure, axes = plt.subplots(
+        1,
+        2,
+        figsize=(10.4, 4.8),
+        gridspec_kw={"width_ratios": [1.15, 1.0]},
+        constrained_layout=True,
+    )
+    map_axis, line_axis = axes
+    image = map_axis.imshow(
+        ratio,
+        origin="lower",
+        aspect="auto",
+        extent=(energy_plot[0], energy_plot[-1], temperature_plot[0], temperature_plot[-1]),
+        cmap="Greys",
+        norm=LogNorm(vmin=1.0e-3, vmax=1.0e13),
+        interpolation="nearest",
+    )
+    decade_levels = np.logspace(-3.0, 13.0, 17)
+    minor_levels = np.concatenate(
+        [decade * np.arange(2.0, 10.0) for decade in np.logspace(-3.0, 12.0, 16)]
+    )
+    map_axis.contour(
+        energy_plot,
+        temperature_plot,
+        ratio,
+        levels=minor_levels,
+        colors="0.35",
+        linewidths=0.35,
+        linestyles=":",
+    )
+    contours = map_axis.contour(
+        energy_plot,
+        temperature_plot,
+        ratio,
+        levels=decade_levels,
+        colors="black",
+        linewidths=0.75,
+    )
+
+    def ratio_label(value):
+        exponent = int(round(np.log10(value)))
+        if exponent == 0:
+            return "1×"
+        return rf"10^{{{exponent}}}×"
+
+    map_axis.clabel(
+        contours,
+        inline=True,
+        fontsize=6.4,
+        fmt=ratio_label,
+    )
+    map_axis.axhline(400.0, color="black", linestyle="--", linewidth=0.75, alpha=0.75)
+    map_axis.text(
+        98.0,
+        405.0,
+        "400°C",
+        ha="right",
+        va="bottom",
+        fontsize=7.0,
+        bbox={"facecolor": "white", "edgecolor": "none", "alpha": 0.82, "pad": 1.2},
+    )
+    map_axis.text(
+        12.0,
+        485.0,
+        "dark = many diffusion times\nlight = release is fast",
+        ha="center",
+        va="top",
+        fontsize=6.8,
+        bbox={"facecolor": "white", "edgecolor": "none", "alpha": 0.78, "pad": 1.5},
+    )
+    map_axis.set_xlabel(r"Trap binding energy, $E_B$ [kJ/mol]")
+    map_axis.set_ylabel("Temperature [°C]")
+    map_axis.set_title("How long does release take relative to lattice diffusion?")
+    map_axis.set_xticks([10, 20, 25, 30, 35, 40, 50, 60, 80, 100])
+    map_axis.grid(False)
+    colorbar = figure.colorbar(image, ax=map_axis, pad=0.02, fraction=0.046)
+    colorbar.set_label("Detrapping half-time [ideal-lattice diffusion times]")
+    colorbar.set_ticks(decade_levels)
+    colorbar.ax.yaxis.set_major_formatter(LogFormatterMathtext(base=10))
+
+    selected_energies = list(np.arange(10.0, 101.0, 10.0))
+    for index, energy in enumerate(selected_energies):
+        line_axis.plot(
+            temperature_plot,
+            _trap_temperature_ratio(temperature_plot, energy),
+            color="black",
+            linewidth=1.15,
+            linestyle=LINE_STYLES[index % len(LINE_STYLES)][0],
+            label=rf"{energy:g} kJ/mol",
+            zorder=2,
+        )
+    line_axis.axhline(1.0, color="0.35", linestyle=":", linewidth=0.9)
+    line_axis.text(
+        495.0,
+        1.08,
+        "1 diffusion time",
+        ha="right",
+        va="bottom",
+        fontsize=7.0,
+    )
+    line_axis.axvspan(400.0, 500.0, color="0.85", alpha=0.35, zorder=0)
+    line_axis.text(
+        450.0,
+        0.002,
+        "At 400°C and above,\nordinary traps (≤60 kJ/mol)\nrelease within about one\nlattice-diffusion time",
+        ha="center",
+        va="bottom",
+        fontsize=6.4,
+        bbox={"facecolor": "white", "edgecolor": "none", "alpha": 0.82, "pad": 1.5},
+    )
+    line_axis.set_yscale("log")
+    line_axis.set_xlim(20.0, 500.0)
+    line_axis.set_xlabel("Temperature [°C]")
+    line_axis.set_ylabel("Detrapping half-time [ideal-lattice diffusion times]")
+    line_axis.set_title("How many lattice-diffusion times does release take?")
+    line_axis.grid(True, which="both")
+    line_axis.text(
+        0.02,
+        0.03,
+        r"$L=0.5$ mm; $p_0=5\times10^3$ s$^{-1}$; $E_D=4.5$ kJ/mol",
+        transform=line_axis.transAxes,
+        ha="left",
+        va="bottom",
+        fontsize=6.2,
+        bbox={"facecolor": "white", "edgecolor": "none", "alpha": 0.82, "pad": 1.2},
+    )
+    line_axis.legend(fontsize=6.1, ncol=2, loc="upper right")
+    figure.suptitle(
+        "Hydrogen trapping: binding energy versus temperature",
+        fontsize=12.5,
+    )
+    return figure
+
+
 def render_response_map(results: Mapping[str, SimulationResult], metric: str):
     cases = _select(results, "map:")
     if not cases:
@@ -1879,6 +2076,7 @@ RENDERERS = {
     "ideal": render_ideal,
     "surface": render_surface,
     "trapping": render_trapping,
+    "trap_temperature_map": render_trap_temperature_map,
     "prefill": render_prefill,
     "annex_model": render_annex_model,
     "annex_trap_capacity": render_annex_trap_capacity,
