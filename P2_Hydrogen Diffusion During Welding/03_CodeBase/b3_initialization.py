@@ -79,9 +79,9 @@ def weld_sample(sim_type):
         # Set the edges here so we can easily do the boundary conditions later
         dx = get_value("dx")
 
-        left_above = slice(int(fr_ab / dx), int((fr_ab + th - we) / dx))  # left edge, above gap
-        left_below = slice(int((fr_ab + th) / dx), int((fr_ab + th + su_h) / dx))  # left edge, below gap
-        right_rows = slice(int((fr_ab + th) / dx), int((fr_ab + th + su_h) / dx))  # right edge (lower plate)
+        left_above = slice(int(round(fr_ab / dx)), int(round((fr_ab + th - we) / dx)))  # left edge, above gap
+        left_below = slice(int(round((fr_ab + th) / dx)), int(round((fr_ab + th + su_h) / dx)))  # left edge, below gap
+        right_rows = slice(int(round((fr_ab + th) / dx)), int(round((fr_ab + th + su_h) / dx)))  # right edge (lower plate)
 
         lap_joint_edges = {
             "left_above": {"rows": left_above, "col": 0, "nbr_col": 1},
@@ -165,21 +165,21 @@ def initialize(simulation_type, nx, ny, dx, dy, le, we, th, su_h, su_w, fr_le, f
 
                 # Above and below the whole thing for nicer pictures and boundary conditions
                 # -5 for now for plotting purposes, change later maybe
-                if y < (fr_ab / dy) or y > (fr_ab + th + su_h) / dy:
+                if y < (fr_ab / dy) or y >= (fr_ab + th + su_h) / dy:
                     # remember! we want x horizontal! BUT it needs to be second in [,] notation
                     u0[y, x] = t_room + get_value("temperature_offset")
                     h0[y, x] = get_value("hydrogen_offset")  # -5 for nicer display
                     microstructure_id[y, x] = 0  # 0 = none | 1 = bm | 2 = wm | 3 = haz
 
                 # below weld samples | left and right of weld pool support
-                if (x < fr_le / dx or x > ((fr_le+su_w) / dx)) and y > (th + fr_ab) / dy:
+                if (x < fr_le / dx or x >= ((fr_le+su_w) / dx)) and y >= (th + fr_ab) / dy:
                     # remember! we want x horizontal! BUT it needs to be second in [,] notation
                     u0[y, x] = t_room + get_value("temperature_offset")
                     h0[y, x] = get_value("hydrogen_offset")  # -5 for nicer display
                     microstructure_id[y, x] = 0  # 0 = none | 1 = bm | 2 = wm | 3 = haz
 
                 # where the actual weld beads go later, for now its "empty" at room temperature
-                if le/dx < x < ((le+we)/dx) and y < (th+fr_ab)/dy:
+                if le/dx <= x < ((le+we)/dx) and y < (th+fr_ab)/dy:
                     # remember! we want x horizontal! BUT it needs to be second in [,] notation
                     u0[y, x] = t_room + get_value("temperature_offset")
                     h0[y, x] = get_value("hydrogen_offset")  # -5 for nicer display
@@ -197,21 +197,21 @@ def initialize(simulation_type, nx, ny, dx, dy, le, we, th, su_h, su_w, fr_le, f
 
                 # Above and below the whole thing for nicer pictures and boundary conditions
                 # -5 for now for plotting purposes, change later
-                if y < (fr_ab / dy) or y > (fr_ab + th + su_h) / dy:
+                if y < (fr_ab / dy) or y >= (fr_ab + th + su_h) / dy:
                     # remember! we want x horizontal! BUT it needs to be second in [,] notation
                     u0[y, x] = t_room + get_value("temperature_offset")
                     h0[y, x] = get_value("hydrogen_offset")  # -5 for nicer display
                     microstructure_id[y, x] = 0  # 0 = none | 1 = bm | 2 = wm | 3 = haz
 
                 # Right side above | (depreciated but left below was: x < le / dx and y > (th + fr_ab) / dx))
-                if x > le / dx and y < (fr_ab + th) / dy:
+                if x >= le / dx and y < (fr_ab + th) / dy:
                     # remember! we want x horizontal! BUT it needs to be second in [,] notation
                     u0[y, x] = t_room + get_value("temperature_offset")
                     h0[y, x] = get_value("hydrogen_offset")  # -5 for nicer display
                     microstructure_id[y, x] = 0  # 0 = none | 1 = bm | 2 = wm | 3 = haz
 
                 # Gap between the plates (For now, 1 dy thick only)
-                if x <= fr_le / dx and ((fr_ab + th - we) / dy <= y < (fr_ab + th) / dy):
+                if x < fr_le / dx and ((fr_ab + th - we) / dy <= y < (fr_ab + th) / dy):
                     # remember! we want x horizontal! BUT it needs to be second in [,] notation
                     u0[y, x] = t_room + get_value("temperature_offset")
                     h0[y, x] = get_value("hydrogen_offset")  # -5 for nicer display
@@ -223,7 +223,7 @@ def initialize(simulation_type, nx, ny, dx, dy, le, we, th, su_h, su_w, fr_le, f
                     pass  # Placeholder for future special handling
 
                 # Initialize the lower plate w. hydrogen. Linear equillibrium with hydro_inside inside and 0 outside.
-                if (fr_ab + th) / dy < y < (fr_ab + th + su_h) / dy:
+                if (fr_ab + th) / dy <= y < (fr_ab + th + su_h) / dy:
                     fraction = (y - (fr_ab + th) / dy) / ((fr_ab + th + su_h) / dy - (fr_ab + th) / dy)
                     fraction = max(0.0, min(1.0, fraction))
                     h0[y, x] = get_value("h_on_the_inside") * fraction
@@ -240,7 +240,7 @@ def initialize(simulation_type, nx, ny, dx, dy, le, we, th, su_h, su_w, fr_le, f
 
                 # Above and below the whole thing for nicer pictures and boundary conditions
                 # -5 for now for plotting purposes, change later maybe
-                if y < (fr_ab / dy) or y > (fr_ab + th) / dy:
+                if y < (fr_ab / dy) or y >= (fr_ab + th) / dy:
                     # remember! we want x horizontal! BUT it needs to be second in [,] notation
                     u0[y, x] = t_room + get_value("temperature_offset")
                     h0[y, x] = get_value("hydrogen_offset")  # -5 for nicer display
