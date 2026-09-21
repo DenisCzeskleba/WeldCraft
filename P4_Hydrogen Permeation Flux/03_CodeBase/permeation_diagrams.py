@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Callable, Dict, Iterable, List, Mapping, Sequence, Tuple
 
 import matplotlib.pyplot as plt
+from matplotlib.cm import ScalarMappable
 from matplotlib.patches import FancyArrowPatch, Rectangle
 from matplotlib.colors import LogNorm
 from matplotlib.ticker import LogFormatterMathtext
@@ -35,8 +36,9 @@ TRAPPING_STRENGTH_DISPLAY_ENERGIES_KJ_MOL = [20.0, 25.0, 27.0, 30.0, 32.0, 35.0,
 TRAP_MAP_LENGTH_MM = 0.5
 TRAP_MAP_P0_S_INV = 5.0e3
 TRAP_MAP_ED_KJ_MOL = 4.5
-TRAP_MAP_D0_CM2_S = 7.23e-4
+TRAP_MAP_D_L_20_MM2_S = 6.0e-3
 TRAP_MAP_Q_L_J_MOL = 5690.0
+TRAP_MAP_REFERENCE_TEMPERATURE_K = 293.15
 TRAP_MAP_TEMPERATURES_C = np.array(
     [20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0, 90.0, 100.0, 200.0, 300.0, 400.0, 500.0]
 )
@@ -85,8 +87,13 @@ def _apply_publication_style(figure, style: Mapping[str, object] | None) -> None
             text.set_fontsize(float(text.get_fontsize()) * font_scale)
         except (TypeError, ValueError):
             pass
-    for axis in figure.axes:
-        axis.grid(grid_visible, linestyle=grid_style)
+    grid_overrides = getattr(figure, "_grid_visibility", {})
+    for axis_index, axis in enumerate(figure.axes):
+        axis_grid_visible = bool(grid_overrides.get(axis_index, grid_visible))
+        if axis_grid_visible:
+            axis.grid(True, linestyle=grid_style)
+        else:
+            axis.grid(False)
         for line in axis.lines:
             line.set_linewidth(line.get_linewidth() * line_scale)
             line.set_markersize(line.get_markersize() * marker_scale)
@@ -1707,25 +1714,40 @@ def _metric_label(metric: str) -> str:
 def _trap_temperature_ratio(temperature_c, binding_energy_kj_mol):
     """Return detrapping half-time divided by ideal lattice diffusion time."""
 
+    return _trap_temperature_half_time_seconds(
+        temperature_c, binding_energy_kj_mol
+    ) / _trap_lattice_time_seconds(temperature_c)
+
+
+def _trap_lattice_diffusivity_mm2_s(temperature_c):
+    gas_constant = 8.314462618
+    temperature_k = np.asarray(temperature_c, dtype=float) + 273.15
+    return TRAP_MAP_D_L_20_MM2_S * np.exp(
+        TRAP_MAP_Q_L_J_MOL
+        / gas_constant
+        * (1.0 / TRAP_MAP_REFERENCE_TEMPERATURE_K - 1.0 / temperature_k)
+    )
+
+
+def _trap_lattice_time_seconds(temperature_c):
+    return TRAP_MAP_LENGTH_MM**2 / _trap_lattice_diffusivity_mm2_s(temperature_c)
+
+
+def _trap_temperature_half_time_seconds(temperature_c, binding_energy_kj_mol):
+    """Return physical detrapping half-time in seconds."""
+
     gas_constant = 8.314462618
     temperature_k = np.asarray(temperature_c, dtype=float) + 273.15
     binding_energy = np.asarray(binding_energy_kj_mol, dtype=float)
-    lattice_diffusivity_mm2_s = (
-        TRAP_MAP_D0_CM2_S
-        * np.exp(-TRAP_MAP_Q_L_J_MOL / (gas_constant * temperature_k))
-        * 100.0
-    )
-    lattice_time_min = TRAP_MAP_LENGTH_MM**2 / lattice_diffusivity_mm2_s / 60.0
-    detrapping_time_min = (
+    return (
         np.log(2.0)
         / TRAP_MAP_P0_S_INV
         * np.exp(
             (TRAP_MAP_ED_KJ_MOL + binding_energy) * 1000.0
             / (gas_constant * temperature_k)
         )
-        / 60.0
     )
-    return detrapping_time_min / lattice_time_min
+
 
 
 def render_trap_temperature_map(
@@ -1734,145 +1756,212 @@ def render_trap_temperature_map(
     time_axis: str,
     comparison_window_ref: float | None = None,
 ):
-    """Render the temperature/binding-energy retention diagnostic."""
+    """Render detrapping half-time in physical seconds versus temperature."""
 
     del results, normalization, time_axis, comparison_window_ref
     energy_plot = np.linspace(10.0, 100.0, 181)
     temperature_plot = np.linspace(20.0, 500.0, 241)
-    ratio = _trap_temperature_ratio(
+    half_time_seconds = _trap_temperature_half_time_seconds(
         temperature_plot[:, None], energy_plot[None, :]
     )
 
     figure, axes = plt.subplots(
         1,
         2,
-        figsize=(10.4, 4.8),
+        figsize=(11.6, 5.2),
         gridspec_kw={"width_ratios": [1.15, 1.0]},
         constrained_layout=True,
     )
     map_axis, line_axis = axes
+    figure._grid_visibility = {0: False, 1: True}
+    year_seconds = 365.25 * 86400.0
+    indicator_color = "#2166AC"
+    colormap = plt.get_cmap("Greys").copy()
+    colormap.set_under("white")
     image = map_axis.imshow(
-        ratio,
+        half_time_seconds,
         origin="lower",
         aspect="auto",
         extent=(energy_plot[0], energy_plot[-1], temperature_plot[0], temperature_plot[-1]),
-        cmap="Greys",
-        norm=LogNorm(vmin=1.0e-3, vmax=1.0e13),
+        cmap=colormap,
+        norm=LogNorm(vmin=1.0, vmax=1.0e15),
         interpolation="nearest",
     )
-    decade_levels = np.logspace(-3.0, 13.0, 17)
-    minor_levels = np.concatenate(
-        [decade * np.arange(2.0, 10.0) for decade in np.logspace(-3.0, 12.0, 16)]
-    )
-    map_axis.contour(
-        energy_plot,
-        temperature_plot,
-        ratio,
-        levels=minor_levels,
-        colors="0.35",
-        linewidths=0.35,
-        linestyles=":",
-    )
+    decade_levels = np.logspace(0.0, 14.0, 15)
     contours = map_axis.contour(
         energy_plot,
         temperature_plot,
-        ratio,
+        half_time_seconds,
         levels=decade_levels,
         colors="black",
         linewidths=0.75,
     )
-
-    def ratio_label(value):
-        exponent = int(round(np.log10(value)))
-        if exponent == 0:
-            return "1×"
-        return rf"10^{{{exponent}}}×"
-
     map_axis.clabel(
         contours,
         inline=True,
-        fontsize=6.4,
-        fmt=ratio_label,
+        fontsize=10.5,
+        fmt=lambda value: rf"$10^{{{int(round(np.log10(value)))}}}$",
     )
-    map_axis.axhline(400.0, color="black", linestyle="--", linewidth=0.75, alpha=0.75)
-    map_axis.text(
-        98.0,
-        405.0,
-        "400°C",
-        ha="right",
-        va="bottom",
-        fontsize=7.0,
-        bbox={"facecolor": "white", "edgecolor": "none", "alpha": 0.82, "pad": 1.2},
+    indicator_levels = [60.0, 86400.0, 604800.0]
+    indicator_contours = map_axis.contour(
+        energy_plot,
+        temperature_plot,
+        half_time_seconds,
+        levels=indicator_levels,
+        colors=indicator_color,
+        linewidths=0.9,
+        linestyles=":",
     )
+    map_axis.clabel(
+        indicator_contours,
+        inline=True,
+        fontsize=10.5,
+        colors=indicator_color,
+        fmt={
+            60.0: "1 minute",
+            86400.0: "1 day",
+            604800.0: "1 week",
+        },
+    )
+    adjusted_indicator_labels = {
+        30.4375 * 86400.0: ("1 month", (80.0, 156.0)),
+        year_seconds: ("1 year", (70.0, 70.0)),
+    }
+    for level, (label, position) in adjusted_indicator_labels.items():
+        adjusted_contour = map_axis.contour(
+            energy_plot,
+            temperature_plot,
+            half_time_seconds,
+            levels=[level],
+            colors=indicator_color,
+            linewidths=0.9,
+            linestyles=":",
+        )
+        map_axis.clabel(
+            adjusted_contour,
+            inline=True,
+            fontsize=10.5,
+            colors=indicator_color,
+            fmt={level: label},
+            manual=[position],
+        )
     map_axis.text(
-        12.0,
-        485.0,
-        "dark = many diffusion times\nlight = release is fast",
-        ha="center",
+        0.12,
+        0.88,
+        "< 1 s",
+        transform=map_axis.transAxes,
+        ha="left",
         va="top",
-        fontsize=6.8,
-        bbox={"facecolor": "white", "edgecolor": "none", "alpha": 0.78, "pad": 1.5},
+        fontsize=12.0,
     )
-    map_axis.set_xlabel(r"Trap binding energy, $E_B$ [kJ/mol]")
-    map_axis.set_ylabel("Temperature [°C]")
-    map_axis.set_title("How long does release take relative to lattice diffusion?")
+    map_axis.set_xlabel(r"Trap binding energy, $E_B$ [kJ/mol]", fontsize=12.0)
+    map_axis.set_ylabel("Temperature [°C]", fontsize=10.0)
     map_axis.set_xticks([10, 20, 25, 30, 35, 40, 50, 60, 80, 100])
-    map_axis.grid(False)
-    colorbar = figure.colorbar(image, ax=map_axis, pad=0.02, fraction=0.046)
-    colorbar.set_label("Detrapping half-time [ideal-lattice diffusion times]")
-    colorbar.set_ticks(decade_levels)
+    map_axis.tick_params(labelsize=11.0)
+    map_axis.xaxis.label.set_fontsize(12.0)
+    map_axis.yaxis.label.set_fontsize(12.0)
+    map_axis.grid(False, which="both")
+    colorbar_mappable = ScalarMappable(
+        norm=LogNorm(vmin=1.0, vmax=1.0e12),
+        cmap=colormap,
+    )
+    colorbar_mappable.set_array([])
+    colorbar = figure.colorbar(
+        colorbar_mappable,
+        ax=map_axis,
+        pad=0.02,
+        fraction=0.046,
+    )
+    colorbar.set_ticks(np.logspace(0.0, 12.0, 7))
     colorbar.ax.yaxis.set_major_formatter(LogFormatterMathtext(base=10))
+    colorbar.ax.tick_params(labelsize=11.0)
 
     selected_energies = list(np.arange(10.0, 101.0, 10.0))
-    for index, energy in enumerate(selected_energies):
+    label_temperatures = {
+        20.0: 30.0,
+        30.0: 60.0,
+        40.0: 100.0,
+        50.0: 140.0,
+        60.0: 180.0,
+        70.0: 210.0,
+        80.0: 235.0,
+        90.0: 260.0,
+        100.0: 285.0,
+    }
+    for index, (energy, label_temperature) in enumerate(
+        (energy, label_temperatures.get(energy))
+        for energy in selected_energies
+        if energy in label_temperatures
+    ):
+        half_time = _trap_temperature_half_time_seconds(temperature_plot, energy)
         line_axis.plot(
             temperature_plot,
-            _trap_temperature_ratio(temperature_plot, energy),
+            half_time,
             color="black",
             linewidth=1.15,
-            linestyle=LINE_STYLES[index % len(LINE_STYLES)][0],
-            label=rf"{energy:g} kJ/mol",
+            linestyle="-",
             zorder=2,
         )
-    line_axis.axhline(1.0, color="0.35", linestyle=":", linewidth=0.9)
-    line_axis.text(
-        495.0,
-        1.08,
-        "1 diffusion time",
-        ha="right",
-        va="bottom",
-        fontsize=7.0,
+        label_value = float(
+            _trap_temperature_half_time_seconds(label_temperature, energy)
+        )
+        line_axis.annotate(
+            f"{energy:g}",
+            (label_temperature, label_value),
+            xytext=(4, 0),
+            textcoords="offset points",
+            fontsize=11.0,
+            ha="left",
+            va="center",
+            bbox={"facecolor": "white", "edgecolor": "none", "alpha": 0.95, "pad": 0.25},
+        )
+
+    lattice_time_seconds = _trap_lattice_time_seconds(temperature_plot)
+    line_axis.fill_between(
+        temperature_plot,
+        1.0,
+        lattice_time_seconds,
+        where=lattice_time_seconds >= 1.0,
+        color="0.88",
+        alpha=0.65,
+        zorder=0,
     )
-    line_axis.axvspan(400.0, 500.0, color="0.85", alpha=0.35, zorder=0)
+    line_axis.plot(
+        temperature_plot,
+        lattice_time_seconds,
+        color="0.45",
+        linestyle=":",
+        linewidth=1.0,
+        zorder=1,
+    )
     line_axis.text(
-        450.0,
-        0.002,
-        "At 400°C and above,\nordinary traps (≤60 kJ/mol)\nrelease within about one\nlattice-diffusion time",
+        300.0,
+        float(_trap_lattice_time_seconds(300.0)) * 1.08,
+        "one lattice-diffusion time",
         ha="center",
         va="bottom",
-        fontsize=6.4,
+        fontsize=11.0,
+        color="0.30",
         bbox={"facecolor": "white", "edgecolor": "none", "alpha": 0.82, "pad": 1.5},
     )
     line_axis.set_yscale("log")
     line_axis.set_xlim(20.0, 500.0)
-    line_axis.set_xlabel("Temperature [°C]")
-    line_axis.set_ylabel("Detrapping half-time [ideal-lattice diffusion times]")
-    line_axis.set_title("How many lattice-diffusion times does release take?")
-    line_axis.grid(True, which="both")
+    line_axis.set_ylim(1.0, 1.0e15)
+    line_axis.set_xlabel("Temperature [°C]", fontsize=10.0)
+    line_axis.set_ylabel(r"Detrapping Half-Time $\tau_{0.5}$ [s]", fontsize=10.0)
+    line_axis.tick_params(labelsize=11.0)
+    line_axis.xaxis.label.set_fontsize(12.0)
+    line_axis.yaxis.label.set_fontsize(12.0)
+    line_axis.grid(True, which="both", color="0.78", linestyle=":")
     line_axis.text(
-        0.02,
-        0.03,
-        r"$L=0.5$ mm; $p_0=5\times10^3$ s$^{-1}$; $E_D=4.5$ kJ/mol",
+        0.98,
+        0.96,
+        r"$E_B$ [kJ/mol]",
         transform=line_axis.transAxes,
-        ha="left",
-        va="bottom",
-        fontsize=6.2,
+        ha="right",
+        va="top",
+        fontsize=12.0,
         bbox={"facecolor": "white", "edgecolor": "none", "alpha": 0.82, "pad": 1.2},
-    )
-    line_axis.legend(fontsize=6.1, ncol=2, loc="upper right")
-    figure.suptitle(
-        "Hydrogen trapping: binding energy versus temperature",
-        fontsize=12.5,
     )
     return figure
 

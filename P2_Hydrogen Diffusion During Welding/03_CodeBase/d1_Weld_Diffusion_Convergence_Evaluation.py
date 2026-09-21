@@ -1,836 +1,953 @@
+"""Three-grid convergence study for WeldCraft HDF5 results.
+
+This is deliberately a standalone, power-user tool. It does not run simulations
+or modify their configuration. Give it three completed HDF5 files in
+coarse-to-fine order and it will:
+
+* read grid spacing and provenance from each file's ``/meta`` group;
+* warn when the runs differ in ways other than grid/output settings;
+* select a small, representative set of common physical times (20 by default);
+* interpolate all three runs to those exact times;
+* conservatively average medium/fine cells into the same coarse control volumes
+  (or optionally compare interpolated point samples);
+* exclude air and interpolation stencils crossing material/air boundaries;
+* calculate material-only L2 (grid RMS) and Linf differences;
+* report an observed order for uniform grid-refinement ratios; and
+* write a compact CSV, JSON summary, and optional figures.
+
+Only the slices needed for the selected times are read. The entire simulations
+are never loaded into memory.
 """
-Weld & Hydrogen Diffusion — Grid Convergence / Consistency Checker
-=================================================================
 
-Purpose
--------
-This script compares **three** simulation runs of a 2D weld + hydrogen diffusion
-model that were executed with different spatial resolutions (e.g., dx = 1.0,
-0.5, 0.25). The goal is to provide a simple, engineer-friendly way to:
+from __future__ import annotations
 
-1) Load snapshot data (temperature and hydrogen concentration) from HDF5 files.
-2) Align snapshots across runs in time (either by nearest-neighbor or by optional
-   linear interpolation in time on the finer run).
-3) Map the finer solutions onto the coarser grid in space (bilinear interpolation),
-   so fields are comparable on the same grid.
-4) Compute **global error metrics** (L2 / Linf) over time between adjacent pairs
-   of runs (coarse–medium, medium–fine).
-5) Extract and compare **time series at a few engineer-relevant probe points**
-   (e.g., weld centerline, HAZ, fusion boundary), again for adjacent pairs.
-6) Report a concise CSV summary you can quickly inspect or plot elsewhere.
-
-Design Philosophy
------------------
-- **Simplicity is king.** Descriptive variable names, explicit steps, and
-  minimal abstractions. The code favors readability over cleverness.
-- **Zero magic.** Functions do exactly one obvious thing. Most intermediate
-  arrays are named verbosely.
-- **Stable defaults.** By default the script keeps the CFL idea in mind but
-  does not enforce it; it simply compares the outputs you already saved.
-
-Assumptions About Your HDF5 Files
----------------------------------
-- Snapshots are saved as **individual datasets** with numeric suffixes, e.g.:
-    - 'u_snapshot_00042'   (temperature)
-    - 'h_snapshot_00042'   (hydrogen concentration)
-    - 't_snapshot_00042'   (scalar, simulation time for this snapshot in seconds)
-    - 'd_snapshot_00042'   (optional field: diffusion coefficient map)
-- The file **also** contains spatial coordinate arrays:
-    - '/x' → shape (nx,)
-    - '/y' → shape (ny,)
-  If these are not present in your files, please add them. It makes life easier
-  and avoids guessing grid spacing.
-
-Time Alignment Options
-----------------------
-- **Nearest snapshot matching (default):** Good enough for engineering work.
-  The script pairs each coarse snapshot time with the closest fine snapshot time.
-- **Linear-in-time interpolation (optional):** If you want to be a bit more
-  "mathy", set USE_TEMPORAL_INTERPOLATION=True and the script will interpolate
-  the finer run in time onto the coarse snapshot times before doing spatial
-  mapping.
-
-Outputs
--------
-- Prints observed (coarse–medium vs. medium–fine) error levels and a rough
-  observed order via RMS-over-time.
-- Writes a CSV 'comparison_summary.csv' containing per-snapshot errors for
-  both fields (T and H) and differences at probe points over time.
-
-How To Use
-----------
-1) Set the three HDF5 paths and their dx values in the CONFIG block.
-2) Adjust PROBE_POINTS if needed.
-3) Run:  python weld_diffusion_convergence_eval.py
-
-"""
-import os
-from dataclasses import dataclass
-from typing import Dict, List, Tuple, Sequence, Optional
-import re
+import argparse
+import csv
+import json
 import math
-import warnings
-import h5py
-import numpy as np
+import re
+from contextlib import ExitStack
+from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
+from typing import Any, Iterable, Sequence
+
+import h5py
+import matplotlib
+import numpy as np
+
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+
 from b4_functions import in_results
 
 
-@dataclass
-class SimulationRunDescription:
-    file_path: str
-    label_for_plots_and_csv: str
-    spatial_step_dx_mm: float
-    spatial_step_dy_mm: float | None = None  # if None, assume same as dx
+TIME_TOLERANCE_SECONDS = 1e-9
+DEFAULT_SAMPLE_COUNT = 20
+DEFAULT_OUTPUT_PARENT = "05_Convergence Analysis"
 
 
-# ============================= CONFIGURATION =============================
+@dataclass(frozen=True)
+class FieldDefinition:
+    command_name: str
+    display_name: str
+    dataset_prefix: str
+    unit: str
 
-# Automatically detect the directory where this script lives
-DEFAULT_BASE_DIRECTORY = os.path.dirname(os.path.abspath(__file__))
 
-# All inputs and outputs for a comparison go into this subfolder next to your base dir.
-# We'll create a timestamped subfolder inside it for each run, e.g. "250908_0806".
-ANALYSIS_PARENT_FOLDER_NAME: str = r"05_Convergence Analysis"  # folder will be created if missing
+FIELD_DEFINITIONS = {
+    "temperature": FieldDefinition("temperature", "Temperature", "u_snapshot_", "degC"),
+    "hydrogen": FieldDefinition("hydrogen", "Hydrogen", "h_snapshot_", "%"),
+}
+TIME_DATASET_PREFIX = "t_snapshot_"
+MATERIAL_DATASET_PREFIX = "d_snapshot_"
+MATERIAL_FIELD = FieldDefinition("material", "Material", MATERIAL_DATASET_PREFIX, "")
 
-# Output CSV filename (will live inside timestamped subfolder)
-OUTPUT_CSV_FILENAME = "comparison_summary.csv"
 
-# Subfolder for figures inside timestamped analysis folder
-OUTPUT_FIGURES_SUBFOLDER_NAME = "figures"
+# These may legitimately differ in a grid study without changing the physical
+# problem. Everything else is compared and reported to the user.
+IGNORED_METADATA_KEYS = {
+    "animation_frame_stride",
+    "animation_name",
+    "coef_robin_x_air",
+    "coef_robin_x_cu",
+    "coef_robin_x_h2",
+    "coef_robin_y_air",
+    "coef_robin_y_cu",
+    "coef_robin_y_h2",
+    "debug_bead_plots",
+    "dim_columns",
+    "dim_rows",
+    "dt",
+    "dt_big",
+    "dt_big_calc",
+    "dx",
+    "dx2",
+    "dy",
+    "dy2",
+    "file_name",
+    "inv_dx2",
+    "inv_dy2",
+    "safety_factor",
+    "s_per_frame_just_diffusion_sparse",
+    "s_per_frame_part1",
+    "use_sparse_saving_in_just_diffusion",
+}
 
-# Save figures toggle
-SAVE_FIGURES: bool = True
-
-# Order: coarse → medium → fine
-SIMULATION_RUNS_LIST: List[SimulationRunDescription] = [
-    # Put ONLY filenames here; the script will resolve them inside the active analysis folder.
-    # This keeps everything "in one spot" and avoids absolute paths.
-    SimulationRunDescription(file_path="XXX.h5", label_for_plots_and_csv="dx=1.00", spatial_step_dx_mm=1.00),
-    SimulationRunDescription(file_path="XXX.h5", label_for_plots_and_csv="dx=0.50", spatial_step_dx_mm=0.50),
-    SimulationRunDescription(file_path="XXX.h5", label_for_plots_and_csv="dx=0.25", spatial_step_dx_mm=0.25),
-]
-
-# Dataset name prefixes exactly as used by your saver
-DATASET_PREFIX_TEMPERATURE: str = "u_snapshot_"      # temperature field snapshots
-DATASET_PREFIX_HYDROGEN: str    = "h_snapshot_"      # hydrogen concentration snapshots
-DATASET_PREFIX_TIME: str        = "t_snapshot_"      # scalar time stamps
-DATASET_PREFIX_DIFFUSIVITY: str = "d_snapshot_"      # optional, diffusion coefficient map
-
-# Coordinate dataset names (1D arrays)
-DATASET_X_COORDINATES: str = "/x"
-DATASET_Y_COORDINATES: str = "/y"
-
-# Engineer-style probe points (physical coordinates). Change as needed.
-# Example: centerline, fusion line, HAZ, quarter-thickness, etc.
-PROBE_POINTS: List[Tuple[str, Tuple[float, float]]] = [
-    ("Centerline", (70, 20.0)),
-    ("FusionLine", (12.5, 6.0)),
-    ("HAZ_5mm",    (20.5, 6.0)),
-    ("Mid_Bead",   (17.5, 5.0)),
-]
-
-# Choose which fields to compare (label, dataset_prefix)
-FIELDS_TO_COMPARE: List[Tuple[str, str]] = [
-    ("Temperature", DATASET_PREFIX_TEMPERATURE),
-    ("Hydrogen",    DATASET_PREFIX_HYDROGEN),
-]
-
-# Time alignment behavior
-USE_TEMPORAL_INTERPOLATION: bool = True   # False → nearest snapshot; True → linear in time on the finer run
-MAX_TIME_MISMATCH_SECONDS: float = 1e2     # only used for sanity checks when nearest-matching (set large to ignore)
-FLOAT_TIME_TOLERANCE: float = 1e-12  # small epsilon for time comparisons
-# ============================= DATA CONTAINERS =============================
 
 @dataclass
-class SnapshotSeries:
-    """Container for a time series of 2D fields and associated metadata.
-
-    Attributes
-    ----------
-    times_seconds : (nt,) float array of snapshot times (seconds)
-    field_stack   : (nt, ny, nx) array for the primary field (Temperature or Hydrogen)
-    x_coordinates : (nx,) 1D array of x positions (mm), strictly increasing internally
-    y_coordinates : (ny,) 1D array of y positions (mm), strictly increasing internally
-    optional_diffusivity_stack : (nt, ny, nx) array or None (loaded but not used in metrics)
-    """
+class SimulationRun:
+    path: Path
+    label: str
+    config: dict[str, Any]
+    dx_mm: float
+    dy_mm: float
+    snapshot_indices: np.ndarray
     times_seconds: np.ndarray
-    field_stack: np.ndarray
-    x_coordinates: np.ndarray
-    y_coordinates: np.ndarray
-    optional_diffusivity_stack: Optional[np.ndarray]
-
-# ============================= PATH HELPERS =============================
-
-def resolve_active_analysis_folder() -> str:
-    """Create (if needed) the parent folder and a timestamped analysis subfolder.
-
-    Example output path:
-        <base>/Convergence Analysis/250908_0806
-    """
-    parent_folder_abspath = str(in_results(ANALYSIS_PARENT_FOLDER_NAME))
-    os.makedirs(parent_folder_abspath, exist_ok=True)
-
-    now = datetime.now()
-    folder_name = now.strftime("%y%m%d_%H%M")  # YYMMDD_HHMM
-    active_folder_abspath = os.path.join(parent_folder_abspath, folder_name)
-    os.makedirs(active_folder_abspath, exist_ok=True)
-    return active_folder_abspath
-
-# ============================= LOADING HELPERS =============================
-
-def discover_snapshot_indices(h5_handle: h5py.File, prefix: str) -> List[int]:
-    """Return a sorted list of integer indices for datasets like 'prefix_00042'."""
-    regex_pattern = re.compile(rf"^{re.escape(prefix)}(\d+)$")
-    discovered_indices: List[int] = []
-    for dataset_name in h5_handle.keys():
-        match = regex_pattern.match(dataset_name)
-        if match:
-            discovered_indices.append(int(match.group(1)))
-    discovered_indices.sort()
-    return discovered_indices
+    field_shape_y_x: tuple[int, int]
+    x_coordinates_mm: np.ndarray
+    y_coordinates_mm: np.ndarray
+    flip_x: bool
+    flip_y: bool
 
 
-# def _ensure_increasing_coordinates_and_align_stack(
-#     coords: np.ndarray,
-#     stack_time_y_x: np.ndarray,
-#     axis: int,
-# ) -> Tuple[np.ndarray, np.ndarray]:
-#     """If coords are strictly decreasing, reverse both coords and corresponding data axis.
-#
-#     Parameters
-#     ----------
-#     coords : array of shape (n,)
-#     stack_time_y_x : array of shape (nt, ny, nx)
-#     axis : 1 for y, 2 for x (matching stack dimensions)
-#     """
-#     if coords.ndim != 1:
-#         raise ValueError("Coordinate arrays must be 1D.")
-#     if coords.size < 2:
-#         return coords, stack_time_y_x
-#
-#     is_increasing = np.all(np.diff(coords) > 0)
-#     is_decreasing = np.all(np.diff(coords) < 0)
-#     if is_decreasing:
-#         coords = coords[::-1].copy()
-#         stack_time_y_x = np.flip(stack_time_y_x, axis=axis)
-#     elif not is_increasing:
-#         raise ValueError("Coordinate array must be strictly monotone (increasing or decreasing).")
-#     return coords, stack_time_y_x
+@dataclass(frozen=True)
+class SpatialMapping:
+    ix_left: np.ndarray
+    ix_right: np.ndarray
+    iy_lower: np.ndarray
+    iy_upper: np.ndarray
+    weight_x: np.ndarray
+    weight_y: np.ndarray
 
-
-def read_coordinate_arrays_or_construct(
-    h5_handle: h5py.File,
-    run_desc: SimulationRunDescription,
-    sample_field_slice_y_x: np.ndarray,
-) -> Tuple[np.ndarray, np.ndarray]:
-    """Read `/x` and `/y` if present; otherwise, construct from dx/dy in mm (cell centers).
-
-    Returns `(x_coords, y_coords)`, both strictly increasing.
-    """
-    ny, nx = sample_field_slice_y_x.shape
-
-    if DATASET_X_COORDINATES in h5_handle and DATASET_Y_COORDINATES in h5_handle:
-        x_coords = np.asarray(h5_handle[DATASET_X_COORDINATES])
-        y_coords = np.asarray(h5_handle[DATASET_Y_COORDINATES])
-    else:
-        dx_mm = run_desc.spatial_step_dx_mm
-        dy_mm = run_desc.spatial_step_dy_mm if run_desc.spatial_step_dy_mm is not None else dx_mm
-        x_coords = (np.arange(nx) + 0.5) * float(dx_mm)
-        y_coords = (np.arange(ny) + 0.5) * float(dy_mm)
-
-    return x_coords.astype(float), y_coords.astype(float)
-
-
-def load_snapshot_series_for_field(
-    simulation_run: SimulationRunDescription,
-    dataset_prefix_main_field: str,
-    analysis_parent_abspath: str,
-) -> SnapshotSeries:
-    """Load one field (Temperature or Hydrogen) as a time series from a run.
-
-    This function assembles a (time, y, x) stack by scanning datasets with the
-    required prefixes and sorting by their numeric suffixes. It also loads and
-    returns the matching time stamps and coordinate arrays. Coordinates are
-    normalized to be strictly increasing internally; data stacks are flipped
-    accordingly if needed so spatial mapping is consistent.
-    """
-    # Resolve file path relative to the **parent** analysis folder (inputs live there)
-    absolute_file_path = simulation_run.file_path
-    if not os.path.isabs(absolute_file_path):
-        absolute_file_path = os.path.join(analysis_parent_abspath, absolute_file_path)
-
-    with h5py.File(absolute_file_path, "r") as h5f:
-        # Discover indices where both the main field and time exist
-        indices_main = set(discover_snapshot_indices(h5f, dataset_prefix_main_field))
-        indices_time = set(discover_snapshot_indices(h5f, DATASET_PREFIX_TIME))
-        common_indices_sorted = sorted(indices_main.intersection(indices_time))
-        if len(common_indices_sorted) == 0:
-            raise RuntimeError(
-                f"No common snapshots (field '{dataset_prefix_main_field}' and time) found in {simulation_run.file_path}"
-            )
-
-        # Read one field slice to get shape (ny, nx) for coord handling
-        first_idx = common_indices_sorted[0]
-        sample_field = np.asarray(h5f[f"{dataset_prefix_main_field}{first_idx:05d}"])
-        ny, nx = sample_field.shape
-
-        # Read /x and /y, or build fallback from dx/dy (mm)
-        x_coords, y_coords = read_coordinate_arrays_or_construct(h5f, simulation_run, sample_field)
-
-        # Allocate stacks
-        nt = len(common_indices_sorted)
-        times_seconds = np.empty(nt, dtype=float)
-        field_stack = np.empty((nt, ny, nx), dtype=sample_field.dtype)
-
-        # Optional diffusivity stack (loaded but not used in metrics)
-        has_any_diffusivity = any(
-            f"{DATASET_PREFIX_DIFFUSIVITY}{idx:05d}" in h5f for idx in common_indices_sorted
-        )
-        optional_diffusivity_stack = None
-        if has_any_diffusivity:
-            optional_diffusivity_stack = np.empty((nt, ny, nx), dtype=sample_field.dtype)
-
-        # Load series
-        for k, snapshot_index in enumerate(common_indices_sorted):
-            time_dataset_name = f"{DATASET_PREFIX_TIME}{snapshot_index:05d}"
-            field_dataset_name = f"{dataset_prefix_main_field}{snapshot_index:05d}"
-            times_seconds[k] = float(np.asarray(h5f[time_dataset_name]))
-            field_stack[k, :, :] = np.asarray(h5f[field_dataset_name])
-            if optional_diffusivity_stack is not None:
-                diffusivity_dataset_name = f"{DATASET_PREFIX_DIFFUSIVITY}{snapshot_index:05d}"
-                if diffusivity_dataset_name in h5f:
-                    optional_diffusivity_stack[k, :, :] = np.asarray(h5f[diffusivity_dataset_name])
-                else:
-                    # Carry forward last known map or set NaN on the very first
-                    if k > 0:
-                        optional_diffusivity_stack[k, :, :] = optional_diffusivity_stack[k - 1, :, :]
-                    else:
-                        optional_diffusivity_stack[k, :, :] = np.nan
-
-    # --- Normalize coordinate direction to increasing, and apply same flips to both stacks ---
-    def _ensure_increasing_and_get_flip(coords: np.ndarray) -> tuple[np.ndarray, bool]:
-        """Return (coords_increasing, flipped?) where flipped indicates original was decreasing."""
-        if coords.ndim != 1:
-            raise ValueError("Coordinate arrays must be 1D.")
-        if coords.size < 2:
-            return coords, False
-        diffs = np.diff(coords)
-        if np.all(diffs > 0):
-            return coords, False
-        if np.all(diffs < 0):
-            return coords[::-1].copy(), True
-        raise ValueError("Coordinate array must be strictly monotone (increasing or decreasing).")
-
-    # Decide flips once from the raw coords we just read/built
-    x_coords, flip_x = _ensure_increasing_and_get_flip(x_coords)
-    y_coords, flip_y = _ensure_increasing_and_get_flip(y_coords)
-
-    # Apply flips to the main field stack (t, y, x)
-    if flip_x:
-        field_stack = np.flip(field_stack, axis=2)
-    if flip_y:
-        field_stack = np.flip(field_stack, axis=1)
-
-    # Apply the exact same flips to the optional diffusivity stack
-    if optional_diffusivity_stack is not None:
-        if flip_x:
-            optional_diffusivity_stack = np.flip(optional_diffusivity_stack, axis=2)
-        if flip_y:
-            optional_diffusivity_stack = np.flip(optional_diffusivity_stack, axis=1)
-
-    # Optional: warn if NaN/Inf present (you said your sims should avoid this)
-    if not np.isfinite(field_stack).all():
-        n_bad = np.size(field_stack) - int(np.isfinite(field_stack).sum())
-        warnings.warn(f"Field stack contains {n_bad} non‑finite entries; results may be affected.")
-
-    return SnapshotSeries(
-        times_seconds=times_seconds,
-        field_stack=field_stack,
-        x_coordinates=x_coords,
-        y_coordinates=y_coords,
-        optional_diffusivity_stack=optional_diffusivity_stack,
-    )
-
-# ============================= INTERPOLATION HELPERS =============================
-
-def find_nearest_time_index(target_time_seconds: float, available_times_seconds: np.ndarray) -> int:
-    absolute_differences = np.abs(available_times_seconds - target_time_seconds)
-    return int(np.argmin(absolute_differences))
-
-
-def linear_temporal_interpolation(
-    coarse_target_time_seconds: float,
-    fine_times_seconds: np.ndarray,
-    fine_field_stack_time_y_x: np.ndarray,
-) -> np.ndarray:
-    """Return (ny, nx) slice interpolated in time from fine run onto target time.
-
-    Out‑of‑range targets clamp to nearest endpoint. Exact hits return that slice.
-    """
-    if coarse_target_time_seconds <= fine_times_seconds[0] + FLOAT_TIME_TOLERANCE:
-        return fine_field_stack_time_y_x[0]
-    if coarse_target_time_seconds >= fine_times_seconds[-1] - FLOAT_TIME_TOLERANCE:
-        return fine_field_stack_time_y_x[-1]
-
-    right_index = int(np.searchsorted(fine_times_seconds, coarse_target_time_seconds, side="right"))
-    left_index = right_index - 1
-    left_time = fine_times_seconds[left_index]
-    right_time = fine_times_seconds[right_index]
-
-    if abs(right_time - left_time) < FLOAT_TIME_TOLERANCE:
-        return fine_field_stack_time_y_x[left_index]
-
-    interpolation_weight = (coarse_target_time_seconds - left_time) / (right_time - left_time)
-    return (
-        (1.0 - interpolation_weight) * fine_field_stack_time_y_x[left_index]
-        + interpolation_weight * fine_field_stack_time_y_x[right_index]
-    )
-
-# ---------- Vectorized bilinear mapping fine→coarse ----------
 
 @dataclass
-class SpatialMappingCache:
-    """Precomputed mapping indices and weights for vectorized bilinear interpolation.
-
-    Given fine (x_f, y_f) and coarse (x_c, y_c), we cache left/right indices and
-    interpolation weights for both axes so each time slice can be mapped quickly.
-    """
-    ix_left_2d: np.ndarray  # shape (ny_c, nx_c)
-    ix_right_2d: np.ndarray # shape (ny_c, nx_c)
-    iy_bot_2d: np.ndarray   # shape (ny_c, nx_c)
-    iy_top_2d: np.ndarray   # shape (ny_c, nx_c)
-    tx_2d: np.ndarray       # shape (ny_c, nx_c)
-    ty_2d: np.ndarray       # shape (ny_c, nx_c)
-
-
-def build_spatial_mapping_cache(
-    fine_x_coords: np.ndarray,
-    fine_y_coords: np.ndarray,
-    coarse_x_coords: np.ndarray,
-    coarse_y_coords: np.ndarray,
-) -> SpatialMappingCache:
-    """Precompute 2D index/weight arrays for bilinear interpolation from fine→coarse.
-
-    Coordinates must be strictly increasing; inputs are assumed normalized.
-    """
-    nx_f = fine_x_coords.size
-    ny_f = fine_y_coords.size
-
-    # For every coarse x, find the bracketing fine x indices
-    ix_left = np.searchsorted(fine_x_coords, coarse_x_coords, side="right") - 1
-    ix_left = np.clip(ix_left, 0, nx_f - 2)
-    ix_right = ix_left + 1
-
-    # For every coarse y, find the bracketing fine y indices
-    iy_bot = np.searchsorted(fine_y_coords, coarse_y_coords, side="right") - 1
-    iy_bot = np.clip(iy_bot, 0, ny_f - 2)
-    iy_top = iy_bot + 1
-
-    # Compute 1D weights for x and y, then broadcast to 2D grids
-    x1 = fine_x_coords[ix_left]
-    x2 = fine_x_coords[ix_right]
-    with np.errstate(divide='ignore', invalid='ignore'):
-        tx = np.where(x2 == x1, 0.0, (coarse_x_coords - x1) / (x2 - x1))
-    y1 = fine_y_coords[iy_bot]
-    y2 = fine_y_coords[iy_top]
-    with np.errstate(divide='ignore', invalid='ignore'):
-        ty = np.where(y2 == y1, 0.0, (coarse_y_coords - y1) / (y2 - y1))
-
-    # Mesh into 2D arrays for vectorized gather
-    ix_left_2d, iy_bot_2d = np.meshgrid(ix_left, iy_bot)
-    ix_right_2d, iy_top_2d = ix_left_2d + 1, iy_bot_2d + 1
-    tx_2d, ty_2d = np.meshgrid(tx, ty)
-
-    return SpatialMappingCache(
-        ix_left_2d=ix_left_2d.astype(int),
-        ix_right_2d=ix_right_2d.astype(int),
-        iy_bot_2d=iy_bot_2d.astype(int),
-        iy_top_2d=iy_top_2d.astype(int),
-        tx_2d=tx_2d.astype(float),
-        ty_2d=ty_2d.astype(float),
-    )
+class FieldResults:
+    field: FieldDefinition
+    times_seconds: np.ndarray
+    l2_coarse_medium: np.ndarray
+    l2_medium_fine: np.ndarray
+    linf_coarse_medium: np.ndarray
+    linf_medium_fine: np.ndarray
+    rms_l2_coarse_medium: float
+    rms_l2_medium_fine: float
+    rms_linf_coarse_medium: float
+    rms_linf_medium_fine: float
+    rms_reference_fine: float
+    observed_order_l2: float | None
+    observed_order_linf: float | None
+    compared_cell_counts: np.ndarray
 
 
-def map_fine_to_coarse_grid_single_slice_vectorized(
-    fine_field_slice_y_x: np.ndarray,
-    cache: SpatialMappingCache,
-) -> np.ndarray:
-    """Vectorized bilinear interpolation of one slice from fine grid to coarse grid.
+class StudyMessages:
+    """Collect warnings so they appear both on screen and in the JSON report."""
 
-    Returns (ny_c, nx_c) array.
-    """
-    q11 = fine_field_slice_y_x[cache.iy_bot_2d,  cache.ix_left_2d]
-    q21 = fine_field_slice_y_x[cache.iy_bot_2d,  cache.ix_right_2d]
-    q12 = fine_field_slice_y_x[cache.iy_top_2d,  cache.ix_left_2d]
-    q22 = fine_field_slice_y_x[cache.iy_top_2d,  cache.ix_right_2d]
+    def __init__(self) -> None:
+        self.warnings: list[str] = []
 
-    one_minus_tx = (1.0 - cache.tx_2d)
-    one_minus_ty = (1.0 - cache.ty_2d)
-
-    # (1 - ty) * ((1 - tx) * q11 + tx * q21) + ty * ((1 - tx) * q12 + tx * q22)
-    return (
-        one_minus_ty * (one_minus_tx * q11 + cache.tx_2d * q21)
-        + cache.ty_2d * (one_minus_tx * q12 + cache.tx_2d * q22)
-    )
-
-# ============================= ERROR METRICS =============================
-
-def l2_rms_error_over_grid(coarse_values_y_x: np.ndarray, mapped_fine_values_y_x: np.ndarray) -> float:
-    difference_y_x = coarse_values_y_x - mapped_fine_values_y_x
-    return float(np.sqrt(np.mean(difference_y_x ** 2)))
+    def warn(self, message: str) -> None:
+        self.warnings.append(message)
+        print(f"WARNING: {message}")
 
 
-def linf_max_error_over_grid(coarse_values_y_x: np.ndarray, mapped_fine_values_y_x: np.ndarray) -> float:
-    return float(np.max(np.abs(coarse_values_y_x - mapped_fine_values_y_x)))
-
-# ============================= PROBES =============================
-
-def bilinear_spatial_interpolation_single_point(
-    field_slice_y_x: np.ndarray,
-    x_coordinates: np.ndarray,
-    y_coordinates: np.ndarray,
-    physical_x_position: float,
-    physical_y_position: float,
-) -> float:
-    """Return field value at (x,y) by bilinear interpolation on a uniform, monotone grid.
-
-    Coordinates are assumed strictly increasing due to normalization.
-    """
-    # Clamp inside domain for safety
-    clamped_x = float(np.clip(physical_x_position, x_coordinates[0], x_coordinates[-1]))
-    clamped_y = float(np.clip(physical_y_position, y_coordinates[0], y_coordinates[-1]))
-
-    ix_left = int(np.searchsorted(x_coordinates, clamped_x, side="right") - 1)
-    iy_bot  = int(np.searchsorted(y_coordinates, clamped_y, side="right") - 1)
-
-    ix_left = int(np.clip(ix_left, 0, len(x_coordinates) - 2))
-    iy_bot  = int(np.clip(iy_bot,  0, len(y_coordinates) - 2))
-
-    x1, x2 = x_coordinates[ix_left], x_coordinates[ix_left + 1]
-    y1, y2 = y_coordinates[iy_bot],  y_coordinates[iy_bot + 1]
-
-    q11 = field_slice_y_x[iy_bot,     ix_left]
-    q21 = field_slice_y_x[iy_bot,     ix_left + 1]
-    q12 = field_slice_y_x[iy_bot + 1, ix_left]
-    q22 = field_slice_y_x[iy_bot + 1, ix_left + 1]
-
-    tx = 0.0 if x2 == x1 else (clamped_x - x1) / (x2 - x1)
-    ty = 0.0 if y2 == y1 else (clamped_y - y1) / (y2 - y1)
-
-    return (1 - ty) * ((1 - tx) * q11 + tx * q21) + ty * ((1 - tx) * q12 + tx * q22)
+def discover_indices(h5_file: h5py.File, prefix: str) -> set[int]:
+    pattern = re.compile(rf"^{re.escape(prefix)}(\d+)$")
+    found: set[int] = set()
+    for name in h5_file.keys():
+        match = pattern.match(name)
+        if match:
+            found.add(int(match.group(1)))
+    return found
 
 
-def extract_probe_time_series(
-    snapshot_series: SnapshotSeries,
-    probe_points_name_and_xy_list: Sequence[Tuple[str, Tuple[float, float]]],
-) -> Dict[str, np.ndarray]:
-    """Return dict: probe_name → series(t) by bilinear sampling at each snapshot time."""
-    out_dict: Dict[str, np.ndarray] = {}
-    for probe_name, (probe_x, probe_y) in probe_points_name_and_xy_list:
-        time_series_values = np.empty_like(snapshot_series.times_seconds, dtype=float)
-        for time_index in range(len(snapshot_series.times_seconds)):
-            time_series_values[time_index] = bilinear_spatial_interpolation_single_point(
-                field_slice_y_x=snapshot_series.field_stack[time_index],
-                x_coordinates=snapshot_series.x_coordinates,
-                y_coordinates=snapshot_series.y_coordinates,
-                physical_x_position=probe_x,
-                physical_y_position=probe_y,
+def read_embedded_config(h5_file: h5py.File, source_path: Path) -> dict[str, Any]:
+    meta = h5_file.get("/meta")
+    if meta is None:
+        raise RuntimeError(f"{source_path}: missing /meta group")
+    raw_config = meta.attrs.get("param_config_json")
+    if raw_config is None:
+        raise RuntimeError(f"{source_path}: missing /meta param_config_json attribute")
+    if isinstance(raw_config, bytes):
+        raw_config = raw_config.decode("utf-8")
+    config = json.loads(str(raw_config))
+    if "dx" not in config or "dy" not in config:
+        raise RuntimeError(f"{source_path}: embedded configuration has no dx/dy values")
+    return config
+
+
+def normalize_coordinates(coordinates: np.ndarray, axis_name: str, source_path: Path) -> tuple[np.ndarray, bool]:
+    coordinates = np.asarray(coordinates, dtype=float)
+    if coordinates.ndim != 1 or coordinates.size < 2:
+        raise ValueError(f"{source_path}: {axis_name} coordinates must be a one-dimensional array with >=2 values")
+    differences = np.diff(coordinates)
+    if np.all(differences > 0):
+        return coordinates, False
+    if np.all(differences < 0):
+        return coordinates[::-1].copy(), True
+    raise ValueError(f"{source_path}: {axis_name} coordinates are not strictly monotone")
+
+
+def load_run_information(path_text: str, requested_fields: Sequence[FieldDefinition]) -> SimulationRun:
+    path = Path(path_text).expanduser().resolve()
+    if not path.is_file():
+        raise FileNotFoundError(f"Simulation file not found: {path}")
+
+    with h5py.File(path, "r") as h5_file:
+        config = read_embedded_config(h5_file, path)
+        dx_mm = float(config["dx"])
+        dy_mm = float(config["dy"])
+        if dx_mm <= 0 or dy_mm <= 0:
+            raise ValueError(f"{path}: dx and dy must be positive")
+
+        common_indices = discover_indices(h5_file, TIME_DATASET_PREFIX)
+        common_indices &= discover_indices(h5_file, MATERIAL_DATASET_PREFIX)
+        for field in requested_fields:
+            common_indices &= discover_indices(h5_file, field.dataset_prefix)
+        if not common_indices:
+            names = ", ".join(field.dataset_prefix for field in requested_fields)
+            raise RuntimeError(
+                f"{path}: no snapshots common to time, material mask, and requested fields ({names})"
             )
-        out_dict[probe_name] = time_series_values
-    return out_dict
+
+        index_time_pairs = [
+            (index, float(np.asarray(h5_file[f"{TIME_DATASET_PREFIX}{index:05d}"])))
+            for index in sorted(common_indices)
+        ]
+        index_time_pairs.sort(key=lambda pair: pair[1])
+        indices = np.asarray([pair[0] for pair in index_time_pairs], dtype=int)
+        times = np.asarray([pair[1] for pair in index_time_pairs], dtype=float)
+        if not np.isfinite(times).all() or np.any(np.diff(times) <= 0):
+            raise ValueError(f"{path}: snapshot times must be finite and strictly increasing")
+
+        first_index = int(indices[0])
+        sample = np.asarray(h5_file[f"{requested_fields[0].dataset_prefix}{first_index:05d}"])
+        if sample.ndim != 2:
+            raise ValueError(f"{path}: field snapshots must be two-dimensional")
+        ny, nx = sample.shape
+        for field in requested_fields[1:]:
+            other_shape = h5_file[f"{field.dataset_prefix}{first_index:05d}"].shape
+            if other_shape != sample.shape:
+                raise ValueError(f"{path}: requested fields do not share one grid shape")
+
+        if "/x" in h5_file and "/y" in h5_file:
+            raw_x = np.asarray(h5_file["/x"])
+            raw_y = np.asarray(h5_file["/y"])
+        else:
+            raw_x = (np.arange(nx) + 0.5) * dx_mm
+            raw_y = (np.arange(ny) + 0.5) * dy_mm
+        x_coordinates, flip_x = normalize_coordinates(raw_x, "x", path)
+        y_coordinates, flip_y = normalize_coordinates(raw_y, "y", path)
+        if x_coordinates.size != nx or y_coordinates.size != ny:
+            raise ValueError(f"{path}: coordinate lengths do not match field shape {sample.shape}")
+
+    label = f"dx={dx_mm:g}, dy={dy_mm:g} mm"
+    return SimulationRun(
+        path=path,
+        label=label,
+        config=config,
+        dx_mm=dx_mm,
+        dy_mm=dy_mm,
+        snapshot_indices=indices,
+        times_seconds=times,
+        field_shape_y_x=(ny, nx),
+        x_coordinates_mm=x_coordinates,
+        y_coordinates_mm=y_coordinates,
+        flip_x=flip_x,
+        flip_y=flip_y,
+    )
 
 
-def get_field_slice_at_time(
-    snapshot_series: SnapshotSeries,
-    target_time_seconds: float,
-    use_temporal_interpolation: bool,
-) -> np.ndarray:
-    """Return a (ny, nx) slice from snapshot_series at the requested time."""
-    if use_temporal_interpolation:
-        return linear_temporal_interpolation(
-            coarse_target_time_seconds=target_time_seconds,
-            fine_times_seconds=snapshot_series.times_seconds,
-            fine_field_stack_time_y_x=snapshot_series.field_stack,
+def comparable_config(config: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in config.items() if key not in IGNORED_METADATA_KEYS}
+
+
+def metadata_differences(reference: SimulationRun, candidate: SimulationRun) -> list[str]:
+    reference_config = comparable_config(reference.config)
+    candidate_config = comparable_config(candidate.config)
+    differences: list[str] = []
+    for key in sorted(set(reference_config) | set(candidate_config)):
+        reference_value = reference_config.get(key, "<missing>")
+        candidate_value = candidate_config.get(key, "<missing>")
+        if reference_value != candidate_value:
+            differences.append(f"{key}: {reference_value!r} != {candidate_value!r}")
+    return differences
+
+
+def validate_runs(
+    runs: Sequence[SimulationRun],
+    requested_fields: Sequence[FieldDefinition],
+    messages: StudyMessages,
+    strict_metadata: bool,
+) -> float | None:
+    coarse, medium, fine = runs
+    if not (coarse.dx_mm > medium.dx_mm > fine.dx_mm):
+        raise ValueError("Files must be supplied coarse-to-fine with strictly decreasing dx")
+    if not (coarse.dy_mm > medium.dy_mm > fine.dy_mm):
+        raise ValueError("Files must be supplied coarse-to-fine with strictly decreasing dy")
+
+    for run in runs:
+        ny, nx = run.field_shape_y_x
+        print(
+            f"  {run.path.name}: {run.label}; shape={ny}x{nx}; "
+            f"snapshots={run.times_seconds.size}; time={run.times_seconds[0]:g}..{run.times_seconds[-1]:g} s"
         )
-    nearest_index = find_nearest_time_index(target_time_seconds, snapshot_series.times_seconds)
-    return snapshot_series.field_stack[nearest_index]
 
+    reference_width = coarse.field_shape_y_x[1] * coarse.dx_mm
+    reference_height = coarse.field_shape_y_x[0] * coarse.dy_mm
+    domain_mismatches: list[str] = []
+    for run in runs[1:]:
+        width = run.field_shape_y_x[1] * run.dx_mm
+        height = run.field_shape_y_x[0] * run.dy_mm
+        if not math.isclose(width, reference_width, rel_tol=1e-6, abs_tol=1e-9):
+            domain_mismatches.append(f"x extent {reference_width:g} vs {width:g} mm")
+        if not math.isclose(height, reference_height, rel_tol=1e-6, abs_tol=1e-9):
+            domain_mismatches.append(f"y extent {reference_height:g} vs {height:g} mm")
+    if domain_mismatches:
+        message = "Grid domains differ: " + "; ".join(domain_mismatches)
+        if strict_metadata:
+            raise ValueError(message)
+        messages.warn(message)
 
-def extract_probe_time_series_aligned(
-    snapshot_series: SnapshotSeries,
-    target_times_seconds: np.ndarray,
-    probe_x: float,
-    probe_y: float,
-    use_temporal_interpolation: bool,
-) -> np.ndarray:
-    """Sample one run at (probe_x,probe_y) for a list of target times."""
-    values = np.empty_like(target_times_seconds, dtype=float)
-    for k, tval in enumerate(target_times_seconds):
-        slice_at_t = get_field_slice_at_time(snapshot_series, tval, use_temporal_interpolation)
-        values[k] = bilinear_spatial_interpolation_single_point(
-            field_slice_y_x=slice_at_t,
-            x_coordinates=snapshot_series.x_coordinates,
-            y_coordinates=snapshot_series.y_coordinates,
-            physical_x_position=probe_x,
-            physical_y_position=probe_y,
+    for run in runs[1:]:
+        differences = metadata_differences(coarse, run)
+        if differences:
+            preview = "; ".join(differences[:8])
+            if len(differences) > 8:
+                preview += f"; ... and {len(differences) - 8} more"
+            message = f"Physical/numerical metadata differs for {run.path.name}: {preview}"
+            if strict_metadata:
+                raise ValueError(message)
+            messages.warn(message)
+
+    if any(field.command_name == "hydrogen" for field in requested_fields):
+        calibration_runs = [run.path.name for run in runs if run.config.get("thermal_diffusion_calibration") is True]
+        if calibration_runs:
+            messages.warn(
+                "Hydrogen was requested, but thermal_diffusion_calibration=True in: "
+                + ", ".join(calibration_runs)
+            )
+
+    ratios = (
+        coarse.dx_mm / medium.dx_mm,
+        medium.dx_mm / fine.dx_mm,
+        coarse.dy_mm / medium.dy_mm,
+        medium.dy_mm / fine.dy_mm,
+    )
+    if not all(math.isclose(ratio, ratios[0], rel_tol=1e-6, abs_tol=1e-9) for ratio in ratios[1:]):
+        messages.warn(
+            "Refinement ratios are not uniform in x/y; pairwise errors will be reported, "
+            "but observed order will be left blank"
         )
+        return None
+    return ratios[0]
+
+
+def common_time_interval(runs: Sequence[SimulationRun], messages: StudyMessages, strict_metadata: bool) -> tuple[float, float]:
+    common_start = max(run.times_seconds[0] for run in runs)
+    common_end = min(run.times_seconds[-1] for run in runs)
+    if common_end <= common_start:
+        raise ValueError("The three simulations have no overlapping time interval")
+
+    starts = [run.times_seconds[0] for run in runs]
+    ends = [run.times_seconds[-1] for run in runs]
+    if max(starts) - min(starts) > TIME_TOLERANCE_SECONDS or max(ends) - min(ends) > TIME_TOLERANCE_SECONDS:
+        message = (
+            "Simulation time coverage differs; analysis is restricted to the common interval "
+            f"{common_start:g}..{common_end:g} s"
+        )
+        if strict_metadata:
+            raise ValueError(message)
+        messages.warn(message)
+    return common_start, common_end
+
+
+def phase_anchor_times(config: dict[str, Any], common_start: float, common_end: float) -> list[float]:
+    anchors = [common_start, common_end]
+    for key in ("total_time_to_first_weld", "total_time_to_cooling", "total_time_to_rt"):
+        value = config.get(key)
+        if isinstance(value, (int, float)) and common_start <= float(value) <= common_end:
+            anchors.append(float(value))
+    return sorted(set(anchors))
+
+
+def select_representative_times(
+    reference_run: SimulationRun,
+    common_start: float,
+    common_end: float,
+    requested_count: int,
+) -> np.ndarray:
+    available = reference_run.times_seconds
+    available = available[(available >= common_start) & (available <= common_end)]
+    if available.size == 0:
+        raise ValueError("No coarse-grid snapshots exist inside the common time interval")
+    anchors = phase_anchor_times(reference_run.config, common_start, common_end)
+    if len(anchors) >= requested_count:
+        selected_indices = np.linspace(0, len(anchors) - 1, requested_count).round().astype(int)
+        return np.asarray([anchors[index] for index in selected_indices], dtype=float)
+
+    selected = list(anchors)
+    target_count = min(requested_count, available.size + len(anchors))
+    # Work in snapshot-rank space rather than physical-time space. This respects
+    # intentional dense saving around welding while phase anchors ensure that
+    # cooling and room-temperature diffusion are not lost.
+    selected_ranks = [float(np.searchsorted(available, value, side="left")) for value in selected]
+    candidate_ranks = np.arange(available.size, dtype=float)
+    while len(selected) < target_count:
+        distances = np.min(np.abs(candidate_ranks[:, None] - np.asarray(selected_ranks)[None, :]), axis=1)
+        best_rank = int(np.argmax(distances))
+        value = float(available[best_rank])
+        if any(math.isclose(value, old, rel_tol=0.0, abs_tol=TIME_TOLERANCE_SECONDS) for old in selected):
+            distances[best_rank] = -1.0
+            best_rank = int(np.argmax(distances))
+            value = float(available[best_rank])
+        selected.append(value)
+        selected_ranks.append(float(best_rank))
+    return np.asarray(sorted(selected), dtype=float)
+
+
+def read_raw_slice(h5_file: h5py.File, run: SimulationRun, field: FieldDefinition, position: int) -> np.ndarray:
+    index = int(run.snapshot_indices[position])
+    values = np.asarray(h5_file[f"{field.dataset_prefix}{index:05d}"], dtype=float)
+    if run.flip_y:
+        values = values[::-1, :]
+    if run.flip_x:
+        values = values[:, ::-1]
     return values
 
-# ============================= COMPARISON CORE =============================
 
-def compare_two_runs_over_common_times(
-    coarse_run: SnapshotSeries,
-    fine_run: SnapshotSeries,
-    field_display_name: str,
-    use_temporal_interpolation: bool,
-    mapping_cache: Optional[SpatialMappingCache] = None,
-) -> Tuple[List[float], List[float], np.ndarray]:
-    """Compute L2 and L∞ errors for all coarse snapshot times, mapping fine→coarse.
+def read_field_at_time(
+    h5_file: h5py.File,
+    run: SimulationRun,
+    field: FieldDefinition,
+    target_time_seconds: float,
+) -> np.ndarray:
+    times = run.times_seconds
+    if target_time_seconds < times[0] - TIME_TOLERANCE_SECONDS or target_time_seconds > times[-1] + TIME_TOLERANCE_SECONDS:
+        raise ValueError(f"{run.path}: target time {target_time_seconds:g} s is outside available data")
 
-    Returns `(list_l2_errors, list_linf_errors, coarse_times_seconds)`
-    """
-    if mapping_cache is None:
-        mapping_cache = build_spatial_mapping_cache(
-            fine_x_coords=fine_run.x_coordinates,
-            fine_y_coords=fine_run.y_coordinates,
-            coarse_x_coords=coarse_run.x_coordinates,
-            coarse_y_coords=coarse_run.y_coordinates,
+    right = int(np.searchsorted(times, target_time_seconds, side="left"))
+    if right < times.size and math.isclose(times[right], target_time_seconds, rel_tol=0.0, abs_tol=TIME_TOLERANCE_SECONDS):
+        return read_raw_slice(h5_file, run, field, right)
+    if right == 0:
+        return read_raw_slice(h5_file, run, field, 0)
+    if right == times.size:
+        return read_raw_slice(h5_file, run, field, times.size - 1)
+
+    left = right - 1
+    left_time = times[left]
+    right_time = times[right]
+    weight = (target_time_seconds - left_time) / (right_time - left_time)
+    left_values = read_raw_slice(h5_file, run, field, left)
+    right_values = read_raw_slice(h5_file, run, field, right)
+    return (1.0 - weight) * left_values + weight * right_values
+
+
+def build_spatial_mapping(fine: SimulationRun, coarse: SimulationRun) -> SpatialMapping:
+    fine_x = fine.x_coordinates_mm
+    fine_y = fine.y_coordinates_mm
+    coarse_x = coarse.x_coordinates_mm
+    coarse_y = coarse.y_coordinates_mm
+
+    ix_left_1d = np.clip(np.searchsorted(fine_x, coarse_x, side="right") - 1, 0, fine_x.size - 2)
+    iy_lower_1d = np.clip(np.searchsorted(fine_y, coarse_y, side="right") - 1, 0, fine_y.size - 2)
+    ix_right_1d = ix_left_1d + 1
+    iy_upper_1d = iy_lower_1d + 1
+
+    x1 = fine_x[ix_left_1d]
+    x2 = fine_x[ix_right_1d]
+    y1 = fine_y[iy_lower_1d]
+    y2 = fine_y[iy_upper_1d]
+    weight_x_1d = np.divide(coarse_x - x1, x2 - x1, out=np.zeros_like(coarse_x), where=x2 != x1)
+    weight_y_1d = np.divide(coarse_y - y1, y2 - y1, out=np.zeros_like(coarse_y), where=y2 != y1)
+
+    ix_left, iy_lower = np.meshgrid(ix_left_1d, iy_lower_1d)
+    ix_right, iy_upper = np.meshgrid(ix_right_1d, iy_upper_1d)
+    weight_x, weight_y = np.meshgrid(weight_x_1d, weight_y_1d)
+    return SpatialMapping(ix_left, ix_right, iy_lower, iy_upper, weight_x, weight_y)
+
+
+def map_fine_to_coarse(fine_values: np.ndarray, mapping: SpatialMapping) -> np.ndarray:
+    q11 = fine_values[mapping.iy_lower, mapping.ix_left]
+    q21 = fine_values[mapping.iy_lower, mapping.ix_right]
+    q12 = fine_values[mapping.iy_upper, mapping.ix_left]
+    q22 = fine_values[mapping.iy_upper, mapping.ix_right]
+    return (
+        (1.0 - mapping.weight_y) * ((1.0 - mapping.weight_x) * q11 + mapping.weight_x * q21)
+        + mapping.weight_y * ((1.0 - mapping.weight_x) * q12 + mapping.weight_x * q22)
+    )
+
+
+def integer_grid_ratio(fine: SimulationRun, coarse: SimulationRun) -> tuple[int, int]:
+    fine_ny, fine_nx = fine.field_shape_y_x
+    coarse_ny, coarse_nx = coarse.field_shape_y_x
+    if fine_nx % coarse_nx or fine_ny % coarse_ny:
+        raise ValueError(
+            f"Cell-average restriction requires nested integer grid shapes, got "
+            f"{fine.field_shape_y_x} and {coarse.field_shape_y_x}"
         )
+    ratio_x = fine_nx // coarse_nx
+    ratio_y = fine_ny // coarse_ny
+    if ratio_x < 1 or ratio_y < 1:
+        raise ValueError("Cell-average restriction requires the source grid to be at least as fine")
+    return ratio_y, ratio_x
 
-    list_l2_errors: List[float] = []
-    list_linf_errors: List[float] = []
 
-    for coarse_time_index, coarse_time_value in enumerate(coarse_run.times_seconds):
-        if use_temporal_interpolation:
-            fine_slice_at_coarse_time = linear_temporal_interpolation(
-                coarse_target_time_seconds=coarse_time_value,
-                fine_times_seconds=fine_run.times_seconds,
-                fine_field_stack_time_y_x=fine_run.field_stack,
+def restrict_cell_averages(
+    fine_values: np.ndarray,
+    fine: SimulationRun,
+    coarse: SimulationRun,
+) -> np.ndarray:
+    """Area-average nested fine cells into each coarse control volume."""
+    ratio_y, ratio_x = integer_grid_ratio(fine, coarse)
+    coarse_ny, coarse_nx = coarse.field_shape_y_x
+    expected_shape = (coarse_ny * ratio_y, coarse_nx * ratio_x)
+    if fine_values.shape != expected_shape:
+        raise ValueError(f"Expected fine field shape {expected_shape}, got {fine_values.shape}")
+    return fine_values.reshape(coarse_ny, ratio_y, coarse_nx, ratio_x).mean(axis=(1, 3))
+
+
+def restriction_blocks_are_material(
+    material_values: np.ndarray,
+    fine: SimulationRun,
+    coarse: SimulationRun,
+) -> np.ndarray:
+    """Require every fine cell in a coarse control volume to be material."""
+    ratio_y, ratio_x = integer_grid_ratio(fine, coarse)
+    coarse_ny, coarse_nx = coarse.field_shape_y_x
+    blocks = material_values.reshape(coarse_ny, ratio_y, coarse_nx, ratio_x)
+    return np.all(blocks > 0.0, axis=(1, 3))
+
+
+def interpolation_stencil_is_material(material_values: np.ndarray, mapping: SpatialMapping) -> np.ndarray:
+    """Return where every fine-grid donor used by bilinear interpolation is material."""
+    return (
+        (material_values[mapping.iy_lower, mapping.ix_left] > 0.0)
+        & (material_values[mapping.iy_lower, mapping.ix_right] > 0.0)
+        & (material_values[mapping.iy_upper, mapping.ix_left] > 0.0)
+        & (material_values[mapping.iy_upper, mapping.ix_right] > 0.0)
+    )
+
+
+def error_metrics(reference: np.ndarray, comparison: np.ndarray, valid: np.ndarray) -> tuple[float, float]:
+    if not np.any(valid):
+        raise ValueError("No common material cells remain for comparison")
+    difference = reference[valid] - comparison[valid]
+    return float(np.sqrt(np.mean(difference * difference))), float(np.max(np.abs(difference)))
+
+
+def rms(values: np.ndarray) -> float:
+    return float(np.sqrt(np.mean(values * values)))
+
+
+def observed_order(error_coarse_medium: float, error_medium_fine: float, refinement_ratio: float | None) -> float | None:
+    if refinement_ratio is None or error_coarse_medium <= 0 or error_medium_fine <= 0:
+        return None
+    return float(math.log(error_coarse_medium / error_medium_fine) / math.log(refinement_ratio))
+
+
+def analyze_field(
+    field: FieldDefinition,
+    runs: Sequence[SimulationRun],
+    h5_files: Sequence[h5py.File],
+    selected_times: np.ndarray,
+    refinement_ratio: float | None,
+    spatial_method: str,
+) -> FieldResults:
+    coarse, medium, fine = runs
+    mapping_coarse_medium = None
+    mapping_coarse_fine = None
+    if spatial_method == "point-interpolate":
+        mapping_coarse_medium = build_spatial_mapping(medium, coarse)
+        mapping_coarse_fine = build_spatial_mapping(fine, coarse)
+
+    l2_coarse_medium: list[float] = []
+    l2_medium_fine: list[float] = []
+    linf_coarse_medium: list[float] = []
+    linf_medium_fine: list[float] = []
+    reference_fine_rms: list[float] = []
+    compared_cell_counts: list[int] = []
+
+    for target_time in selected_times:
+        coarse_values = read_field_at_time(h5_files[0], coarse, field, float(target_time))
+        medium_values = read_field_at_time(h5_files[1], medium, field, float(target_time))
+        fine_values = read_field_at_time(h5_files[2], fine, field, float(target_time))
+        coarse_material = read_field_at_time(h5_files[0], coarse, MATERIAL_FIELD, float(target_time))
+        medium_material = read_field_at_time(h5_files[1], medium, MATERIAL_FIELD, float(target_time))
+        fine_material = read_field_at_time(h5_files[2], fine, MATERIAL_FIELD, float(target_time))
+
+        if spatial_method == "cell-average":
+            medium_on_coarse = restrict_cell_averages(medium_values, medium, coarse)
+            fine_on_coarse = restrict_cell_averages(fine_values, fine, coarse)
+            valid = (
+                (coarse_material > 0.0)
+                & restriction_blocks_are_material(medium_material, medium, coarse)
+                & restriction_blocks_are_material(fine_material, fine, coarse)
+            )
+        elif spatial_method == "point-interpolate":
+            assert mapping_coarse_medium is not None and mapping_coarse_fine is not None
+            medium_on_coarse = map_fine_to_coarse(medium_values, mapping_coarse_medium)
+            fine_on_coarse = map_fine_to_coarse(fine_values, mapping_coarse_fine)
+            valid = (
+                (coarse_material > 0.0)
+                & interpolation_stencil_is_material(medium_material, mapping_coarse_medium)
+                & interpolation_stencil_is_material(fine_material, mapping_coarse_fine)
             )
         else:
-            nearest_index_in_fine = find_nearest_time_index(coarse_time_value, fine_run.times_seconds)
-            time_mismatch = abs(fine_run.times_seconds[nearest_index_in_fine] - coarse_time_value)
-            if time_mismatch > MAX_TIME_MISMATCH_SECONDS:
-                warnings.warn(
-                    f"[{field_display_name}] Time mismatch {time_mismatch:.3f}s exceeds "
-                    f"MAX_TIME_MISMATCH_SECONDS={MAX_TIME_MISMATCH_SECONDS:.3f}s at coarse t={coarse_time_value:.3f}s."
+            raise ValueError(f"Unknown spatial comparison method: {spatial_method}")
+        l2_cm, linf_cm = error_metrics(coarse_values, medium_on_coarse, valid)
+        l2_mf, linf_mf = error_metrics(medium_on_coarse, fine_on_coarse, valid)
+        l2_coarse_medium.append(l2_cm)
+        l2_medium_fine.append(l2_mf)
+        linf_coarse_medium.append(linf_cm)
+        linf_medium_fine.append(linf_mf)
+        reference_fine_rms.append(float(np.sqrt(np.mean(fine_on_coarse[valid] ** 2))))
+        compared_cell_counts.append(int(np.count_nonzero(valid)))
+
+    l2_cm_array = np.asarray(l2_coarse_medium)
+    l2_mf_array = np.asarray(l2_medium_fine)
+    linf_cm_array = np.asarray(linf_coarse_medium)
+    linf_mf_array = np.asarray(linf_medium_fine)
+    rms_l2_cm = rms(l2_cm_array)
+    rms_l2_mf = rms(l2_mf_array)
+    rms_linf_cm = rms(linf_cm_array)
+    rms_linf_mf = rms(linf_mf_array)
+    rms_reference_fine = rms(np.asarray(reference_fine_rms))
+    return FieldResults(
+        field=field,
+        times_seconds=selected_times,
+        l2_coarse_medium=l2_cm_array,
+        l2_medium_fine=l2_mf_array,
+        linf_coarse_medium=linf_cm_array,
+        linf_medium_fine=linf_mf_array,
+        rms_l2_coarse_medium=rms_l2_cm,
+        rms_l2_medium_fine=rms_l2_mf,
+        rms_linf_coarse_medium=rms_linf_cm,
+        rms_linf_medium_fine=rms_linf_mf,
+        rms_reference_fine=rms_reference_fine,
+        observed_order_l2=observed_order(rms_l2_cm, rms_l2_mf, refinement_ratio),
+        observed_order_linf=observed_order(rms_linf_cm, rms_linf_mf, refinement_ratio),
+        compared_cell_counts=np.asarray(compared_cell_counts, dtype=int),
+    )
+
+
+def optional_number(value: float | None) -> str:
+    return "" if value is None or not math.isfinite(value) else f"{value:.8g}"
+
+
+def write_csv(output_path: Path, results: Sequence[FieldResults], runs: Sequence[SimulationRun]) -> None:
+    with output_path.open("w", encoding="utf-8", newline="") as output_file:
+        writer = csv.writer(output_file)
+        writer.writerow(
+            [
+                "field",
+                "metric",
+                "sample",
+                "time_seconds",
+                f"{runs[0].label} vs {runs[1].label}",
+                f"{runs[1].label} vs {runs[2].label}",
+                "summary_value",
+            ]
+        )
+        for field_result in results:
+            for metric_name, first_values, second_values in (
+                ("L2", field_result.l2_coarse_medium, field_result.l2_medium_fine),
+                ("Linf", field_result.linf_coarse_medium, field_result.linf_medium_fine),
+            ):
+                for sample_number, (time_value, first_value, second_value) in enumerate(
+                    zip(field_result.times_seconds, first_values, second_values), start=1
+                ):
+                    writer.writerow(
+                        [
+                            field_result.field.display_name,
+                            metric_name,
+                            sample_number,
+                            f"{time_value:.9g}",
+                            f"{first_value:.9g}",
+                            f"{second_value:.9g}",
+                            "",
+                        ]
+                    )
+            summary_rows = (
+                ("RMS_L2", field_result.rms_l2_coarse_medium, field_result.rms_l2_medium_fine, None),
+                ("RMS_Linf", field_result.rms_linf_coarse_medium, field_result.rms_linf_medium_fine, None),
+                ("ObservedOrder_L2", None, None, field_result.observed_order_l2),
+                ("ObservedOrder_Linf", None, None, field_result.observed_order_linf),
+            )
+            for metric_name, first_value, second_value, summary_value in summary_rows:
+                writer.writerow(
+                    [
+                        field_result.field.display_name,
+                        metric_name,
+                        "",
+                        "",
+                        optional_number(first_value),
+                        optional_number(second_value),
+                        optional_number(summary_value),
+                    ]
                 )
-            fine_slice_at_coarse_time = fine_run.field_stack[nearest_index_in_fine]
-
-        mapped_fine_on_coarse = map_fine_to_coarse_grid_single_slice_vectorized(
-            fine_field_slice_y_x=fine_slice_at_coarse_time,
-            cache=mapping_cache,
-        )
-
-        coarse_slice = coarse_run.field_stack[coarse_time_index]
-        l2_error_value = l2_rms_error_over_grid(coarse_slice, mapped_fine_on_coarse)
-        linf_error_value = linf_max_error_over_grid(coarse_slice, mapped_fine_on_coarse)
-
-        list_l2_errors.append(l2_error_value)
-        list_linf_errors.append(linf_error_value)
-
-    return list_l2_errors, list_linf_errors, coarse_run.times_seconds
 
 
-def observed_order_from_two_error_series(
-    coarse_vs_medium_errors: Sequence[float],
-    medium_vs_fine_errors: Sequence[float],
-) -> float:
-    """Estimate observed order p using RMS‑over‑time of error series (robust to noise)."""
-    rms_coarse_medium = float(np.sqrt(np.mean(np.asarray(coarse_vs_medium_errors) ** 2)))
-    rms_medium_fine  = float(np.sqrt(np.mean(np.asarray(medium_vs_fine_errors) ** 2)))
-    rms_coarse_medium = max(rms_coarse_medium, 1e-30)
-    rms_medium_fine  = max(rms_medium_fine,  1e-30)
-    return float((math.log(rms_coarse_medium) - math.log(rms_medium_fine)) / math.log(2.0))
+def result_as_dict(result: FieldResults) -> dict[str, Any]:
+    reduction_l2 = None
+    if result.rms_l2_coarse_medium > 0:
+        reduction_l2 = 100.0 * (1.0 - result.rms_l2_medium_fine / result.rms_l2_coarse_medium)
+    relative_l2_coarse_medium = None
+    relative_l2_medium_fine = None
+    if result.rms_reference_fine > 0:
+        relative_l2_coarse_medium = 100.0 * result.rms_l2_coarse_medium / result.rms_reference_fine
+        relative_l2_medium_fine = 100.0 * result.rms_l2_medium_fine / result.rms_reference_fine
+    return {
+        "unit": result.field.unit,
+        "rms_l2_coarse_medium": result.rms_l2_coarse_medium,
+        "rms_l2_medium_fine": result.rms_l2_medium_fine,
+        "rms_linf_coarse_medium": result.rms_linf_coarse_medium,
+        "rms_linf_medium_fine": result.rms_linf_medium_fine,
+        "rms_reference_fine": result.rms_reference_fine,
+        "relative_rms_l2_coarse_medium_percent": relative_l2_coarse_medium,
+        "relative_rms_l2_medium_fine_percent": relative_l2_medium_fine,
+        "observed_order_l2": result.observed_order_l2,
+        "observed_order_linf": result.observed_order_linf,
+        "l2_error_reduction_percent": reduction_l2,
+        "compared_cell_count_min": int(np.min(result.compared_cell_counts)),
+        "compared_cell_count_max": int(np.max(result.compared_cell_counts)),
+    }
 
-# ============================= MAIN =============================
 
-def main() -> None:
-    # Resolve output locations
-    active_analysis_folder_abspath = resolve_active_analysis_folder()
-    print(f"Active analysis folder: {active_analysis_folder_abspath}")
+def write_json_report(
+    output_path: Path,
+    runs: Sequence[SimulationRun],
+    selected_times: np.ndarray,
+    refinement_ratio: float | None,
+    results: Sequence[FieldResults],
+    messages: StudyMessages,
+    spatial_method: str,
+    selection_method: str,
+) -> None:
+    report = {
+        "created_local": datetime.now().isoformat(timespec="seconds"),
+        "inputs": [
+            {
+                "path": str(run.path),
+                "label": run.label,
+                "dx_mm": run.dx_mm,
+                "dy_mm": run.dy_mm,
+                "shape_y_x": list(run.field_shape_y_x),
+                "snapshot_count": int(run.times_seconds.size),
+                "time_start_seconds": float(run.times_seconds[0]),
+                "time_end_seconds": float(run.times_seconds[-1]),
+                "model_version": run.config.get("model_version"),
+                "simulation_type": run.config.get("simulation_type"),
+                "dt_seconds": run.config.get("dt"),
+                "dt_big_seconds": run.config.get("dt_big"),
+                "safety_factor": run.config.get("safety_factor"),
+            }
+            for run in runs
+        ],
+        "refinement_ratio": refinement_ratio,
+        "selected_times_seconds": selected_times.tolist(),
+        "selection_method": selection_method,
+        "spatial_method": spatial_method,
+        "spatial_comparison": (
+            "medium and fine cells area-averaged into identical coarse control volumes; "
+            "only volumes made entirely of material in all three runs"
+            if spatial_method == "cell-average"
+            else "medium and fine bilinearly interpolated to identical coarse-grid cell centres; "
+            "only centres whose interpolation stencils are material in all three runs"
+        ),
+        "aggregation": "material-only grid RMS, then unweighted RMS across representative common times",
+        "error_interpretation": (
+            "Pairwise values are absolute adjacent-grid discrepancies in the field unit, not errors against "
+            "an exact solution. Relative values divide that discrepancy by the restricted fine-grid RMS."
+        ),
+        "warnings": messages.warnings,
+        "results": {result.field.display_name: result_as_dict(result) for result in results},
+    }
+    output_path.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
 
-    analysis_parent_abspath = os.path.join(DEFAULT_BASE_DIRECTORY, ANALYSIS_PARENT_FOLDER_NAME)
-    output_csv_abspath = os.path.join(active_analysis_folder_abspath, OUTPUT_CSV_FILENAME)
-    output_figures_directory_abspath = os.path.join(active_analysis_folder_abspath, OUTPUT_FIGURES_SUBFOLDER_NAME)
 
-    # Load the three runs for each field separately (Temperature and Hydrogen)
-    loaded_runs_per_field: Dict[str, List[SnapshotSeries]] = {}
-    for field_display_name, dataset_prefix in FIELDS_TO_COMPARE:
-        field_runs_list: List[SnapshotSeries] = []
-        for simulation_run in SIMULATION_RUNS_LIST:
-            snapshot_series_for_run = load_snapshot_series_for_field(
-                simulation_run=simulation_run,
-                dataset_prefix_main_field=dataset_prefix,
-                analysis_parent_abspath=analysis_parent_abspath,
+def write_plots(output_directory: Path, results: Sequence[FieldResults], runs: Sequence[SimulationRun]) -> None:
+    for field_result in results:
+        time_scale = 3600.0 if field_result.times_seconds[-1] >= 7200 else 1.0
+        time_unit = "h" if time_scale == 3600.0 else "s"
+        plot_times = field_result.times_seconds / time_scale
+        for metric_name, first_values, second_values in (
+            ("L2", field_result.l2_coarse_medium, field_result.l2_medium_fine),
+            ("Linf", field_result.linf_coarse_medium, field_result.linf_medium_fine),
+        ):
+            figure, axis = plt.subplots()
+            axis.plot(plot_times, first_values, "o-", label=f"{runs[0].label} vs {runs[1].label}")
+            axis.plot(plot_times, second_values, "o-", label=f"{runs[1].label} vs {runs[2].label}")
+            axis.set_xlabel(f"Time [{time_unit}]")
+            axis.set_ylabel(f"{metric_name} difference [{field_result.field.unit}]")
+            axis.set_title(f"{field_result.field.display_name} grid comparison ({metric_name})")
+            axis.grid(True, alpha=0.3)
+            axis.legend()
+            figure.savefig(
+                output_directory / f"errors_{metric_name}_{field_result.field.command_name}.png",
+                dpi=160,
+                bbox_inches="tight",
             )
-            field_runs_list.append(snapshot_series_for_run)
-        loaded_runs_per_field[field_display_name] = field_runs_list
+            plt.close(figure)
 
-    # Prepare CSV lines
-    csv_lines: List[str] = []
-    header_columns = [
-        "field",
-        "metric",
-        "time_seconds",
-        f"{SIMULATION_RUNS_LIST[0].label_for_plots_and_csv} vs {SIMULATION_RUNS_LIST[1].label_for_plots_and_csv}",
-        f"{SIMULATION_RUNS_LIST[1].label_for_plots_and_csv} vs {SIMULATION_RUNS_LIST[2].label_for_plots_and_csv}",
+
+def build_argument_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Compare three WeldCraft HDF5 simulations in coarse-to-fine order.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    parser.add_argument("coarse_h5", help="coarsest-grid HDF5 file")
+    parser.add_argument("medium_h5", help="middle-grid HDF5 file")
+    parser.add_argument("fine_h5", help="finest-grid HDF5 file")
+    parser.add_argument(
+        "--snapshots",
+        type=int,
+        default=DEFAULT_SAMPLE_COUNT,
+        help="number of representative common times to compare",
+    )
+    parser.add_argument(
+        "--fields",
+        nargs="+",
+        choices=sorted(FIELD_DEFINITIONS),
+        default=["temperature", "hydrogen"],
+        help="fields to compare",
+    )
+    parser.add_argument(
+        "--output-dir",
+        help="output directory; default is a timestamped folder in 02_Results/05_Convergence Analysis",
+    )
+    parser.add_argument("--time-start", type=float, help="first physical time to include [s]")
+    parser.add_argument("--time-end", type=float, help="last physical time to include [s]")
+    parser.add_argument(
+        "--times",
+        nargs="+",
+        type=float,
+        help="explicit physical comparison time(s); permits a single-time study",
+    )
+    parser.add_argument(
+        "--exact-saved-times",
+        action="store_true",
+        help="require every explicit --times value to be a saved timestamp in every input file",
+    )
+    parser.add_argument(
+        "--spatial-method",
+        choices=("cell-average", "point-interpolate"),
+        default="cell-average",
+        help="compare equal coarse control volumes or interpolated values at coarse cell centres",
+    )
+    parser.add_argument(
+        "--strict-metadata",
+        action="store_true",
+        help="fail instead of warning when non-grid metadata or time coverage differs",
+    )
+    parser.add_argument("--no-plots", action="store_true", help="write CSV/JSON only")
+    parser.add_argument("--overwrite", action="store_true", help="replace report files in an existing output directory")
+    return parser
+
+
+def resolve_output_directory(output_text: str | None, overwrite: bool = False) -> Path:
+    if output_text:
+        output_directory = Path(output_text).expanduser().resolve()
+        if output_directory.exists():
+            if not output_directory.is_dir():
+                raise ValueError(f"Output path is not a directory: {output_directory}")
+            expected_outputs = ("comparison_summary.csv", "convergence_summary.json")
+            collisions = [name for name in expected_outputs if (output_directory / name).exists()]
+            if collisions and not overwrite:
+                raise FileExistsError(
+                    f"Output directory already contains convergence results: {', '.join(collisions)}"
+                )
+            return output_directory
+    else:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        output_directory = in_results(DEFAULT_OUTPUT_PARENT, timestamp)
+    output_directory.mkdir(parents=True, exist_ok=False)
+    return output_directory
+
+
+def run_study(arguments: argparse.Namespace) -> Path:
+    if arguments.times is None and arguments.snapshots < 3:
+        raise ValueError("--snapshots must be at least 3")
+    requested_fields = [FIELD_DEFINITIONS[name] for name in arguments.fields]
+    messages = StudyMessages()
+
+    print("Reading embedded run metadata:")
+    runs = [
+        load_run_information(arguments.coarse_h5, requested_fields),
+        load_run_information(arguments.medium_h5, requested_fields),
+        load_run_information(arguments.fine_h5, requested_fields),
     ]
-    csv_lines.append(",".join(header_columns))
+    refinement_ratio = validate_runs(runs, requested_fields, messages, arguments.strict_metadata)
+    common_start, common_end = common_time_interval(runs, messages, arguments.strict_metadata)
+    if arguments.time_start is not None:
+        common_start = max(common_start, arguments.time_start)
+    if arguments.time_end is not None:
+        common_end = min(common_end, arguments.time_end)
+    if common_end <= common_start:
+        raise ValueError("Requested comparison window does not overlap the common simulation interval")
+    if arguments.times is not None:
+        selected_times = np.asarray(sorted(set(arguments.times)), dtype=float)
+        if selected_times.size == 0 or not np.isfinite(selected_times).all():
+            raise ValueError("--times must contain at least one finite value")
+        if selected_times[0] < common_start or selected_times[-1] > common_end:
+            raise ValueError(f"Explicit comparison times must lie inside {common_start:g}..{common_end:g} s")
+        if arguments.exact_saved_times:
+            for run in runs:
+                for value in selected_times:
+                    if not np.any(np.isclose(run.times_seconds, value, rtol=0.0, atol=TIME_TOLERANCE_SECONDS)):
+                        raise ValueError(f"{run.path.name}: {value:g} s is not an exact saved timestamp")
+        selection_method = "explicit user-supplied physical times"
+    else:
+        if arguments.exact_saved_times:
+            raise ValueError("--exact-saved-times requires --times")
+        selected_times = select_representative_times(runs[0], common_start, common_end, arguments.snapshots)
+        selection_method = "phase anchors plus approximately uniform spacing over coarse-run saved-snapshot rank"
+    print(f"Comparing {selected_times.size} representative times in {common_start:g}..{common_end:g} s")
 
-    # For each field, compute global errors over time and observed orders
-    for field_display_name, _dataset_prefix in FIELDS_TO_COMPARE:
-        coarse_series, medium_series, fine_series = loaded_runs_per_field[field_display_name]
+    with ExitStack() as stack:
+        h5_files = [stack.enter_context(h5py.File(run.path, "r")) for run in runs]
+        results = [
+            analyze_field(field, runs, h5_files, selected_times, refinement_ratio, arguments.spatial_method)
+            for field in requested_fields
+        ]
 
-        # Precompute spatial mapping caches to speed up slice mapping
-        cache_cm = build_spatial_mapping_cache(
-            fine_x_coords=medium_series.x_coordinates,
-            fine_y_coords=medium_series.y_coordinates,
-            coarse_x_coords=coarse_series.x_coordinates,
-            coarse_y_coords=coarse_series.y_coordinates,
+    output_directory = resolve_output_directory(arguments.output_dir, arguments.overwrite)
+    write_csv(output_directory / "comparison_summary.csv", results, runs)
+    write_json_report(
+        output_directory / "convergence_summary.json",
+        runs,
+        selected_times,
+        refinement_ratio,
+        results,
+        messages,
+        arguments.spatial_method,
+        selection_method,
+    )
+    if not arguments.no_plots:
+        write_plots(output_directory, results, runs)
+
+    print("\nSummary:")
+    for result in results:
+        p_l2 = "n/a" if result.observed_order_l2 is None else f"{result.observed_order_l2:.3f}"
+        p_linf = "n/a" if result.observed_order_linf is None else f"{result.observed_order_linf:.3f}"
+        relative_mf = 100.0 * result.rms_l2_medium_fine / result.rms_reference_fine
+        print(
+            f"  {result.field.display_name}: p(L2)={p_l2}, p(Linf)={p_linf}; "
+            f"RMS L2 {result.rms_l2_coarse_medium:.6g} -> {result.rms_l2_medium_fine:.6g}; "
+            f"medium-fine relative L2={relative_mf:.2f}%"
         )
-        cache_mf = build_spatial_mapping_cache(
-            fine_x_coords=fine_series.x_coordinates,
-            fine_y_coords=fine_series.y_coordinates,
-            coarse_x_coords=medium_series.x_coordinates,
-            coarse_y_coords=medium_series.y_coordinates,
-        )
+    print(f"Results written to: {output_directory}")
+    return output_directory
 
-        l2_coarse_medium, linf_coarse_medium, times_cm = compare_two_runs_over_common_times(
-            coarse_run=coarse_series,
-            fine_run=medium_series,
-            field_display_name=field_display_name,
-            use_temporal_interpolation=USE_TEMPORAL_INTERPOLATION,
-            mapping_cache=cache_cm,
-        )
-        l2_medium_fine, linf_medium_fine, times_mf = compare_two_runs_over_common_times(
-            coarse_run=medium_series,
-            fine_run=fine_series,
-            field_display_name=field_display_name,
-            use_temporal_interpolation=USE_TEMPORAL_INTERPOLATION,
-            mapping_cache=cache_mf,
-        )
 
-        # Write per‑time errors to CSV (times_cm and times_mf match respective coarse times)
-        for time_value, e1, e2 in zip(times_cm, l2_coarse_medium, l2_medium_fine[: len(times_cm)]):
-            csv_lines.append(",".join([
-                field_display_name, "L2", f"{time_value:.6f}", f"{e1:.6e}", f"{e2:.6e}"
-            ]))
-        for time_value, e1, e2 in zip(times_cm, linf_coarse_medium, linf_medium_fine[: len(times_cm)]):
-            csv_lines.append(",".join([
-                field_display_name, "Linf", f"{time_value:.6f}", f"{e1:.6e}", f"{e2:.6e}"
-            ]))
-
-        # Observed orders (RMS over time) — include in CSV as summary rows
-        observed_order_l2 = observed_order_from_two_error_series(l2_coarse_medium, l2_medium_fine)
-        observed_order_linf = observed_order_from_two_error_series(linf_coarse_medium, linf_medium_fine)
-        print(f"{field_display_name}: observed order (RMS over time)  L2≈{observed_order_l2:.2f}, Linf≈{observed_order_linf:.2f}")
-
-        csv_lines.append(",".join([
-            field_display_name, "ObservedOrder_L2", "", f"{observed_order_l2:.6f}", f"{observed_order_l2:.6f}"
-        ]))
-        csv_lines.append(",".join([
-            field_display_name, "ObservedOrder_Linf", "", f"{observed_order_linf:.6f}", f"{observed_order_linf:.6f}"
-        ]))
-
-        # Probe comparisons at engineer‑relevant spots
-        probe_time_series_coarse = extract_probe_time_series(coarse_series, PROBE_POINTS)
-        probe_time_series_medium = extract_probe_time_series(medium_series, PROBE_POINTS)
-        probe_time_series_fine = extract_probe_time_series(fine_series, PROBE_POINTS)
-
-        # Dump probe absolute differences (coarse–medium at coarse times, medium–fine at medium times)
-        for probe_name, (probe_x, probe_y) in PROBE_POINTS:
-            # coarse vs medium at coarse times
-            coarse_at_coarse = extract_probe_time_series_aligned(
-                snapshot_series=coarse_series,
-                target_times_seconds=coarse_series.times_seconds,
-                probe_x=probe_x,
-                probe_y=probe_y,
-                use_temporal_interpolation=False,  # exact sampling on its own times
-            )
-            medium_at_coarse = extract_probe_time_series_aligned(
-                snapshot_series=medium_series,
-                target_times_seconds=coarse_series.times_seconds,
-                probe_x=probe_x,
-                probe_y=probe_y,
-                use_temporal_interpolation=USE_TEMPORAL_INTERPOLATION,
-            )
-            for time_value, dval_abs in zip(coarse_series.times_seconds, np.abs(coarse_at_coarse - medium_at_coarse)):
-                csv_lines.append(",".join([
-                    field_display_name, f"probe:{probe_name}", f"{time_value:.6f}", f"{dval_abs:.6e}", ""
-                ]))
-
-            # medium vs fine at medium times
-            medium_at_medium = extract_probe_time_series_aligned(
-                snapshot_series=medium_series,
-                target_times_seconds=medium_series.times_seconds,
-                probe_x=probe_x,
-                probe_y=probe_y,
-                use_temporal_interpolation=False,
-            )
-            fine_at_medium = extract_probe_time_series_aligned(
-                snapshot_series=fine_series,
-                target_times_seconds=medium_series.times_seconds,
-                probe_x=probe_x,
-                probe_y=probe_y,
-                use_temporal_interpolation=USE_TEMPORAL_INTERPOLATION,
-            )
-            for time_value, dval_abs in zip(medium_series.times_seconds, np.abs(medium_at_medium - fine_at_medium)):
-                csv_lines.append(",".join([
-                    field_display_name, f"probe:{probe_name}", f"{time_value:.6f}", "", f"{dval_abs:.6e}"
-                ]))
-
-        # ============================= PLOTTING =============================
-        if SAVE_FIGURES:
-            os.makedirs(output_figures_directory_abspath, exist_ok=True)
-
-            # 1) Global error plots over time
-            plt.figure()
-            plt.plot(times_cm, l2_coarse_medium, label=f"L2 {SIMULATION_RUNS_LIST[0].label_for_plots_and_csv} vs {SIMULATION_RUNS_LIST[1].label_for_plots_and_csv}")
-            plt.plot(times_mf, l2_medium_fine, label=f"L2 {SIMULATION_RUNS_LIST[1].label_for_plots_and_csv} vs {SIMULATION_RUNS_LIST[2].label_for_plots_and_csv}")
-            plt.xlabel("Time [s]")
-            plt.ylabel("L2 error (RMS over grid)")
-            plt.title(f"Global L2 error over time — {field_display_name}")
-            plt.legend()
-            plt.grid(True, alpha=0.3)
-            fig_path_l2 = os.path.join(output_figures_directory_abspath, f"errors_over_time_L2_{field_display_name}.png")
-            plt.savefig(fig_path_l2, dpi=150, bbox_inches="tight")
-            plt.close()
-
-            plt.figure()
-            plt.plot(times_cm, linf_coarse_medium, label=f"Linf {SIMULATION_RUNS_LIST[0].label_for_plots_and_csv} vs {SIMULATION_RUNS_LIST[1].label_for_plots_and_csv}")
-            plt.plot(times_mf, linf_medium_fine, label=f"Linf {SIMULATION_RUNS_LIST[1].label_for_plots_and_csv} vs {SIMULATION_RUNS_LIST[2].label_for_plots_and_csv}")
-            plt.xlabel("Time [s]")
-            plt.ylabel("Linf error (max over grid)")
-            plt.title(f"Global Linf error over time — {field_display_name}")
-            plt.legend()
-            plt.grid(True, alpha=0.3)
-            fig_path_linf = os.path.join(output_figures_directory_abspath, f"errors_over_time_Linf_{field_display_name}.png")
-            plt.savefig(fig_path_linf, dpi=150, bbox_inches="tight")
-            plt.close()
-
-            # 2) Probe time series overlays: coarse vs medium vs fine
-            for probe_name, (_px, _py) in PROBE_POINTS:
-                plt.figure()
-                plt.plot(coarse_series.times_seconds, probe_time_series_coarse[probe_name], label=SIMULATION_RUNS_LIST[0].label_for_plots_and_csv)
-                plt.plot(medium_series.times_seconds, probe_time_series_medium[probe_name], label=SIMULATION_RUNS_LIST[1].label_for_plots_and_csv)
-                plt.plot(fine_series.times_seconds,   probe_time_series_fine[probe_name],   label=SIMULATION_RUNS_LIST[2].label_for_plots_and_csv)
-                plt.xlabel("Time [s]")
-                plt.ylabel(field_display_name)
-                plt.title(f"Probe '{probe_name}' — {field_display_name}")
-                plt.legend()
-                plt.grid(True, alpha=0.3)
-                fig_probe_path = os.path.join(output_figures_directory_abspath, f"probe_{probe_name}_{field_display_name}.png")
-                plt.savefig(fig_probe_path, dpi=150, bbox_inches="tight")
-                plt.close()
-
-    # Save summary CSV at the very end
-    with open(output_csv_abspath, "w", encoding="utf-8") as f_out:
-        f_out.write("\n".join(csv_lines))
-    print(f"Wrote summary to {output_csv_abspath}")
+def main(argv: Iterable[str] | None = None) -> int:
+    parser = build_argument_parser()
+    arguments = parser.parse_args(list(argv) if argv is not None else None)
+    try:
+        run_study(arguments)
+    except (FileNotFoundError, OSError, RuntimeError, ValueError, json.JSONDecodeError) as error:
+        parser.exit(2, f"error: {error}\n")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

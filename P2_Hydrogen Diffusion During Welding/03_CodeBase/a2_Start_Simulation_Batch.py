@@ -159,7 +159,9 @@ if __name__ == "__main__":
 
     # Write your changes here. Remember to set zip or product below.
     sweep = {
-        "diffusion_scheme": [0, 2],
+        "dx": [1.0, 0.5, 0.25],
+        "dy": [1.0, 0.5, 0.25],
+        "safety_factor": [0.0625, 0.25, 1.0],
         # "no_of_weld_beads": [16, 10],
         # "bead_height": [2.5, 4],
         # "time_for_weld_bead": [480, 660],
@@ -170,7 +172,7 @@ if __name__ == "__main__":
     # Build runs you can extend later
     runs = build_runs_from_sweep(sweep, mode=SWEEP_MODE)
 
-    RUN_ANIMATION = True   # False = skip c1_Make_Animation.py
+    RUN_ANIMATION = False   # False = skip c1_Make_Animation.py
 
     # ---------- execute batch ----------
     backup_config()
