@@ -25,33 +25,33 @@ from b4_functions import in_results, get_spec_value_at_temp, find_min_max_value
 """ ---------------------- Main Simulation Settings ----------------------------- """
 model_version = "0.4.0"  # For provenance. Don't change, unless you customize logic. Then its yours, Yay!
 simulation_type = "butt joint"  # Options: "lap joint", "butt joint" and "iso3690"
-diffusion_scheme = 0  # 0 = centered D * Laplacian | 1 = flux-conservative | 2 = mu-driven using relative S-factor
+diffusion_scheme = 1  # 0 = centered D * Laplacian | 1 = flux-conservative | 2 = mu-driven using relative S-factor
 thermal_diffusion_calibration = False  # True = thermal-only calibration mode (hydrogen disabled)
 
 """ ---------------------- Spacial Discretization (Step Size) ------------------- """
-dx = 1  # step size in x direction - if not equal to dy, tripple check solver logic!
-dy = 1  # step size in y direction - if not equal to dx, tripple check solver logic!
+dx = 0.5  # step size in x direction - if not equal to dy, tripple check solver logic!
+dy = 0.5  # step size in y direction - if not equal to dx, tripple check solver logic!
 
 """ ---------------------- Weld Bead Settings ----------------------------------- """
 add_bead_mode = "regular_intervals"  # Options: "regular_intervals" and "interpass_temperature_controlled"
 
-no_of_weld_beads = 2  # Short convergence study: one complete left/right butt-joint bead pair
+no_of_weld_beads = 20  # no of "blocks" during welding: Butt joint: must be %2, fit bead_height! Lap Joint: max 4
 bead_height = 2  # Half of weld beads * height should probably be weld thickness (th) (2.8 for iso?
 bead_width = 12  # Using half of weld width (we) for blocks, for ellipses maybe 3/4-ish of weld width? 60%?
 bead_scales = [(1.0, 1.0), (1.0, 1.0), (1.6, 1.6), (3.0, 3.0)]  # Used for lap joint and iso3690
 
 """ ---------------------- Temporal Discretization and Settings ------------------ """
-time_before_first_weld = 1  # Run simulation before starting with first bead. Not necessary, makes for nicer videos [s]
-time_for_weld_bead = 2  # Time between welds. Weld block gets added at 0. Temp. held for time_heat_hold. [s]
-time_after_last_weld = 20  # Time after last weld. BC in sample edge is held at t_cool this long. [s]
-time_heat_hold = 1  # Force the new weld block to have this temp for so long [s]
+time_before_first_weld = 5  # Run simulation before starting with first bead. Not necessary, makes for nicer videos [s]
+time_for_weld_bead = 500  # Time between welds. Weld block gets added at 0. Temp. held for time_heat_hold. [s]
+time_after_last_weld = 500  # Time after last weld. BC in sample edge is held at t_cool this long. [s]
+time_heat_hold = 3  # Force the new weld block to have this temp for so long [s]
 
-time_cooling_to_rt = 30  # Short convergence-study cooling interval [s]
-time_diffusion_at_rt = 300  # Short convergence-study room-temperature interval [s]
+time_cooling_to_rt = 1 * 60 * 60  # For now set to 1.5h. During, forced linear cooling as BC in sample metal
+time_diffusion_at_rt = 1 * 24 * 60 * 60  # 2d * 24h * 60min * 60s
 
-safety_factor = 0.0625  # Batch sweep keeps the actual hot-state dt equal across all three grids
+safety_factor = 0.5  # 1 = stable (lower maybe better temporal convergence) | Default and recommended = 1
 use_big_dt_override = True  # Diffusion at RT slow -> large automatic dt possible. Manual override to use smaller dt?
-big_dt_override = 1  # Keep the room-temperature time step equal and short in the convergence study
+big_dt_override = 900  # If override = True, calculate every so many seconds, even if you could go faster.
 
 guess_adaptive_stable_dt = False  # Try to use a bigger dt where possible - highly experimental right now
 
@@ -80,11 +80,11 @@ t_conv_h2 = 5e-4   # - UNUSED - [W/mm²/K], ≈ 500 W/m²K, underside, forced hy
 file_name = str(in_results("00_diffusion_array.h5", mkdir=True))  # diffusion_array.h5"
 animation_name = str(in_results("00_diffusion_animation.mp4", mkdir=True))  # diffusion_animation.mp4
 
-s_per_frame_part1 = 2  # Save every so many seconds (dt is usually < 0.001s)
+s_per_frame_part1 = 1  # Save every so many seconds (dt is usually < 0.001s)
 animation_frame_stride = 5  # Only render every n-th frame (used in animation/video scripts)
 
 use_sparse_saving_in_just_diffusion = True  # If True, save less often after welding (long RT diffusion)
-s_per_frame_just_diffusion_sparse = 30.0  # Seconds per save during just-diffusion phase when sparse saving is ON
+s_per_frame_just_diffusion_sparse = 300.0  # Seconds per save during just-diffusion phase when sparse saving is ON
 
 """ ---------------------- Microstructure Parameters (D | D_H | S) -------------- """
 microstructures = ["none", "base_metal", "weld_metal", "HAZ"]  # Check solver logic if adding more, but should work
