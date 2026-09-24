@@ -146,7 +146,10 @@ material: HAZ
 ] 1540, 2000 ]:  D_H = 1.1578  * exp(-37007 / (R * T_K))
 """.strip()
 
-# Solubility used for chemical potential driven diffusion. Due to lack of data, relative values only for now!
+# Solubility used for chemical potential driven diffusion. 
+# *** !! Currently no RELIABLE high Temperature data available !! ***
+# *** !! There is no reason to use this until you find solubility data !! ***
+# Due to lack of data, relative formulation as a placeholder for now!
 # Idea: baseline S=1 below transformation, linear ramp to S=10 across 740–800°C, then constant.
 # Solubility factor used only for diffusion_scheme = 2 (mu-driven diffusion).
 # IMPORTANT:
@@ -164,19 +167,19 @@ material: none
 ] -inf, +inf ]: S = 0
 
 material: base_metal
-] -inf, 740 ]:  S = 0.5
-] 740, 800 ]:   S = 0.5 + 4.5 * ((T_C - 740) / (800 - 740))
-] 800, +inf ]:  S = 5
+] -inf, 740 ]:  S = 1
+] 740, 800 ]:   S = 1
+] 800, +inf ]:  S = 1
 
 material: weld_metal
 ] -inf, 740 ]:  S = 1
-] 740, 800 ]:   S = 1 + 9 * ((T_C - 740) / (800 - 740))
-] 800, +inf ]:  S = 10
+] 740, 800 ]:   S = 1
+] 800, +inf ]:  S = 1
 
 material: HAZ
 ] -inf, 740 ]:  S = 1
-] 740, 800 ]:   S = 1 + 9 * ((T_C - 740) / (800 - 740))
-] 800, +inf ]:  S = 10
+] 740, 800 ]:   S = 1
+] 800, +inf ]:  S = 1
 """.strip()
 
 """ ------------------------------------------ Advanced and Resultant Setting  ------------------------------------- """
@@ -302,6 +305,4 @@ material: weld_metal
 material: HAZ
 ] -inf, +inf ]: S = 1
 
-**2 Adapted from Boellinghaus 1995: 8.8 * e-11 * T ** 2.2285 [cm² / s]! Temperature T is in °C here!
-    D_H = (8.8 * 10 ** -9 * T ** 2.2285) # [mm² / s]
 """
