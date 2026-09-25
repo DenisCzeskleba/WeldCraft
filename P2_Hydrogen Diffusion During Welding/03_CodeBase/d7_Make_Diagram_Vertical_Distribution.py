@@ -1,7 +1,7 @@
 import h5py
 import matplotlib.pyplot as plt
 import numpy as np
-from b4_functions import in_results
+from b3_Functions import in_results
 
 # Choose which curves to draw (1..5). Example: [2] draws only #2; [1,3,5] draws those; [] draws none.
 PLOT_IDS = [1, 2, 3, 4, 5]

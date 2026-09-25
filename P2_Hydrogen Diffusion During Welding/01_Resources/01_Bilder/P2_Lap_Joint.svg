@@ -1,0 +1,219 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg
+   width="698"
+   height="401"
+   viewBox="141 22 698 401"
+   version="1.1"
+   id="svg15"
+   sodipodi:docname="P2_Lap_Joint.svg"
+   inkscape:version="1.4 (86a8ad7, 2024-10-11)"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <sodipodi:namedview
+     id="namedview15"
+     pagecolor="#ffffff"
+     bordercolor="#000000"
+     borderopacity="0.25"
+     inkscape:showpageshadow="2"
+     inkscape:pageopacity="0.0"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#d1d1d1"
+     inkscape:zoom="2.0155188"
+     inkscape:cx="293.7209"
+     inkscape:cy="253.28466"
+     inkscape:window-width="2560"
+     inkscape:window-height="1361"
+     inkscape:window-x="2551"
+     inkscape:window-y="-9"
+     inkscape:window-maximized="1"
+     inkscape:current-layer="svg15" />
+  <defs
+     id="defs1">
+    <style
+       id="style1">
+      .metal { fill: #83aeca; stroke: #18334a; stroke-width: 4; }
+      .weld { fill: #de744b; stroke: #18334a; stroke-width: 2; stroke-linejoin: round; }
+      .pass { fill: none; stroke: #18334a; stroke-width: 2; stroke-linecap: round; }
+      .dim { fill: none; stroke: #18334a; stroke-width: 2; }
+      .ext { fill: none; stroke: #758593; stroke-width: 1.5; }
+      .label { fill: #18334a; font-family: sans-serif; font-size: 15px; text-anchor: middle; }
+      .label-start { fill: #18334a; font-family: sans-serif; font-size: 15px; text-anchor: start; }
+      .label-end { fill: #18334a; font-family: sans-serif; font-size: 15px; text-anchor: end; }
+    </style>
+  </defs>
+  <rect
+     x="141"
+     y="22"
+     width="698"
+     height="401"
+     fill="#f7f9fb"
+     id="rect1" />
+  <path
+     class="weld"
+     d="M535 235 V145 C583 151 632 190 655 235 Z"
+     id="path1" />
+  <path
+     class="pass"
+     d="M535 170 C558 173 578 185 595 204"
+     id="path2" />
+  <path
+     class="pass"
+     d="M560 208 C580 200 600 204 616 216 C624 222 629 229 631 235"
+     id="path3" />
+  <path
+     class="pass"
+     d="M535 202 C557 205 577 217 590 235"
+     id="path4" />
+  <rect
+     class="metal"
+     x="155"
+     y="235"
+     width="650"
+     height="110"
+     rx="3"
+     id="rect4" />
+  <path
+     class="metal"
+     d="M158 115 H532 Q535 115 535 118 V232 Q535 235 532 235 H490 V217 H158 Q155 217 155 214 V118 Q155 115 158 115 Z"
+     id="rect5" />
+  <line
+     class="ext"
+     x1="155"
+     y1="107"
+     x2="155"
+     y2="72"
+     id="line6" />
+  <path
+     class="dim"
+     d="M155 80 H535 M155 80 l8 -5 M155 80 l8 5"
+     id="path6" />
+  <path
+     class="dim"
+     d="m 536.15488,79.894196 h 263.77298 m -263.77298,0 5.55311,-5 m -5.55311,5 5.55311,5"
+     id="path6-2"
+     style="fill:none;stroke:#18334a;stroke-width:2" />
+  <text
+     class="label"
+     x="345"
+     y="69"
+     id="text6">Upper plate length</text>
+  <line
+     class="ext"
+     x1="805"
+     y1="72"
+     x2="805"
+     y2="227"
+     id="line7" />
+  <path
+     class="dim"
+     d="m 535.15505,79.875962 h 270 m 0,0 -8,-5 m 8,5 -8,5"
+     id="path7" />
+  <path
+     class="dim"
+     d="m 263.02838,80.008717 h 270 m 0,0 -8,-5 m 8,5 -8,5.000002"
+     id="path7-9"
+     style="fill:none;stroke:#18334a;stroke-width:2" />
+  <text
+     class="label"
+     x="670"
+     y="110"
+     id="text7">Right extension</text>
+  <line
+     class="ext"
+     x1="155"
+     y1="353"
+     x2="155"
+     y2="382"
+     id="line8" />
+  <line
+     class="ext"
+     x1="490"
+     y1="243"
+     x2="490"
+     y2="382"
+     id="line9" />
+  <line
+     class="dim"
+     x1="211.5"
+     y1="234.47006"
+     x2="211.5"
+     y2="259.63907"
+     id="line9-8" />
+  <path
+     class="dim"
+     d="M155 374 H490 M155 374 l8 -5 M155 374 l8 5 M490 374 l-8 -5 M490 374 l-8 5"
+     id="path9" />
+  <text
+     class="label"
+     x="322.5"
+     y="403"
+     id="text9">Interface gap length</text>
+  <path
+     class="dim"
+     d="M185.25 115 V235 M185.25 115 l-5 8 M185.25 115 l5 8 M185.25 235 l-5 -8 M185.25 235 l5 -8"
+     id="path10" />
+  <text
+     class="label-start"
+     x="194.25"
+     y="176"
+     id="text10">Upper plate thickness</text>
+  <path
+     class="dim"
+     d="m 211.5,217.0037 v 17.46636 m 0,-17.46636 -4,5.82212 m 4,-5.82212 4,5.82212 m -4,11.64424 -4,-5.82212 m 4,5.82212 4,-5.82212"
+     id="path11" />
+  <text
+     class="label-start"
+     x="219.5"
+     y="258"
+     id="text11">Interface gap width</text>
+  <line
+     class="ext"
+     x1="805"
+     y1="235"
+     x2="827"
+     y2="235"
+     id="line12" />
+  <line
+     class="ext"
+     x1="805"
+     y1="345"
+     x2="827"
+     y2="345"
+     id="line13" />
+  <path
+     class="dim"
+     d="M818.5 235 V345 M818.5 235 l-5 8 M818.5 235 l5 8 M818.5 345 l-5 -8 M818.5 345 l5 -8"
+     id="path13" />
+  <text
+     class="label-end"
+     x="796"
+     y="295"
+     id="text13">Lower plate thickness</text>
+  <path
+     class="dim"
+     d="M535 35 V115 M535 35 l-5 8 M535 35 l5 8 M535 115 l-5 -8 M535 115 l5 -8"
+     id="path14" />
+  <text
+     class="label-end"
+     x="638"
+     y="60"
+     id="text14">Space above</text>
+  <line
+     class="ext"
+     x1="729"
+     y1="410"
+     x2="744"
+     y2="410"
+     id="line15" />
+  <path
+     class="dim"
+     d="M736.5 345 V410 M736.5 345 l-5 8 M736.5 345 l5 8 M736.5 410 l-5 -8 M736.5 410 l5 -8"
+     id="path15" />
+  <text
+     class="label-end"
+     x="726"
+     y="390"
+     id="text15">Space below</text>
+</svg>

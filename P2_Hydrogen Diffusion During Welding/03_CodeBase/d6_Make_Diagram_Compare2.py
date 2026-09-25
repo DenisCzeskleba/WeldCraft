@@ -1,7 +1,7 @@
 import matplotlib.pyplot as plt
 import h5py
 import numpy as np
-from b4_functions import in_results, load_param_config_json
+from b3_Functions import in_results, load_param_config_json
 
 
 # File names for comparison (allowing up to 4 files) #-in up to 4

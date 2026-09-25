@@ -6,7 +6,7 @@ from matplotlib.gridspec import GridSpec
 from tqdm import tqdm
 import numpy as np
 import time
-from b4_functions import in_results
+from b3_Functions import in_results
 
 # Load two .h5 files for comparison
 file1_name = str(in_results("03_Batch-Executions", "XXX.h5"))

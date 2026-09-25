@@ -7,10 +7,10 @@ import signal
 import atexit
 import itertools
 from typing import Tuple
-from b4_functions import in_results
+from b3_Functions import in_results
 
-CONFIG_FILE = "b2_param_config.py"
-BACKUP_FILE = "b2_param_config_backup.py"
+CONFIG_FILE = "b2_Simulation_Settings.py"
+BACKUP_FILE = "b2_Simulation_Settings_Backup.py"
 BATCH_DIR = str(in_results("03_Batch-Executions"))
 STOP_ON_ERROR = True   # stop the sweep on first failed run
 
@@ -33,11 +33,11 @@ def restore_config_if_needed():
     if os.path.exists(BACKUP_FILE):
         try:
             shutil.move(BACKUP_FILE, CONFIG_FILE)
-            print("[INFO] b2_param_config.py restored from backup.")
+            print("[INFO] b2_Simulation_Settings.py restored from backup.")
         except Exception as e:
             print(f"[WARN] Failed to restore {CONFIG_FILE}: {e}")
     else:
-        print("[WARN] Backup not found; b2_param_config.py left as-is.")
+        print("[WARN] Backup not found; b2_Simulation_Settings.py left as-is.")
     _RESTORED = True
 
 
@@ -58,7 +58,7 @@ for sig in (signal.SIGINT, getattr(signal, "SIGTERM", signal.SIGINT)):
     try:
         signal.signal(sig, _signal_handler)
     except Exception:
-        pass  # some environments don’t allow setting handlers
+        pass  # some environments don't allow setting handlers
 
 
 def sanitize_path_for_py(s: str) -> str:
@@ -92,7 +92,7 @@ def build_output_names(changes: dict) -> Tuple[str, str]:
 
 def modify_config(changes: dict):
     """
-    Update existing assignments in b2_param_config.py.
+    Update existing assignments in b2_Simulation_Settings.py.
     Keeps trailing comments. Supports numbers & strings.
     Only matches lines that start with `key =`.
     """
@@ -172,7 +172,7 @@ if __name__ == "__main__":
     # Build runs you can extend later
     runs = build_runs_from_sweep(sweep, mode=SWEEP_MODE)
 
-    RUN_ANIMATION = False   # False = skip c1_Make_Animation.py
+    RUN_ANIMATION = False   # False = skip d1_Make_Animation.py
 
     # ---------- execute batch ----------
     backup_config()
@@ -186,7 +186,7 @@ if __name__ == "__main__":
             changes["file_name"] = file_name
             changes["animation_name"] = animation_name
 
-            # Apply changes to b2_param_config.py
+            # Apply changes to b2_Simulation_Settings.py
             modify_config(changes)
 
             print(f"\n=== Batch run {i}/{len(runs)} ===")
@@ -198,9 +198,9 @@ if __name__ == "__main__":
                 break
 
             if RUN_ANIMATION:
-                rc2 = run_script("c1_Make_Animation.py")
+                rc2 = run_script("d1_Make_Animation.py")
                 if rc2 != 0 and STOP_ON_ERROR:
-                    print("[INFO] Stopping batch due to error in c1_Make_Animation.py")
+                    print("[INFO] Stopping batch due to error in d1_Make_Animation.py")
                     break
             else:
                 print("[INFO] Skipping animation (RUN_ANIMATION=False)")
@@ -208,5 +208,5 @@ if __name__ == "__main__":
         print(f"\n[INFO] Batch finished (completed {i} run(s)). Results in: {BATCH_DIR}")
 
     finally:
-        # final safety restore (also handled by atexit/handlers if we’re killed)
+        # final safety restore (also handled by atexit/handlers if we're killed)
         restore_config_if_needed()

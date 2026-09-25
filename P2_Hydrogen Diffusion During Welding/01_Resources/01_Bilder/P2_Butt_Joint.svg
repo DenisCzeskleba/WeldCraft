@@ -1,0 +1,257 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg
+   width="761"
+   height="381"
+   viewBox="60 42 761 381"
+   version="1.1"
+   id="svg20"
+   sodipodi:docname="P2_Butt_Joint.svg"
+   inkscape:version="1.4 (86a8ad7, 2024-10-11)"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <sodipodi:namedview
+     id="namedview20"
+     pagecolor="#ffffff"
+     bordercolor="#000000"
+     borderopacity="0.25"
+     inkscape:showpageshadow="2"
+     inkscape:pageopacity="0.0"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#d1d1d1"
+     inkscape:zoom="3"
+     inkscape:cx="380.5"
+     inkscape:cy="190.5"
+     inkscape:window-width="2560"
+     inkscape:window-height="1361"
+     inkscape:window-x="2551"
+     inkscape:window-y="-9"
+     inkscape:window-maximized="1"
+     inkscape:current-layer="svg20" />
+  <defs
+     id="defs1">
+    <style
+       id="style1">
+      .metal { fill: #83aeca; stroke: #18334a; stroke-width: 4; }
+      .weld { fill: #de744b; stroke: #18334a; stroke-width: 2; stroke-linejoin: round; }
+      .pass { fill: none; stroke: #18334a; stroke-width: 2; stroke-linecap: round; }
+      .dim { fill: none; stroke: #18334a; stroke-width: 2; }
+      .ext { stroke: #758593; stroke-width: 1.5; }
+      .label { fill: #18334a; font-family: sans-serif; font-size: 15px; text-anchor: middle; }
+      .label-start { fill: #18334a; font-family: sans-serif; font-size: 15px; text-anchor: start; }
+      .label-end { fill: #18334a; font-family: sans-serif; font-size: 15px; text-anchor: end; }
+    </style>
+  </defs>
+  <rect
+     x="60"
+     y="42"
+     width="761"
+     height="381"
+     fill="#f7f9fb"
+     id="rect1" />
+  <path
+     class="weld"
+     d="M400 290 V190 C414 192 425 195 433.95186 197.73631 C458.27775 186.21114 481.32334 178.8021 499.24769 180.44856 L500 290 Z"
+     id="path1" />
+  <path
+     class="pass"
+     d="M403.76205 190.17061 C429.55323 193.61398 454.22307 207.38752 473.28613 222.30884"
+     id="path2" />
+  <path
+     class="pass"
+     d="M400 220.30884 C426.20987 224.35685 451.28018 240.5488 470.65268 258.09012"
+     id="path3" />
+  <path
+     class="pass"
+     d="M438.21865 234.26993 C461.83601 224.33576 483.09167 218.37525 499.62384 219.69978"
+     id="path4" />
+  <path
+     class="pass"
+     d="M400 250.82326 C425.53612 255.58977 448.85172 271.47817 464.39544 287.36657"
+     id="path5" />
+  <path
+     class="pass"
+     d="M441.47598 266.67533 C462.79542 259.03241 484.11488 254.32906 500 254.917"
+     id="path6" />
+  <rect
+     class="metal"
+     x="110"
+     y="145"
+     width="290"
+     height="145"
+     rx="3"
+     id="rect6" />
+  <rect
+     class="metal"
+     x="500"
+     y="145"
+     width="260"
+     height="145"
+     rx="3"
+     id="rect7" />
+  <rect
+     class="metal"
+     x="365"
+     y="290"
+     width="170"
+     height="65"
+     rx="3"
+     id="rect8" />
+  <line
+     class="ext"
+     x1="110"
+     y1="137"
+     x2="110"
+     y2="101"
+     id="line8" />
+  <line
+     class="ext"
+     x1="400"
+     y1="137"
+     x2="400"
+     y2="101"
+     id="line9" />
+  <path
+     class="dim"
+     d="M110 110 H400 M110 110 l8 -5 M110 110 l8 5 M400 110 l-8 -5 M400 110 l-8 5"
+     id="path9" />
+  <text
+     class="label"
+     x="255"
+     y="98"
+     id="text9">Left plate width</text>
+  <line
+     class="ext"
+     x1="500"
+     y1="137"
+     x2="500"
+     y2="101"
+     id="line10" />
+  <path
+     class="dim"
+     d="M400 110 H500 M400 110 l8 -5 M400 110 l8 5 M500 110 l-8 -5 M500 110 l-8 5"
+     id="path10" />
+  <text
+     class="label"
+     x="450"
+     y="98"
+     id="text10">Weld width</text>
+  <line
+     class="ext"
+     x1="760"
+     y1="137"
+     x2="760"
+     y2="101"
+     id="line11" />
+  <path
+     class="dim"
+     d="M500 110 H760 M500 110 l8 -5 M500 110 l8 5 M760 110 l-8 -5 M760 110 l-8 5"
+     id="path11" />
+  <text
+     class="label"
+     x="630"
+     y="98"
+     id="text11">Right plate width</text>
+  <line
+     class="ext"
+     x1="365"
+     y1="363"
+     x2="365"
+     y2="387"
+     id="line12" />
+  <line
+     class="ext"
+     x1="535"
+     y1="363"
+     x2="535"
+     y2="387"
+     id="line13" />
+  <path
+     class="dim"
+     d="M365 379 H535 M365 379 l8 -5 M365 379 l8 5 M535 379 l-8 -5 M535 379 l-8 5"
+     id="path13" />
+  <text
+     class="label"
+     x="450"
+     y="405"
+     id="text13">Support width</text>
+  <line
+     class="ext"
+     x1="102"
+     y1="145"
+     x2="73"
+     y2="145"
+     id="line14" />
+  <line
+     class="ext"
+     x1="102"
+     y1="290"
+     x2="73"
+     y2="290"
+     id="line15" />
+  <path
+     class="dim"
+     d="M81 145 V290 M81 145 l-5 8 M81 145 l5 8 M81 290 l-5 -8 M81 290 l5 -8"
+     id="path15" />
+  <text
+     class="label-start"
+     x="91"
+     y="315"
+     id="text15">Plate thickness</text>
+  <path
+     class="dim"
+     d="M560 290 V355 M560 290 l-5 8 M560 290 l5 8 M560 355 l-5 -8 M560 355 l5 -8"
+     id="path16" />
+  <text
+     class="label-start"
+     x="575"
+     y="347"
+     id="text16">Support height</text>
+  <line
+     class="ext"
+     x1="768"
+     y1="55"
+     x2="808"
+     y2="55"
+     id="line17" />
+  <line
+     class="ext"
+     x1="768"
+     y1="145"
+     x2="808"
+     y2="145"
+     id="line18" />
+  <path
+     class="dim"
+     d="M800 55 V145 M800 55 l-5 8 M800 55 l5 8 M800 145 l-5 -8 M800 145 l5 -8"
+     id="path18" />
+  <text
+     class="label-end"
+     x="790"
+     y="82"
+     id="text18">Space above</text>
+  <line
+     class="ext"
+     x1="543"
+     y1="355"
+     x2="808"
+     y2="355"
+     id="line19" />
+  <line
+     class="ext"
+     x1="768"
+     y1="410"
+     x2="808"
+     y2="410"
+     id="line20" />
+  <path
+     class="dim"
+     d="M800 355 V410 M800 355 l-5 8 M800 355 l5 8 M800 410 l-5 -8 M800 410 l5 -8"
+     id="path20" />
+  <text
+     class="label-end"
+     x="790"
+     y="393"
+     id="text20">Space below</text>
+</svg>

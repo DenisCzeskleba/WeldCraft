@@ -16,7 +16,7 @@ import contextlib
 
 # Suppress config prints during import, so no double prints. They’ll still appear when scripts run directly.
 with contextlib.redirect_stdout(io.StringIO()):
-    from b4_functions import in_results, load_param_config_json
+    from b3_Functions import in_results, load_param_config_json
 
 # -------------------------------------------------
 # USER OPTION: Track individual beads?

@@ -1,7 +1,7 @@
 """
 Make Diagram (consolidated / animation-consistent).
 
-- Loads snapshots exactly like c1_Make_Animation.py (u_snapshot_*, h_snapshot_*, t_snapshot_*)
+- Loads snapshots exactly like d1_Make_Animation.py (u_snapshot_*, h_snapshot_*, t_snapshot_*)
 - Uses mm scaling via: extent = [0, nx*dx, ny*dy, 0]
 - Uses mm-based annotations (coords_mm) with one-time preprocessing to indices
 - Can auto-use weld phase times from HDF5 attrs (RT, etc.) so no manual guessing
@@ -19,7 +19,7 @@ import contextlib
 
 # Suppress config prints during import
 with contextlib.redirect_stdout(io.StringIO()):
-    from b4_functions import in_results, load_param_config_json
+    from b3_Functions import in_results, load_param_config_json
 
 
 # -------------------------------------------------
@@ -170,7 +170,7 @@ def create_annotations(ax, points, loaded_array, label):
 
 
 def load_snapshots_like_animation(file_name):
-    """Load u/h/t snapshots in sorted-key order (exactly like c1_Make_Animation.py)."""
+    """Load u/h/t snapshots in sorted-key order (exactly like d1_Make_Animation.py)."""
     loaded_u_arrays = []
     loaded_h_arrays = []
     loaded_t_values = []
@@ -217,7 +217,7 @@ dx, dy = param_cfg["dx"], param_cfg["dy"]
 
 loaded_u_arrays, loaded_h_arrays, times_s, phase_times = load_snapshots_like_animation(file_name)
 
-# mm scaling: EXACTLY the trick you requested (consistent with c1_Make_Animation.py)
+# mm scaling: EXACTLY the trick you requested (consistent with d1_Make_Animation.py)
 ny, nx = loaded_u_arrays[0].shape
 
 x_crop0 = 0

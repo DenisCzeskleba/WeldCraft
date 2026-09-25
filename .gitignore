@@ -26,6 +26,14 @@ P5_Lattice_Visualizer/Standalone_Release/dist/
 P5_Lattice_Visualizer/Standalone_Release/staging/
 P2_Hydrogen Diffusion During Welding/01_Resources/*
 !P2_Hydrogen Diffusion During Welding/01_Resources/.gitkeep
+!P2_Hydrogen Diffusion During Welding/01_Resources/b2_simulation_settings_default.py
+!P2_Hydrogen Diffusion During Welding/01_Resources/01_Bilder/
+P2_Hydrogen Diffusion During Welding/01_Resources/01_Bilder/*
+!P2_Hydrogen Diffusion During Welding/01_Resources/01_Bilder/P2_Butt_Joint.svg
+!P2_Hydrogen Diffusion During Welding/01_Resources/01_Bilder/P2_Lap_Joint.svg
+!P2_Hydrogen Diffusion During Welding/01_Resources/01_Bilder/P2_ISO3690.svg
+P2_Hydrogen Diffusion During Welding/03_CodeBase/test_*.py
+P2_Hydrogen Diffusion During Welding/03_CodeBase/b2_Simulation_Settings_Backup.py
 P2_Hydrogen Diffusion During Welding/02_Results/*
 !P2_Hydrogen Diffusion During Welding/02_Results/.gitkeep
 P2_Hydrogen Diffusion During Welding/00_Deprecated/

@@ -12,8 +12,8 @@ import numpy as np
 
 # Suppress config prints during import, so no double prints. They’ll still appear when scripts run directly.
 with contextlib.redirect_stdout(io.StringIO()):
-    from b4_functions import in_results, load_param_config_json
-    import b2_param_config
+    from b3_Functions import in_results, load_param_config_json
+    import b2_Simulation_Settings
 
 # ---------------------------- 1. Load Data from HDF5 File ----------------------------
 USE_MANUAL_FILE = False
@@ -23,7 +23,7 @@ MANUAL_FILE = r"F:\01_BAM-Main-Simulation\02_Results\03_Batch-Executions\diffusi
 if USE_MANUAL_FILE:
     file_name = MANUAL_FILE
 else:
-    file_name = str(b2_param_config.file_name)
+    file_name = str(b2_Simulation_Settings.file_name)
     if not os.path.exists(file_name):
         file_name = MANUAL_FILE
 param_cfg = load_param_config_json(file_name)

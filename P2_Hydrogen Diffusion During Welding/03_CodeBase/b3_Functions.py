@@ -9,13 +9,13 @@ _SPEC_V2_R_GAS = 8.315
 
 
 def get_value(param_name):
-    import b2_param_config  # local import avoids circular imports at module load time
+    import b2_Simulation_Settings  # local import avoids circular imports at module load time
 
     # Check if the parameter exists in the config file
-    if hasattr(b2_param_config, param_name):
-        return getattr(b2_param_config, param_name)
+    if hasattr(b2_Simulation_Settings, param_name):
+        return getattr(b2_Simulation_Settings, param_name)
     else:
-        raise ValueError(f"Parameter '{param_name}' not found in param_config")
+        raise ValueError(f"Parameter '{param_name}' not found in simulation settings")
 
 
 def find_repo_root(start: Path | None = None) -> Path:
@@ -111,13 +111,13 @@ def _serialize_param_value(value):
 
 
 def param_config_snapshot():
-    import b2_param_config  # local import avoids circular import at module load time
+    import b2_Simulation_Settings  # local import avoids circular import at module load time
 
     snapshot = {}
-    for name in dir(b2_param_config):
+    for name in dir(b2_Simulation_Settings):
         if name.startswith("_"):
             continue
-        value = getattr(b2_param_config, name)
+        value = getattr(b2_Simulation_Settings, name)
         if callable(value):
             continue
         snapshot[name] = _serialize_param_value(value)
@@ -138,6 +138,220 @@ def load_param_config_json(file_name):
         return json.loads(param_json)
 
 
+def weld_sample_butt():
+    """Build the butt-joint geometry from the selected simulation settings."""
+    dx = get_value("dx")
+    le, ri, we, th = (get_value(name) for name in ("le", "ri", "we", "th"))
+    su_h, su_w = (get_value(name) for name in ("su_h", "su_w"))
+    fr_ab, fr_be = (get_value(name) for name in ("fr_ab", "fr_be"))
+    fr_le = le - (su_w - we) / 2
+    fr_ri = ri - (su_w - we) / 2
+
+    # Calculate dimension stuff (naming odd, cuz of python convention for x/y, i/j)
+    dim_rows = le + ri + we  # The rows have so many entries in them (1 per mm * the amount of points within 1 mm)
+    dim_columns = th + su_h + fr_ab + fr_be  # same with columns
+
+    # Set the edges here so we can easily do the boundary conditions later
+    rows = slice(int(fr_ab/dx), int((fr_ab + th) / dx))  # vertical extent of plate
+    butt_joint_edges = {
+        "left": {"rows": rows, "col": 0, "nbr_col": 1},
+        "right": {"rows": rows, "col": -1, "nbr_col": -2}}
+
+    return butt_joint_edges, dim_rows, dim_columns, le, ri, we, th, su_h, su_w, fr_le, fr_ri, fr_ab, fr_be
+
+
+def weld_sample_lap():
+    """Build the lap-joint geometry from the selected simulation settings."""
+    dx = get_value("dx")
+    le, we, th, su_h = (get_value(name) for name in ("le", "we", "th", "su_h"))
+    fr_le, fr_ri, fr_ab, fr_be = (
+        get_value(name) for name in ("fr_le", "fr_ri", "fr_ab", "fr_be")
+    )
+
+    # Calculate dimension stuff (naming odd, cuz of python convention for x/y, i/j)
+    dim_rows = le + fr_ri
+    dim_columns = th + su_h + fr_ab + fr_be
+
+    # Set the edges here so we can easily do the boundary conditions later
+    left_above = slice(int(round(fr_ab / dx)), int(round((fr_ab + th - we) / dx)))  # left edge, above gap
+    left_below = slice(int(round((fr_ab + th) / dx)), int(round((fr_ab + th + su_h) / dx)))  # left edge, below gap
+    right_rows = slice(int(round((fr_ab + th) / dx)), int(round((fr_ab + th + su_h) / dx)))  # right edge (lower plate)
+
+    lap_joint_edges = {
+        "left_above": {"rows": left_above, "col": 0, "nbr_col": 1},
+        "left_below": {"rows": left_below, "col": 0, "nbr_col": 1},
+        "right": {"rows": right_rows, "col": -1, "nbr_col": -2}}
+
+    ri = su_w = 0.0
+    return lap_joint_edges, dim_rows, dim_columns, le, ri, we, th, su_h, su_w, fr_le, fr_ri, fr_ab, fr_be
+
+
+def weld_sample_iso3690():
+    """Build the ISO 3690 geometry from the selected simulation settings."""
+    dx, dy = (get_value(name) for name in ("dx", "dy"))
+    le, th = (get_value(name) for name in ("le", "th"))
+    fr_le, fr_ri, fr_ab, fr_be = (
+        get_value(name) for name in ("fr_le", "fr_ri", "fr_ab", "fr_be")
+    )
+
+    # Calculate dimension stuff (naming odd, cuz of python convention for x/y, i/j)
+    dim_rows = le + fr_le + fr_ri  # rows have so many entries in them (1 per mm * the amount of points within 1 mm)
+    dim_columns = th + fr_ab + fr_be  # same with columns
+
+    # Set the edges here so we can easily do the boundary conditions later
+    rows = slice(int(fr_ab / dy), int((fr_ab + th) / dy))  # vertical extent of plate
+    col_left = int(fr_le / dx)  # Horizontal extent of the plate, first column inside the plate
+    col_right = int((fr_le + le) / dx) - 1  # last column inside the plate (inclusive)
+
+    iso3690_weld_edges = {
+        "left": {"rows": rows, "col": col_left, "nbr_col": col_left + 1},
+        "right": {"rows": rows, "col": col_right, "nbr_col": col_right - 1}}
+
+    ri = we = su_h = su_w = 0.0
+    return iso3690_weld_edges, dim_rows, dim_columns, le, ri, we, th, su_h, su_w, fr_le, fr_ri, fr_ab, fr_be
+
+
+def weld_sample(sim_type):
+    """Dispatch to the selected small geometry builder and keep the main script clean."""
+    builders = {
+        "butt joint": weld_sample_butt,
+        "lap joint": weld_sample_lap,
+        "iso3690": weld_sample_iso3690,
+    }
+    try:
+        builder = builders[sim_type]
+    except KeyError as exc:
+        raise ValueError(
+            f"Unknown simulation_type '{sim_type}'. "
+            "Use 'butt joint', 'lap joint', or 'iso3690'."
+        ) from exc
+    return builder()
+
+
+def initialize(simulation_type, nx, ny, dx, dy, le, we, th, su_h, su_w, fr_le, fr_ab):
+
+    # Define some Temperatures t_xxx
+    t_cool, t_hot, t_room = get_value("t_cool"), get_value("t_hot"), get_value("t_room")
+
+    # Get initial hydrogen concentration
+    init_hydrogen_conc = get_value("h_cont_initial")
+
+    # Initialize matrix at cool temperature
+    u0 = t_cool * np.ones((ny, nx))  # x should be horizontal! But in python the first entry is no. of rows!
+    h0 = init_hydrogen_conc * np.ones((ny, nx))  # for now we just assume no atomic H in the weld sample when we start
+    D = np.zeros((ny, nx))  # initiate D so it exists, actual values are set before each time step
+    D_H = np.zeros((ny, nx))  # same but for hydrogen
+    S = np.zeros((ny, nx))  # same but for solubility field
+    microstructure_id = np.ones_like(D, dtype=np.int8)  # Initialze microstructure identifier matrix | 1 = base metal
+
+    # Carve out the gaps in sample geometry, set to room temperature, set diffusion coefficients
+    if simulation_type == "butt joint":
+
+        for x in range(nx):  # no vectorization/optimization here for easier readability / modification
+            for y in range(ny):
+
+                # Above and below the whole thing for nicer pictures and boundary conditions
+                # -5 for now for plotting purposes, change later maybe
+                if y < (fr_ab / dy) or y >= (fr_ab + th + su_h) / dy:
+                    # remember! we want x horizontal! BUT it needs to be second in [,] notation
+                    u0[y, x] = t_room + get_value("temperature_offset")
+                    h0[y, x] = get_value("hydrogen_offset")  # -5 for nicer display
+                    microstructure_id[y, x] = 0  # 0 = none | 1 = bm | 2 = wm | 3 = haz
+
+                # below weld samples | left and right of weld pool support
+                if (x < fr_le / dx or x >= ((fr_le+su_w) / dx)) and y >= (th + fr_ab) / dy:
+                    # remember! we want x horizontal! BUT it needs to be second in [,] notation
+                    u0[y, x] = t_room + get_value("temperature_offset")
+                    h0[y, x] = get_value("hydrogen_offset")  # -5 for nicer display
+                    microstructure_id[y, x] = 0  # 0 = none | 1 = bm | 2 = wm | 3 = haz
+
+                # where the actual weld beads go later, for now its "empty" at room temperature
+                if le/dx <= x < ((le+we)/dx) and y < (th+fr_ab)/dy:
+                    # remember! we want x horizontal! BUT it needs to be second in [,] notation
+                    u0[y, x] = t_room + get_value("temperature_offset")
+                    h0[y, x] = get_value("hydrogen_offset")  # -5 for nicer display
+                    microstructure_id[y, x] = 0  # 0 = none | 1 = bm | 2 = wm | 3 = haz
+
+        u = u0.copy()
+        h = h0.copy()
+
+        return u0, u, h0, h, D, D_H, S, microstructure_id, t_cool, t_hot, t_room
+
+    elif simulation_type == "lap joint":
+
+        for x in range(nx):  # no vectorization/optimization here for easier readability / modification
+            for y in range(ny):
+
+                # Above and below the whole thing for nicer pictures and boundary conditions
+                # -5 for now for plotting purposes, change later
+                if y < (fr_ab / dy) or y >= (fr_ab + th + su_h) / dy:
+                    # remember! we want x horizontal! BUT it needs to be second in [,] notation
+                    u0[y, x] = t_room + get_value("temperature_offset")
+                    h0[y, x] = get_value("hydrogen_offset")  # -5 for nicer display
+                    microstructure_id[y, x] = 0  # 0 = none | 1 = bm | 2 = wm | 3 = haz
+
+                # Right side above | (depreciated but left below was: x < le / dx and y > (th + fr_ab) / dx))
+                if x >= le / dx and y < (fr_ab + th) / dy:
+                    # remember! we want x horizontal! BUT it needs to be second in [,] notation
+                    u0[y, x] = t_room + get_value("temperature_offset")
+                    h0[y, x] = get_value("hydrogen_offset")  # -5 for nicer display
+                    microstructure_id[y, x] = 0  # 0 = none | 1 = bm | 2 = wm | 3 = haz
+
+                # Gap between the plates (For now, 1 dy thick only)
+                if x < fr_le / dx and ((fr_ab + th - we) / dy <= y < (fr_ab + th) / dy):
+                    # remember! we want x horizontal! BUT it needs to be second in [,] notation
+                    u0[y, x] = t_room + get_value("temperature_offset")
+                    h0[y, x] = get_value("hydrogen_offset")  # -5 for nicer display
+                    microstructure_id[y, x] = 0  # 0 = none | 1 = bm | 2 = wm | 3 = haz
+
+                # For simplicity apply base metal coefficients here to the overlap
+                if (fr_le / dx < x <= le / dx) and ((fr_ab + th - we) / dy <= y < (fr_ab + th) / dy):
+                    # remember! we want x horizontal! BUT it needs to be second in [,] notation
+                    pass  # Placeholder for future special handling
+
+                # Initialize the lower plate w. hydrogen. Linear equillibrium with hydro_inside inside and 0 outside.
+                if (fr_ab + th) / dy <= y < (fr_ab + th + su_h) / dy:
+                    fraction = (y - (fr_ab + th) / dy) / ((fr_ab + th + su_h) / dy - (fr_ab + th) / dy)
+                    fraction = max(0.0, min(1.0, fraction))
+                    h0[y, x] = get_value("h_on_the_inside") * fraction
+
+        u = u0.copy()
+        h = h0.copy()
+
+        return u0, u, h0, h, D, D_H, S, microstructure_id, t_cool, t_hot, t_room
+
+    elif simulation_type == "iso3690":
+
+        for x in range(nx):  # no vectorization/optimization here for easier readability / modification
+            for y in range(ny):
+
+                # Above and below the whole thing for nicer pictures and boundary conditions
+                # -5 for now for plotting purposes, change later maybe
+                if y < (fr_ab / dy) or y >= (fr_ab + th) / dy:
+                    # remember! we want x horizontal! BUT it needs to be second in [,] notation
+                    u0[y, x] = t_room + get_value("temperature_offset")
+                    h0[y, x] = get_value("hydrogen_offset")  # -5 for nicer display
+                    microstructure_id[y, x] = 0  # 0 = none | 1 = bm | 2 = wm | 3 = haz
+
+                # Left and right edges for nicer videos
+                if x < fr_le / dx or x >= ((fr_le + le) / dx):
+                    # remember! we want x horizontal! BUT it needs to be second in [,] notation
+                    u0[y, x] = t_room + get_value("temperature_offset")
+                    h0[y, x] = get_value("hydrogen_offset")  # -5 for nicer display
+                    microstructure_id[y, x] = 0  # 0 = none | 1 = bm | 2 = wm | 3 = haz
+
+        u = u0.copy()
+        h = h0.copy()
+
+        return u0, u, h0, h, D, D_H, S, microstructure_id, t_cool, t_hot, t_room
+
+    else:
+        raise ValueError(
+            f"Unknown simulation_type '{simulation_type}'. "
+            "Use 'butt joint', 'lap joint', or 'iso3690'."
+        )
+
+
 def write_h5_metadata(
     file_name,
     include_param_config: bool = True,
@@ -150,7 +364,6 @@ def write_h5_metadata(
             snapshot = param_config_snapshot()
             snapshot.setdefault("convention", "rows: top->bottom, cols: left->right")
 
-            from b3_initialization import weld_sample
             sim_type = snapshot.get("simulation_type")
             if sim_type is not None:
                 _, dim_rows, dim_columns, le, ri, we, th, su_h, su_w, fr_le, fr_ri, fr_ab, fr_be = weld_sample(sim_type)
@@ -172,7 +385,7 @@ def write_h5_metadata(
             param_json = json.dumps(snapshot, sort_keys=True, indent=2)
             meta_group = hf["/meta"] if "/meta" in hf else hf.create_group("/meta")
             meta_group.attrs["param_config_json"] = param_json
-            meta_group.attrs["param_config_source"] = "b2_param_config.py"
+            meta_group.attrs["param_config_source"] = "b2_Simulation_Settings.py"
 
 
 def safe_close_pbar(pbar):
@@ -542,7 +755,7 @@ def manipulate_simulation(sim_type, u0, h0, cwi, cci, t_weld_metal, h_weld_metal
         b = sy * b_base
 
         # --- Place center so quarter-ellipse touches the corner (x0, y0) ---
-        # For array coords: cols → right, rows → downward
+        # For array coords: cols -> right, rows -> downward
         center_col = x0
         center_row = y0
 
@@ -599,7 +812,7 @@ def manipulate_simulation(sim_type, u0, h0, cwi, cci, t_weld_metal, h_weld_metal
         x0 = (fr_le + frac * le) / dx + 1  # columns (rightwards)
         y0 = fr_ab / dy - 1  # rows (top surface)
 
-        # For array coords: cols → right, rows → downward
+        # For array coords: cols -> right, rows -> downward
         center_col = x0
         center_row = y0
 
@@ -644,11 +857,11 @@ def compute_mask_and_faces(microstructure_id: np.ndarray):
     in_up = np.zeros_like(mask, dtype=bool); in_up[1:, :] = mask[:-1, :]
     in_down = np.zeros_like(mask, dtype=bool); in_down[:-1, :] = mask[1:, :]
 
-    # “face” means: this cell is material AND the outward neighbor is air
-    left_face = mask & (~in_left)   # outward is left → interior neighbor is to the right
-    right_face = mask & (~in_right)  # outward is right → interior neighbor is to the left
-    up_face = mask & (~in_up)     # outward is up → interior neighbor is below
-    down_face = mask & (~in_down)   # outward is down → interior neighbor is above
+    # "face" means: this cell is material AND the outward neighbor is air
+    left_face = mask & (~in_left)   # outward is left -> interior neighbor is to the right
+    right_face = mask & (~in_right)  # outward is right -> interior neighbor is to the left
+    up_face = mask & (~in_up)     # outward is up -> interior neighbor is below
+    down_face = mask & (~in_down)   # outward is down -> interior neighbor is above
 
     boundary_cells = left_face | right_face | up_face | down_face
     faces = (left_face, right_face, up_face, down_face, boundary_cells)
@@ -721,7 +934,7 @@ def apply_dirichlet_faces(field, field0, D_h, faces, dt, inv_dx2, inv_dy2, outer
 def apply_dirichlet_faces_hydro_jit(field, field0, D_h, left_face, right_face,
                                     up_face, down_face, dt, inv_dx2, inv_dy2, outer_value):
     """
-    Apply Dirichlet BC at material–air faces using a ghost-cell derivation (value=g).
+    Apply Dirichlet BC at material-air faces using a ghost-cell derivation (value=g).
     Updates ONLY boundary nodes (interior untouched here).
     """
     ny, nx = field0.shape
@@ -1069,10 +1282,10 @@ def pipeline_complicated_boundary(row_inside_const, dx, u0, D_h, sol_fn, h, two_
     limited, by how fast hydrogen can diffuse away to make space for new hydrogen there.
 
     This enforces the semi-infinite diffusion uptake per step:
-    Δh ≈ (2/√π) * (√(D·dt)/dx) * (H* - H_old), capped at Dirichlet when Fo≥O(1).
+    dh ~= (2/sqrt(pi)) * (sqrt(D*dt)/dx) * (H* - H_old), capped at Dirichlet when Fo >= O(1).
     """
 
-    T_row_old = u0[row_inside_const, :]  # °C
+    T_row_old = u0[row_inside_const, :]  # deg C
     H_star_row = sol_fn(T_row_old)  # %
     if diffusion_scheme == 2:
         # In the mu-driven branch, scale the Sieverts target by the local relative solubility factor.
@@ -1115,26 +1328,26 @@ def pipeline_complicated_boundary_jit(h_row,  # 1D view: h[row, :]
 def apply_robin_cooling_boundary_jit_faces(u, u0, D, left_face, right_face, up_face, down_face, dt, inv_dx2, inv_dy2,
                                            coef_x, coef_y, t_room):
     """
-    Apply a uniform Robin (Newton cooling) boundary to material–air faces, after the interior update.
+    Apply a uniform Robin (Newton cooling) boundary to material-air faces, after the interior update.
 
     Physics
     -------
-    For a boundary node T, Newton cooling gives q = h (T - T∞).
+    For a boundary node T, Newton cooling gives q = h (T - T_inf).
     Using a ghost-cell derivation for the normal derivative, each exposed face contributes:
-      X-faces:  + 2*(T_nbr - T)/dx^2  - (2*h/(k*dx))*(T - T∞)
-      Y-faces:  + 2*(T_nbr - T)/dy^2  - (2*h/(k*dy))*(T - T∞)
+      X-faces:  + 2*(T_nbr - T)/dx^2  - (2*h/(k*dx))*(T - T_inf)
+      Y-faces:  + 2*(T_nbr - T)/dy^2  - (2*h/(k*dy))*(T - T_inf)
     The update is explicit:
       u_boundary = u0_boundary + D * dt * (sum of face contributions)
 
     Inputs & Units
     --------------
-    u, u0 : temperature fields [°C]
+    u, u0 : temperature fields [deg C]
     D     : thermal diffusivity [mm^2/s]
     left/right/up/down_face : boolean masks (True where outward neighbor is air)
     dt    : time step [s]
     inv_dx2, inv_dy2 : 1/dx^2, 1/dy^2 [1/mm^2]
     coef_x, coef_y   : 2*h/(k*dx), 2*h/(k*dy) [1/mm]  (with h in W/mm^2/K, k in W/mm/K, dx,dy in mm)
-    t_room : ambient temperature [°C]
+    t_room : ambient temperature [deg C]
 
     Notes
     -----
@@ -1180,7 +1393,7 @@ def apply_robin_cooling_boundary_jit_faces(u, u0, D, left_face, right_face, up_f
 def apply_robin_cooling_iso3690_jit_faces(u, u0, D, left_face, right_face, up_face, down_face, dt, inv_dx2, inv_dy2,
                                            coef_x, coef_y, ign_ab, t_room):
     """
-    Apply a uniform Robin (Newton cooling) boundary to steel–copper faces, after the interior update.
+    Apply a uniform Robin (Newton cooling) boundary to steel-copper faces, after the interior update.
 
     See the other robin cooling for more info
     """
@@ -1496,11 +1709,11 @@ def apply_lap_edges(field, field0, lidx, *,
 
 def _build_h_solubility_fn():
     """
-    Builds a vectorized callable f(T)->solubility_percent that maps temperature [°C]
+    Builds a vectorized callable f(T)->solubility_percent that maps temperature [deg C]
     to hydrogen solubility *in percent* of your reference_from_iso3690 (100% reference).
     Uses np.interp (fast), clamps outside the tabulated range.
     """
-    # Your table: 25°C .. 1000°C (5°C steps originally).
+    # Your table: 25 C .. 1000 C (5 C steps originally).
     # Keep as ml/100g here; we will normalize below.
     # equilibrium lattice solubility [ml/100g Fe] Sieverts Law
     # Includes y-fraction, Pressure (100bar), fugacity. See Excel for details
@@ -1547,10 +1760,10 @@ def _build_h_solubility_fn():
         57.244215960
     ], dtype=float)
 
-    # Temperatures aligned to table (25°C -> first entry, 1000°C -> last).
+    # Temperatures aligned to table (25 C -> first entry, 1000 C -> last).
     temps_C = np.arange(25.0, 1000.0 + 5.0, 5.0)
     assert temps_C.size == solubs_ml_per_100g.size, (
-        f"Mismatch between table size ({solubs_ml_per_100g.size}) and expected 5°C steps ({temps_C.size})"
+        f"Mismatch between table size ({solubs_ml_per_100g.size}) and expected 5 C steps ({temps_C.size})"
     )
 
     # Normalize to percent of your reference (100% := reference_from_iso3690)
@@ -1562,7 +1775,7 @@ def _build_h_solubility_fn():
     def f(T_C):
         T = np.asarray(T_C)
         T = np.clip(T, temps_C[0], temps_C[-1])
-        # vectorized interpolation → returns percentages
+        # vectorized interpolation -> returns percentages
         return np.interp(T, temps_C, solubs_percent, left=solubs_percent[0], right=solubs_percent[-1])
 
     return f
@@ -1595,7 +1808,7 @@ def debug_show_DH(D, dx, dy,
     Parameters
     ----------
     D : np.ndarray
-        2D field of temperature diffusion coefficients [mm²/s].
+        2D field of temperature diffusion coefficients [mm^2/s].
     dx, dy : float
         Physical step size in x and y [mm].
     title : str
@@ -1607,7 +1820,7 @@ def debug_show_DH(D, dx, dy,
     block : bool
         If True, plt.show(block=True) halts execution until the window is closed.
     with_colorbar : bool
-        Whether to draw a colorbar labeled in mm²/s.
+        Whether to draw a colorbar labeled in mm^2/s.
     """
     # Get matrix dimensions in mm
     ny, nx = D.shape
@@ -1621,7 +1834,7 @@ def debug_show_DH(D, dx, dy,
 
     # Add colorbar if requested
     if with_colorbar:
-        cbar = plt.colorbar(im, ax=ax, label="Temperature Diffusion Coefficient D [mm²/s]")
+        cbar = plt.colorbar(im, ax=ax, label="Temperature Diffusion Coefficient D [mm^2/s]")
         cbar.ax.tick_params(labelsize=10)
 
     plt.tight_layout()

@@ -1,19 +1,5 @@
-"""
-Main simulation driver for WeldCraft.
-
-This script initializes and executes the thermal–hydrogen diffusion simulation
-for various welding configurations (e.g., lap joint, butt joint, ISO 3690).
-It handles setup, time stepping, phase transitions (welding, cooling, diffusion),
-and periodic saving of simulation data to an HDF5 file.
-
-Modules required:
-- b3_initialization.py: defines geometry, materials, and initial conditions
-- b2_param_config.py: contains all the "knobs" the user can tune
-- b4_functions.py: provides numerical operations and boundary handling
-"""
-
 import sys
-from b3_initialization import *
+from b3_Functions import *
 from tqdm import tqdm
 import h5py
 import os
@@ -24,12 +10,7 @@ simulation_type = get_value("simulation_type")  # Simlulation type - Options: "l
 add_bead_mode = get_value("add_bead_mode")  # Options: "regular_intervals" and "interpass_temperature_controlled"
 
 # ------------------------------------- Simulation size and other dimensions [mm] -------------------------------------
-try:  # this should end the sim if the wrong type is chosen, no need to check again later?
-    joint_edge, dim_rows, dim_columns, le, ri, we, th, su_h, su_w, fr_le, fr_ri, fr_ab, fr_be = weld_sample(simulation_type)
-
-except ValueError as e:
-    print(f"Error: {e}")
-    raise SystemExit
+joint_edge, dim_rows, dim_columns, le, ri, we, th, su_h, su_w, fr_le, fr_ri, fr_ab, fr_be = weld_sample(simulation_type)
 
 # --------------------------------------------- Step size, steps, gradient --------------------------------------------
 dx, dy = get_value("dx"), get_value("dy")  # Spacial discretization
@@ -190,7 +171,7 @@ while current_time <= total_max_time:
                 check_for_HAZ_creation = 1  # Auto-HAZ creation
                 HAZ_creation_time_start = current_time
 
-            # Change stuff, like adding a weld bead and such (in b4_functions.py)
+            # Change stuff, like adding a weld bead and such (in b3_Functions.py)
             u0, h0, microstructure_id, mask, faces, new_area = (
                 manipulate_simulation(simulation_type, u0, h0, cwi, cci, t_weld_metal, h_weld_metal, dx, dy, le, we,
                                       fr_ab, fr_be, su_h, fr_le, th, microstructure_id, mask, faces, new_area))
@@ -329,7 +310,7 @@ while current_time <= total_max_time:
     else:  # Just diffusion phase, save every frame unless sparse saving is set to True in param_config
         save_this_state = True  # Save every frame (including last one)
 
-        if use_sparse_saving_in_just_diffusion:  # Set in b2_param_config
+        if use_sparse_saving_in_just_diffusion:  # Set in b2_Simulation_Settings.py
             if not saved_rt_step:  # Make sure to save the first time we are here, not false is an odd check but logic is sound
                 save_this_state = True
                 saved_rt_step = True

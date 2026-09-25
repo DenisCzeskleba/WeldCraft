@@ -228,6 +228,12 @@ class Launcher(QMainWindow):
             "P1_Simulate_Hydrogen_Diffusion",
             "simulate_hydrogen_diffusion.py",
         )
+        self.path_hydrogen_during_welding = os.path.join(
+            REPO_ROOT,
+            "P2_Hydrogen Diffusion During Welding",
+            "03_CodeBase",
+            "c1_GUI_Main.py",
+        )
         self.path_lattice_visualizer = os.path.join(
             REPO_ROOT,
             "P5_Lattice_Visualizer",
@@ -638,8 +644,12 @@ class Launcher(QMainWindow):
         self.start_program("pushButton_slot_1", [self.path_simulate_hydrogen_diffusion])
 
     def start_hydrogen_during_welding(self):
-        self.update_info_text(self.p2_hydrogen_info)
-        print(self.p2_hydrogen_info)
+        self.start_program(
+            "pushButton_slot_2",
+            [self.path_hydrogen_during_welding],
+            minimize_launcher=True,
+            show_console=False,
+        )
 
     def start_heat_map(self):
         self.start_program(

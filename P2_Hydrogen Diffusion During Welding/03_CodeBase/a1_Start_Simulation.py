@@ -7,9 +7,9 @@ import subprocess
 import io
 import contextlib
 
-# Suppress config prints during import, so no double prints. They’ll still appear when scripts run directly.
+# Suppress config prints during import, so no double prints. They'll still appear when scripts run directly.
 with contextlib.redirect_stdout(io.StringIO()):
-    from b4_functions import get_value
+    from b3_Functions import get_value
 
 
 def run_script(script_name):
@@ -22,8 +22,8 @@ def run_script(script_name):
 if __name__ == "__main__":
 
     with contextlib.redirect_stdout(io.StringIO()):
-        simulation_type = get_value("simulation_type")  # lap joint | butt joint | iso3690 - in b2_param_config.py
-        thermal_calibration = get_value("thermal_diffusion_calibration")  # lap joint | butt joint | iso3690 - in b2_param_config.py
+        simulation_type = get_value("simulation_type")  # lap joint | butt joint | iso3690 - in b2_Simulation_Settings.py
+        thermal_calibration = get_value("thermal_diffusion_calibration")  # set in b2_Simulation_Settings.py
         if thermal_calibration:  # Look up if you do normal simulation or a calibration run
             simulation = "thermal_diffusion_calibration"  # weld | "thermal_diffusion_calibration"
         else:
@@ -35,13 +35,13 @@ if __name__ == "__main__":
 
         # Run the script that makes you a nice animation of it
         if simulation_type == "iso3690":
-            run_script('c2_Make_Animation_ISO3690.py')
+            run_script('d2_Make_Animation_ISO3690.py')
         else:
-            run_script('c1_Make_Animation.py')
+            run_script('d1_Make_Animation.py')
 
     if simulation == "thermal_diffusion_calibration":  # Needs work!
         # Run the main simulation script
         run_script('b1_Main_WeldCraft.py')
 
         # Run the script that makes you a nice animation of it
-        run_script('d2_temperature_calibration_4_point_output.py')
+        run_script('e2_Temperature_Calibration_4_Point_Output.py')

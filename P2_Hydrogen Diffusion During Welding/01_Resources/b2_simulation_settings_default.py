@@ -5,7 +5,7 @@ This file contains all relevant constants, boundary conditions, and material pro
 used in the simulation. Adjust values here to configure a specific simulation setup.
 
 Sections include:
-    - Dimensional step sizes (dx, dy)
+    - Spatial step sizes (dx, dy)
     - Initial and boundary conditions for temperature and hydrogen
     - Temperature- and hydrogen-dependent diffusion coefficients
     - Time step calculation and overrides
@@ -19,7 +19,11 @@ IMPORTANT:
 
 """
 
-from b4_functions import in_results, get_spec_value_at_temp, find_min_max_value
+from b3_Functions import (
+    find_min_max_value,
+    get_spec_value_at_temp,
+    in_results,
+)
 
 """ ------------------------------------------------ User Settings  ------------------------------------------------ """
 """ ---------------------- Main Simulation Settings ----------------------------- """
@@ -28,16 +32,88 @@ simulation_type = "butt joint"  # Options: "lap joint", "butt joint" and "iso369
 diffusion_scheme = 1  # 0 = centered D * Laplacian | 1 = flux-conservative | 2 = mu-driven using relative S-factor
 thermal_diffusion_calibration = False  # True = thermal-only calibration mode (hydrogen disabled)
 
-""" ---------------------- Spacial Discretization (Step Size) ------------------- """
-dx = 0.5  # step size in x direction - if not equal to dy, tripple check solver logic!
-dy = 0.5  # step size in y direction - if not equal to dx, tripple check solver logic!
+""" ---------------------- Spatial Discretization (Step Size) ------------------- """
+dx = 0.5  # step size in x direction - if not equal to dy, triple-check solver logic!
+dy = 0.5  # step size in y direction - if not equal to dx, triple-check solver logic!
+
+""" --------------------------- Weld Sample Geometry ---------------------------- """
+if simulation_type == "butt joint":
+
+    # <----- le -------> <- we -> <----- ri ----->
+    #  __________________          _________________
+    # |                  |        |                 |  th
+    # |__________________|________|_________________|
+    #                  |            |
+    #                  |____________|                 su_h
+    #                  <--- su_w --->
+    # fr_ab and fr_be add empty display space above and below. All values are in mm.
+
+    le = 60.0
+    ri = 60.0
+    we = 20.0
+    th = 20.0
+    su_h = 10.0
+    su_w = 30.0
+    fr_ab = 5.0
+    fr_be = 5.0
+
+elif simulation_type == "lap joint":
+
+    #         <-------------- le ------------>
+    #         ________________________________
+    #        |                                |  th
+    #        |___________________________|    |
+    #    we  |___________________________|    |___________________
+    #        |                                                    |  su_h
+    #        |____________________________________________________|
+    #         <---------- fr_le --------->    <------ fr_ri ------>
+    # Both plates begin at the same left edge. fr_le is the separated-interface length.
+    # fr_ab and fr_be add empty display space above and below. All values are in mm.
+
+    le = 20.0
+    ri = 0.0  # unused for this geometry
+    we = 0.4  # interface gap width
+    th = 4.2
+    su_h = 4.0
+    su_w = 0.0  # unused for this geometry
+    fr_le = 18.0
+    fr_ri = 20.0
+    fr_ab = 2.0
+    fr_be = 2.0
+
+elif simulation_type == "iso3690":
+
+    #   <------------------- le ------------------->
+    #  ___________________________________________
+    # |                                           |
+    # |                                           | th
+    # |___________________________________________|
+    # fr_le and fr_ri add empty display space to the left and right.
+    # fr_ab and fr_be add empty display space above and below. All values are in mm.
+
+    le = 30.0
+    ri = 0.0  # unused for this geometry
+    we = 0.0  # unused for this geometry
+    th = 10.0
+    su_h = 0.0  # unused for this geometry
+    su_w = 0.0  # unused for this geometry
+    fr_le = 2.0
+    fr_ri = 2.0
+    fr_ab = 5.0
+    fr_be = 2.0
+
+else:
+    raise ValueError(
+        f"Unknown simulation_type '{simulation_type}'. "
+        "Use 'butt joint', 'lap joint', or 'iso3690'."
+    )
 
 """ ---------------------- Weld Bead Settings ----------------------------------- """
 add_bead_mode = "regular_intervals"  # Options: "regular_intervals" and "interpass_temperature_controlled"
 
-no_of_weld_beads = 20  # no of "blocks" during welding: Butt joint: must be %2, fit bead_height! Lap Joint: max 4
-bead_height = 2  # Half of weld beads * height should probably be weld thickness (th) (2.8 for iso?
-bead_width = 12  # Using half of weld width (we) for blocks, for ellipses maybe 3/4-ish of weld width? 60%?
+no_of_weld_beads = 10  # no of "blocks" during welding: Butt joint: must be %2, fit bead_height! Lap Joint: max 4
+bead_height = 2.0  # Half of weld beads * height should probably be weld thickness (th) (2.8 for iso?
+bead_width = 12.0  # Using half of weld width (we) for blocks, for ellipses maybe 3/4-ish of weld width? 60%?
 bead_scales = [(1.0, 1.0), (1.0, 1.0), (1.6, 1.6), (3.0, 3.0)]  # Used for lap joint and iso3690
 
 """ ---------------------- Temporal Discretization and Settings ------------------ """
@@ -46,8 +122,8 @@ time_for_weld_bead = 500  # Time between welds. Weld block gets added at 0. Temp
 time_after_last_weld = 500  # Time after last weld. BC in sample edge is held at t_cool this long. [s]
 time_heat_hold = 3  # Force the new weld block to have this temp for so long [s]
 
-time_cooling_to_rt = 1 * 60 * 60  # For now set to 1.5h. During, forced linear cooling as BC in sample metal
-time_diffusion_at_rt = 1 * 24 * 60 * 60  # 2d * 24h * 60min * 60s
+time_cooling_to_rt = 3600  # 1h. During, forced linear cooling as BC in sample metal
+time_diffusion_at_rt = 86400  # 1d * 24h * 60min * 60s
 
 safety_factor = 0.5  # 1 = stable (lower maybe better temporal convergence) | Default and recommended = 1
 use_big_dt_override = True  # Diffusion at RT slow -> large automatic dt possible. Manual override to use smaller dt?
@@ -63,8 +139,8 @@ t_room = 25  # Surrounding temperature. Use 0.001 instead of 0 for ISO3690!
 haz_creation_temperature = 1350  # Checks if some bm area got hotter than this, creates HAZ there
 haz_creation_check_time_window = 10  # no need to check for ever after welding, but maybe for 10s?
 
-t_conv_air = 1e-7  # [W/mm²/K] | ≈ 0.1 W/m²K | Top plate, still air. Guess / calibrate from temperature measurements
-t_conv_cu = 3e-4   # [W/mm²/K], ≈ 300 W/m²K, Copper contact. "Convection" doesn't really make sense. Consider temperature T_cu(t) later!
+t_conv_air = 1e-07  # [W/mm^2/K] | ~0.1 W/m^2K | Top plate, still air. Guess / calibrate from temperature measurements
+t_conv_cu = 3e-4   # [W/mm^2/K], ~300 W/m^2K, Copper contact. "Convection" doesn't really make sense. Consider temperature T_cu(t) later!
 
 """ ---------------------- Relevant (Starting) Conditions - Hydrogen ----------- """
 hydro_weld_metal = 100  # Hydrogen in the new weld block, for now set as "100%"
@@ -74,13 +150,14 @@ reference_from_iso3690 = 2.5  # Used for lap joints with hydrogen from the insid
 pipe_line_inner_hydrogen = "variable"  # Options: "constant", "variable" | variable means sieverts law (temp depend)
 h_on_the_inside = 0  # Used for the constant h lap joint boundary condition on the inside of the weld / pipeline
 
-t_conv_h2 = 5e-4   # - UNUSED - [W/mm²/K], ≈ 500 W/m²K, underside, forced hydrogen. Guess or calibrate - Change dt?
+t_conv_h2 = 5e-4   # - UNUSED - [W/mm^2/K], ~500 W/m^2K, underside, forced hydrogen. Guess or calibrate - Change dt?
 
 """ ---------------------- Save and Animation Options --------------------------- """
-file_name = str(in_results("00_diffusion_array.h5", mkdir=True))  # diffusion_array.h5"
-animation_name = str(in_results("00_diffusion_animation.mp4", mkdir=True))  # diffusion_animation.mp4
+file_name = str(in_results("00_diffusion_array.h5", mkdir=True))
+animation_name = str(in_results("00_diffusion_animation.mp4", mkdir=True))
+include_animation_after_run = False  # GUI: optionally render the standard result animation after a successful run
 
-s_per_frame_part1 = 1  # Save every so many seconds (dt is usually < 0.001s)
+s_per_frame_part1 = 1.0  # Save every so many seconds (dt is usually < 0.001s)
 animation_frame_stride = 5  # Only render every n-th frame (used in animation/video scripts)
 
 use_sparse_saving_in_just_diffusion = True  # If True, save less often after welding (long RT diffusion)
@@ -150,7 +227,7 @@ material: HAZ
 # *** !! Currently no RELIABLE high Temperature data available !! ***
 # *** !! There is no reason to use this until you find solubility data !! ***
 # Due to lack of data, relative formulation as a placeholder for now!
-# Idea: baseline S=1 below transformation, linear ramp to S=10 across 740–800°C, then constant.
+# Idea: baseline S=1 below transformation, linear ramp to S=10 across 740-800 C, then constant.
 # Solubility factor used only for diffusion_scheme = 2 (mu-driven diffusion).
 # IMPORTANT:
 # - S is treated here as a relative storage / solubility factor, not as an absolute
@@ -223,7 +300,7 @@ else:
 """ ---------------------- Convection / Cooling / Robin BC -------------------- """
 bm_k = 0.02  # [W/mmK] thermal conductivity
 
-# Precompute handy factors (for constant h, k). Robin uses 2*h/(k*Δ)
+# Precompute handy factors (for constant h, k). Robin uses 2*h/(k*dx).
 coef_robin_x_air = 2.0 * t_conv_air / (bm_k * dx)  # [1/mm]
 coef_robin_y_air = 2.0 * t_conv_air / (bm_k * dy)  # [1/mm]
 
@@ -254,8 +331,8 @@ debug_bead_plots = False  # Set to False to disable
 
 """ ------------------------------------------ Literature, Sources for Values  --------------------------------------"""
 """
-**1 Temperaturleitfähigkeit, hier D = lambda / (rho*c), lambda wärmeleitfähigkeit, rho dichte, c spez. Wärmekapazität
-    DIN EN 1993-1-2:2010-12 for the values between 25 and 1200°C, they are constant then (we dont worry about liquid)
+**1 Temperaturleitfaehigkeit, hier D = lambda / (rho*c), lambda Waermeleitfaehigkeit, rho Dichte, c spez. Waermekapazitaet
+    DIN EN 1993-1-2:2010-12 for the values between 25 and 1200 C, they are constant then (we dont worry about liquid)
     
 EXAMPLE    material: base_metal
 ] 600, 735 ]:   D = (54 - 0.0333*T_C) / (7850 * (666 + 13002/(738 - T_C))) * 1e6
